@@ -23,6 +23,10 @@ const CONFIG = {
     friendCheckInterval: 12000,        // 好友检查间隔 12秒
     farmCheckIntervalMin: 8000,        // 农场检查最小间隔 8秒
     farmCheckIntervalMax: 12000,       // 农场检查最大间隔 12秒
+    // 偷菜：完全没有已知成熟墙钟时的重新发现间隔（面板可配，默认 300-480 秒）。
+    // 有已知成熟时刻时由成熟墙钟精确唤醒，不使用这两个值。
+    stealCheckIntervalMin: 300 * 1000,
+    stealCheckIntervalMax: 480 * 1000,
     friendCheckIntervalMin: 12000,     // 好友检查最小间隔 12秒
     friendCheckIntervalMax: 15000,     // 好友检查最大间隔 15秒
     adminPort: Number(process.env.ADMIN_PORT),

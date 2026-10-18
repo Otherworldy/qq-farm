@@ -160,6 +160,10 @@ async function restartAccount() {
         min="1"
       />
     </div>
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      仅在“没有任何已知成熟时刻”时按该间隔重新发现可偷作物；好友作物成熟仍按成熟墙钟精确到点出手。
+      调小会提高巡查密度与请求量。
+    </p>
 
     <div class="idle-rest-settings flex flex-wrap items-center gap-4 border-t pt-3 dark:border-gray-700">
       <BaseInput
@@ -287,6 +291,11 @@ async function restartAccount() {
           min="0"
         />
       </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        好友作物成熟后的等待时长：10:00 成熟 + 60 秒 = 10:01 前后出手（±5%）。0 = 成熟即出手。
+        仅作用于“已知道精确成熟时刻”的到点抢收（哨兵/预进门/推送快车道）；
+        巡田或巡查当下发现“已经能偷”时仍立即出手，不会因为该设置白送。
+      </p>
     </div>
   </div>
 </template>

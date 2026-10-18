@@ -63,6 +63,7 @@ test('existing push fast lane does not harvest during a pause', async () => {
     getPauseRemainMs: () => 60_000, toNum: Number, isPriorityGid: () => true,
     friendActivity: { isFriendOnlineRecently: () => true }, fastLaneRipeLandIds: () => [1],
     fastLaneRecent: new Map(), fastLaneInFlight: new Map(),
+    getStealDelaySeconds: () => 0,
     stealHarvest: async () => { calls++; return {}; }, sumHarvestItemCount: () => ({ total: 1 }),
     recordOperation() {}, log() {}, recordEvent() {}, fastLaneDailyText: () => '', sellAllFruits: async () => {} };
   const push = loadExisting('services/friend-visit.js', 'fastLaneSteal', context);

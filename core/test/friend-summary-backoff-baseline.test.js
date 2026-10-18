@@ -230,6 +230,9 @@ function workerEntry(h) {
     getNextStealDueAtMs: () => h.orchestrator.getNextStealDueAtMs(),
     getNextWatchDueAt: h.watch.getNextWatchDueAt, getNextWatchlistStealDueAtMs: h.orchestrator.getNextWatchlistStealDueAtMs,
     mergeDueAt: require('../src/services/steal-schedule').mergeDueAt, armMaturitySentinel: () => {},
+    // 到点偏移（面板偷菜延迟）在切片之外：此处按“无延迟”注入，
+    // 该文件只关心过期退避与统一 tick 的节奏。
+    effectiveStealDueAt: due => due,
     stealRediscoveryDelayMs: () => 60000, checkFriends: h.orchestrator.checkFriends,
     isTransientNetworkError: () => false, runOwnHarvestStrike: async () => {},
     runFarmTick: async () => {}, runHelpTick: async () => {},

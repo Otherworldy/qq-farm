@@ -49,6 +49,11 @@ function createRuntimeState(deps) {
             preferredSeedId: store.getPreferredSeed(accountId),
             prioritize2x2Crops: store.getPrioritize2x2Crops(accountId),
             intervals: store.getIntervals(accountId),
+            // 偷菜延迟：worker 的偷菜 API 出口直接读该字段，必须随 config_sync 下发
+            // 才能热生效（否则要重启账号才用上新的等待时长）。
+            stealDelaySeconds: store.getStealDelaySeconds
+                ? store.getStealDelaySeconds(accountId)
+                : 0,
             friendQuietHours: store.getFriendQuietHours(accountId),
             friendBlacklist: store.getFriendBlacklist(accountId),
             watchlistFriendGids: store.getWatchlistFriendGids(accountId),

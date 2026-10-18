@@ -1,6 +1,6 @@
 const { PlantPhase } = require('../config/config');
 const { getPlantById } = require('../config/gameConfig');
-const { getPlantBlacklist, isAutomationOn, getPauseRemainMs } = require('../models/store');
+const { getPlantBlacklist, isAutomationOn, getPauseRemainMs, getStealDelaySeconds } = require('../models/store');
 const { getUserState } = require('../utils/network');
 const { toNum, log, logWarn, randomDelay, sleep } = require('../utils/utils');
 const {
@@ -624,8 +624,11 @@ async function visitFriend(friend, tally, myGid, accountId) {
 const fastLaneInFlight = new Map(); // gid -> Promise
 const fastLaneRecent = new Map(); // gid -> Map<landId, at>（防推送回声重复开火）
 
-function fastLaneRipeLandIds(lands) {
-  const serverSec = Math.floor(Date.now() / 1000);
+function fastLaneRipeLandIds(lands, { delaySec = 0, now = Date.now() } = {}) {
+  const serverSec = Math.floor(now / 1000);
+  // 面板偷菜延迟：成熟后等 N 秒（±5%）再开火。已过延迟窗口的地块照常立即出手，
+  // 所以这里只需要比“成熟时刻 + 延迟下限”与当前时刻。
+  const delayFloorSec = Math.max(0, Math.floor(Number(delaySec) * 0.95) || 0);
   const ids = [];
   for (const land of Array.isArray(lands) ? lands : []) {
     const plant = land && land.plant;
@@ -635,7 +638,7 @@ function fastLaneRipeLandIds(lands) {
     const last = phases[phases.length - 1];
     const begin = toNum(last && (last.begin_time != null ? last.begin_time : last.beginTime));
     // 已成熟（最后阶段开始时刻已过）且植株还在 = 可偷窗口
-    if (begin > 0 && begin <= serverSec) ids.push(landId);
+    if (begin > 0 && begin + delayFloorSec <= serverSec) ids.push(landId);
   }
   return ids;
 }
@@ -674,9 +677,18 @@ async function fastLaneSteal(gid, lands) {
   if (!id || !isPriorityGid(id)) return;
   // 在线闸门（用户定标）：离线时失败率高、也无施肥竞速意义
   if (!friendActivity.isFriendOnlineRecently(id)) return;
-  const ripeIds = fastLaneRipeLandIds(lands);
+  // 面板偷菜延迟：快车道同样按“成熟时刻 + 延迟”出手；未到延迟窗口的地块
+  // 交给成熟哨兵在到点后接手（armStealWake 的 due 已含同一份偏移）。
+  let stealDelaySec = 0;
+  if (typeof getStealDelaySeconds === 'function') {
+    try {
+      stealDelaySec = Math.max(0, Number(getStealDelaySeconds(process.env.FARM_ACCOUNT_ID || '')) || 0);
+    } catch { stealDelaySec = 0; }
+  }
+  const ripeIds = fastLaneRipeLandIds(lands, { delaySec: stealDelaySec });
   if (ripeIds.length === 0) return;
-  // 防重复：3 秒内已开火过的地块不再发（我们自己偷完的推送回声会被这里挡住）
+  // 防重复：3 秒内已开火过的地块不再发（我们自己偷完的推送回声会被这里挡住）。
+  // 延迟不在这里等待（已在 matureAt 上体现），所以窗口无需随设置变长。
   const recent = fastLaneRecent.get(id) || new Map();
   const now = Date.now();
   for (const [landId, at] of recent) if (now - at > 3_000) recent.delete(landId);

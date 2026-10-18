@@ -277,8 +277,10 @@ const DEFAULT_INTERVALS = {
     farmMax: 12,
     helpMin: 30,
     helpMax: 35,
-    stealMin: 25,
-    stealMax: 30
+    // 偷菜：无已知成熟墙钟时的重新发现间隔。默认贴近 2026-10-18 前的
+    // 硬编码行为（5-8 分钟高斯抖动），用户主动改小才提高巡查密度。
+    stealMin: 300,
+    stealMax: 480
 };
 
 /** 默认静默时段 */
@@ -390,7 +392,8 @@ const DEFAULT_ACCOUNT_CONFIG = {
     watchlistResetMeta: null,
     autoBadFriendGids: [],
     plantBlacklist: DEFAULT_PLANT_BLACKLIST,
-    stealDelaySeconds: 1,
+    // 默认 0：与接线前的真实行为一致（偷菜动作前不额外等待），用户主动改才生效。
+    stealDelaySeconds: 0,
     plantOrderRandom: true,
     plantDelaySeconds: 2,
     fertilizerBuyOrganicCount: 1,
@@ -533,6 +536,16 @@ function normalizeTimeString(raw, fallback) {
     return `${String(hour).padStart(2, '0')  }:${  String(minute).padStart(2, '0')}`;
 }
 
+/**
+ * 偷菜延迟秒数（对每个好友发起偷菜动作前的等待）：0 合法，表示不额外等待。
+ * 旧写法 `Number(v) || 1` 会把用户主动设置的 0 吞成 1，必须按有限数判断。
+ */
+function normalizeStealDelaySeconds(value, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(60, Math.trunc(n)));
+}
+
 function normalizeIntervals(raw) {
     const input = raw && typeof raw === 'object' ? raw : {};
     const toInt = (val, def) => Math.max(1, Number.parseInt(val, 10) || def);
@@ -546,8 +559,8 @@ function normalizeIntervals(raw) {
     let helpMax = toInt(input.helpMax, 35);
     if (helpMin > helpMax) [helpMin, helpMax] = [helpMax, helpMin];
 
-    let stealMin = toInt(input.stealMin, 25);
-    let stealMax = toInt(input.stealMax, 30);
+    let stealMin = toInt(input.stealMin, 300);
+    let stealMax = toInt(input.stealMax, 480);
     if (stealMin > stealMax) [stealMin, stealMax] = [stealMax, stealMin];
 
     return { ...input, farm, farmMin, farmMax, helpMin, helpMax, stealMin, stealMax };
@@ -627,7 +640,7 @@ function cloneAccountConfig(config = DEFAULT_ACCOUNT_CONFIG) {
         preferredSeedId: Math.max(0, Number.parseInt(config.preferredSeedId, 10) || 0),
         prioritize2x2Crops: config.prioritize2x2Crops === true,
         plantBlacklist: plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
-        stealDelaySeconds: Math.max(0, Math.min(60, Number(config.stealDelaySeconds) || 1)),
+        stealDelaySeconds: normalizeStealDelaySeconds(config.stealDelaySeconds, 0),
         plantOrderRandom: !!config.plantOrderRandom,
         plantDelaySeconds: Math.max(0, Math.min(60, Number(config.plantDelaySeconds) || 2)),
         fertilizerBuyOrganicCount: Math.max(0, Math.min(999, Number(config.fertilizerBuyOrganicCount) || 1)),
@@ -803,7 +816,7 @@ function normalizeAccountConfig(raw, fallbackConfig = accountFallbackConfig) {
 
     // 偷菜延迟
     if (input.stealDelaySeconds !== undefined && input.stealDelaySeconds !== null) {
-        cfg.stealDelaySeconds = Math.max(0, Math.min(60, Number.parseInt(input.stealDelaySeconds, 10) || 1));
+        cfg.stealDelaySeconds = normalizeStealDelaySeconds(input.stealDelaySeconds, 0);
     }
 
     // 种植顺序随机
@@ -939,11 +952,68 @@ function ensureAccountConfig(accountId, opts = {}) {
 
 // ==================== 全局配置持久化 ====================
 
+// 偷菜巡查区间的旧默认值（接线前写入面板但从未生效）。
+const LEGACY_STEAL_INTERVAL = { min: 25, max: 30 };
+
+/**
+ * 一次性迁移（2026-10-18 偷菜区间接线）：
+ * 旧版本会把面板默认的 25/30 秒固化进每个账号的存盘配置，但该区间当时没有任何
+ * 消费者（无已知成熟墙钟时的重新发现间隔硬编码为 5-8 分钟）。接线后若不动它们，
+ * 老账号的巡查密度会直接提高约十倍——这不是任何用户表达过的意图，只是旧默认值。
+ * 因此把“恰好等于旧默认”的值升级为新默认（5-8 分钟），并用标记位保证只做一次；
+ * 用户此后主动设回的 25/30 会被尊重，不再被迁移覆盖。
+ * 只扫描真正从磁盘读出的容器（defaultAccountConfig 不在此列：loadGlobalConfig
+ * 无条件用 DEFAULT_ACCOUNT_CONFIG 重建它，任何旧值都不存在于内存中——
+ * sanitizeGlobalConfigBeforeSave 也走同一源，因此无历史值可迁）。
+ * 函数本身不写盘（worker 也要用新默认值运行，但不该各自重写共享文件）；
+ * 回盘由调用点按进程角色决定。
+ */
+function migrateLegacyStealIntervals(storeRoot) {
+    if (!storeRoot || typeof storeRoot !== 'object') return false;
+    if (storeRoot.stealIntervalDefaultsMigrated === true) return false;
+
+    const matchesLegacy = (intervals) => !!intervals
+        && Number(intervals.stealMin) === LEGACY_STEAL_INTERVAL.min
+        && Number(intervals.stealMax) === LEGACY_STEAL_INTERVAL.max;
+    const upgrade = (holder) => {
+        if (!holder || !matchesLegacy(holder.intervals)) return false;
+        holder.intervals.stealMin = DEFAULT_INTERVALS.stealMin;
+        holder.intervals.stealMax = DEFAULT_INTERVALS.stealMax;
+        return true;
+    };
+
+    let migrated = false;
+    for (const cfg of Object.values(storeRoot.accountConfigs || {})) {
+        if (upgrade(cfg)) migrated = true;
+    }
+    for (const plan of Object.values(storeRoot.userDefaultAccountPlans || {})) {
+        if (upgrade(plan && plan.config)) migrated = true;
+    }
+    storeRoot.stealIntervalDefaultsMigrated = true;
+    return migrated;
+}
+
+/**
+ * 迁移回盘只能由 master 执行：账号 worker 共享同一个 store.json，各自回盘就是并发重写。
+ * 两种 worker 形态都要挡住：
+ * - fork worker：启动时已在 env 注入 FARM_ACCOUNT_ID；
+ * - thread worker（默认形态）：FARM_ACCOUNT_ID 由 worker.js 在 require 本模块
+ *   “之后”才写入，加载瞬间 env 仍为空，因此必须再用 isMainThread 兜底。
+ */
+function isMigrationWriterProcess() {
+    if (String(process.env.FARM_ACCOUNT_ID || '').trim()) return false;
+    try {
+        return require('node:worker_threads').isMainThread !== false;
+    } catch {
+        return true;
+    }
+}
+
 function loadGlobalConfig() {
     ensureDataDir();
     try {
         const data = readJsonFile(STORE_FILE, () => ({}));
-        if (!data || typeof data !== 'object') return;
+        if (!data || typeof data !== 'object') return false;
 
         accountFallbackConfig = cloneAccountConfig(DEFAULT_ACCOUNT_CONFIG);
         globalConfig.defaultAccountConfig = cloneAccountConfig(accountFallbackConfig);
@@ -1121,8 +1191,15 @@ function loadGlobalConfig() {
                 accountLimitThreshold: Math.max(1, Number.parseInt(String(data.antiResaleConfig.accountLimitThreshold), 10) || DEFAULT_ANTI_RESALE_CONFIG.accountLimitThreshold)
             };
         }
+
+        // 偷菜巡查区间旧默认值迁移：此处只读取标记位，真正的迁移在
+        // loadGlobalConfig 完全结束后执行——中途回盘会把后面尚未加载的字段写丢。
+        globalConfig.stealIntervalDefaultsMigrated = data.stealIntervalDefaultsMigrated === true;
+        return true;
     } catch (err) {
+        // 中途异常时内存态是残缺的（只剩已读字段）：绝不能回盘。
         console.error('加载配置失败:', err.message);
+        return false;
     }
 }
 
@@ -1215,7 +1292,13 @@ function setAdminPasswordHash(hash) {
     return globalConfig.adminPasswordHash;
 }
 
-loadGlobalConfig();
+// 旧偷菜区间默认值升级：任何进程都先把内存态升到新默认（worker 也要按新默认
+// 节奏运行），但只有 master 回盘。
+if (loadGlobalConfig()
+    && migrateLegacyStealIntervals(globalConfig)
+    && isMigrationWriterProcess()) {
+    saveGlobalConfig();
+}
 
 
 // ==================== 便捷访问器 ====================
@@ -1246,7 +1329,7 @@ function getConfigSnapshot(accountId) {
         watchlistResetMeta: cloneWatchlistResetMeta(cfg.watchlistResetMeta),
         autoBadFriendGids: [...cfg.autoBadFriendGids || []],
         plantBlacklist: [...cfg.plantBlacklist || []],
-        stealDelaySeconds: Math.max(0, Math.min(60, Number(cfg.stealDelaySeconds) || 1)),
+        stealDelaySeconds: normalizeStealDelaySeconds(cfg.stealDelaySeconds, 0),
         plantOrderRandom: !!cfg.plantOrderRandom,
         plantDelaySeconds: Math.max(0, Math.min(60, Number(cfg.plantDelaySeconds) || 2)),
         fertilizerBuyOrganicCount: Math.max(0, Math.min(999, Number(cfg.fertilizerBuyOrganicCount) || 1)),
@@ -1336,7 +1419,7 @@ function applyConfigSnapshot(patch = {}, opts = {}) {
         cfg.plantBlacklist = patch.plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
     if (patch.stealDelaySeconds !== undefined && patch.stealDelaySeconds !== null) {
-        cfg.stealDelaySeconds = Math.max(0, Math.min(60, Number(patch.stealDelaySeconds) || 1));
+        cfg.stealDelaySeconds = normalizeStealDelaySeconds(patch.stealDelaySeconds, 0);
     }
     if (patch.plantOrderRandom !== undefined && patch.plantOrderRandom !== null) {
         cfg.plantOrderRandom = !!patch.plantOrderRandom;
@@ -1599,7 +1682,7 @@ function setAutoBadFriendGids(accountId, gids) {
 }
 
 function getStealDelaySeconds(accountId) {
-    return Math.max(0, Math.min(60, Number(getAccountConfigSnapshot(accountId).stealDelaySeconds) || 1));
+    return normalizeStealDelaySeconds(getAccountConfigSnapshot(accountId).stealDelaySeconds, 0);
 }
 
 function getPlantOrderRandom(accountId) {

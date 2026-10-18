@@ -54,10 +54,10 @@ function createStrategySettings() {
     prioritize2x2Crops: false,
     bagSeedPriority: [] as number[],
     bagSeedFallbackStrategy: 'level',
-    stealDelaySeconds: 1,
+    stealDelaySeconds: 0,
     plantOrderRandom: true,
     plantDelaySeconds: 2,
-    intervals: { farmMin: 8, farmMax: 12, helpMin: 30, helpMax: 35, stealMin: 25, stealMax: 30 },
+    intervals: { farmMin: 8, farmMax: 12, helpMin: 30, helpMax: 35, stealMin: 300, stealMax: 480 },
     friendQuietHours: { enabled: false, start: '23:00', end: '07:00', minSleepMinutes: 1, maxSleepMinutes: 120, wakeBeforeMinutes: 66, watchlistWakeBeforeMinutes: 122, pauseUntil: '', idleProtectionEnabled: false },
   }
 }

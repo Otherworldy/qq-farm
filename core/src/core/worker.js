@@ -26,6 +26,7 @@ const {
     applyConfigSnapshot,
     getFriendQuietHours,
     getPauseRemainMs,
+    getStealDelaySeconds,
 } = require('../models/store');
 const {
     checkAndClaimEmails,
@@ -336,10 +337,12 @@ function startMysteryShopAutoBuyTimer() {
 
 // ==================== 间隔计算 ====================
 
-function normalizeIntervalRangeSec(minVal, maxVal, defaultVal) {
+function normalizeIntervalRangeSec(minVal, maxVal, defaultVal, maxDefaultVal) {
     const def = Math.max(1, Number.parseInt(defaultVal, 10) || 3);
+    // 区间允许两端各有默认值（偷菜区间默认 300-480 秒，不能塌成固定值）。
+    const defMax = Math.max(def, Number.parseInt(maxDefaultVal, 10) || def);
     let min = Math.max(1, Number.parseInt(minVal, 10) || def);
-    let max = Math.max(1, Number.parseInt(maxVal, 10) || def);
+    let max = Math.max(1, Number.parseInt(maxVal, 10) || defMax);
     if (min > max) [min, max] = [max, min];
     return { min, max };
 }
@@ -356,7 +359,7 @@ function applyIntervalsToRuntime(intervals) {
     CONFIG.helpCheckIntervalMin = helpRange.min * 1000;
     CONFIG.helpCheckIntervalMax = helpRange.max * 1000;
 
-    const stealRange = normalizeIntervalRangeSec(iv.stealMin, iv.stealMax, 25);
+    const stealRange = normalizeIntervalRangeSec(iv.stealMin, iv.stealMax, 300, 480);
     CONFIG.stealCheckIntervalMin = stealRange.min * 1000;
     CONFIG.stealCheckIntervalMax = stealRange.max * 1000;
 }
@@ -489,6 +492,7 @@ async function runHelpTick(autoConfig) {
 let stealTaskRunning = false;
 let nextStealRunAt = 0;
 const STEAL_IDLE_MS = 24 * 3600 * 1000;
+// 面板未配置时的兜底（秒面板默认值在 store.js，与之保持一致：300-480 秒）
 const STEAL_REDISCOVERY_MIN_MS = 5 * 60_000;
 const STEAL_REDISCOVERY_MAX_MS = 8 * 60_000;
 // ponytail: 重点好友摘要刷新下限，60-120s 高斯抖动。请求代价是空闲期每下限
@@ -501,9 +505,16 @@ const PRIORITY_SUMMARY_FLOOR_MAX_MS = 120_000;
  * 只有完全没有成熟墙钟时才低频重新发现。普通偷菜有已知时刻后直接等到点，
  * 不再借用施肥观察窗口做 3-5 秒/15-30 秒摘要重查。重点用户施肥 HOT、
  * 自然成熟 PREARM 都有各自的 nextVisitAt，会独立并入 armStealWake。
+ * 区间来自面板「偷菜巡查最小/最大 (秒)」（applyIntervalsToRuntime 秒转毫秒），
+ * 未配置时回退到 5-8 分钟；缩短它等于提高巡查密度，受请求治理预算约束。
  */
 function stealRediscoveryDelayMs() {
-    return gaussianInt(STEAL_REDISCOVERY_MIN_MS, STEAL_REDISCOVERY_MAX_MS);
+    let min = Number(CONFIG.stealCheckIntervalMin) || STEAL_REDISCOVERY_MIN_MS;
+    let max = Number(CONFIG.stealCheckIntervalMax) || STEAL_REDISCOVERY_MAX_MS;
+    min = Math.max(1, min);
+    max = Math.max(1, max);
+    if (min > max) [min, max] = [max, min];
+    return gaussianInt(min, max);
 }
 
 function idleMaxSleepMs() {
@@ -729,6 +740,43 @@ async function runOwnHarvestStrike() {
     }
 }
 
+// 面板「偷菜延迟 (秒)」的抖动系数：成熟后等 N 秒 ±5%（60 秒 → ±3 秒）。
+const STEAL_DELAY_JITTER_RATIO = 0.05;
+// 同一成熟时刻复用同一个抖动值：armStealWake 会反复重排，每次重抽会让
+// 唤醒时刻与哨兵武装时刻彼此漂移。
+let stealDelayOffsetCache = { dueAt: 0, offsetMs: 0 };
+
+/**
+ * 成熟时刻 → 实际出手时刻的偏移量。
+ * 0 = 不偏移（默认）；未配置/读取失败均按 0 处理，绝不阻断偷菜。
+ */
+function stealDelayOffsetMsFor(dueAt) {
+    const due = Number(dueAt) || 0;
+    if (due <= 0) return 0;
+    let sec = 0;
+    try {
+        sec = Math.max(0, Number(getStealDelaySeconds(process.env.FARM_ACCOUNT_ID || '')) || 0);
+    } catch { sec = 0; }
+    if (sec <= 0) return 0;
+    if (stealDelayOffsetCache.dueAt === due) return stealDelayOffsetCache.offsetMs;
+    const base = sec * 1000;
+    const spread = Math.max(1, Math.floor(base * STEAL_DELAY_JITTER_RATIO));
+    const offsetMs = gaussianInt(base - spread, base + spread);
+    stealDelayOffsetCache = { dueAt: due, offsetMs };
+    return offsetMs;
+}
+
+/**
+ * 实际可偷时刻 = 成熟时刻 + 面板偷菜延迟。
+ * 所有下游（哨兵武装/预进门/统一 tick 的 stealIsDue/过期退避）都以它为准，
+ * 因此只需在这里加一次偏移，不会出现“某条路径绕过延迟”。
+ */
+function effectiveStealDueAt(dueAt) {
+    const due = Number(dueAt) || 0;
+    if (due <= 0) return 0;
+    return due + stealDelayOffsetMsFor(due);
+}
+
 // ==================== 好友成熟哨兵：最后几秒武装，到点即刻出手 ====================
 // 自己的菜由下方独立绝对墙钟保护器负责；好友哨兵只处理偷菜，避免两种 due 共用状态。
 const SENTINEL_ARM_WATCHLIST_MS = 5_000;  // 重点好友：剩 5s 武装
@@ -887,7 +935,9 @@ function armMaturitySentinel(now = Date.now()) {
     const friendDue = Number(getNextStealDueAtMs()) || 0;
     const watchDue = getNextWatchDueAt(now);
     const watchlistDue = Number(getNextWatchlistStealDueAtMs()) || 0;
-    const nearestFriendDue = mergeDueAt(friendDue, watchDue, watchlistDue);
+    // 武装窗口按“实际可偷时刻”（成熟 + 面板偷菜延迟）计算：
+    // 设 60 秒时应在 10:00:55 武装、而非 09:59:55。
+    const nearestFriendDue = effectiveStealDueAt(mergeDueAt(friendDue, watchDue, watchlistDue));
 
     let candidate = null;
     if (nearestFriendDue > now && nearestFriendDue - now <= SENTINEL_ARM_NORMAL_MS) {
@@ -921,11 +971,12 @@ let stealOverdueStrikes = 0;
 
 function armStealWake(now = Date.now()) {
     const watchlistDue = Number(getNextWatchlistStealDueAtMs()) || 0;
-    const dueAt = mergeDueAt(
+    // 原始成熟时刻用于“是否有重点好友未来墙钟”判断；对外生效的时刻带延迟偏移。
+    const dueAt = effectiveStealDueAt(mergeDueAt(
         Number(getNextStealDueAtMs()) || 0,
         getNextWatchDueAt(now),
         watchlistDue
-    );
+    ));
     if (dueAt > now) {
         stealOverdueStrikes = 0;
         // 普通偷菜按成熟墙钟一次性到点唤醒；若 dueAt 来自 HOT/PREARM，

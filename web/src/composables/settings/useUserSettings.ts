@@ -55,6 +55,17 @@ const DEVICE_PROTOCOL_PRESETS = [
     },
   },
   {
+    // iOS 的 UA 不区分具体机型（只报 iPhone），机型只体现在登录设备信息的
+    // sys_hardware，故 userAgent 留空走手机 QQ 预设。
+    label: 'iPhone 14',
+    value: 'iphone_14',
+    config: {
+      userAgent: '',
+      deviceBrand: 'Apple',
+      deviceModel: 'iPhone 14',
+    },
+  },
+  {
     label: 'Huawei Mate 60 Pro',
     value: 'mate_60_pro',
     config: {
@@ -70,6 +81,17 @@ const DEVICE_PROTOCOL_PRESETS = [
       userAgent: 'Mozilla/5.0 (Linux; Android 14; 24031PN0DC Build/UKQ1.231003.002) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.47.2560(0x28002F39) NetType/WIFI Language/zh_CN',
       deviceBrand: 'Xiaomi',
       deviceModel: 'Xiaomi 14 Ultra',
+    },
+  },
+  {
+    // 国行一加13 的 UA 型号段是 PJZ110（国际版为 CPH2649/CPH2653），
+    // Build 为 ColorOS 15 / Android 15 的 AP3A.240617.008。
+    label: 'OnePlus 13',
+    value: 'oneplus_13',
+    config: {
+      userAgent: 'Mozilla/5.0 (Linux; Android 15; PJZ110 Build/AP3A.240617.008) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.47.2560(0x28002F39) NetType/WIFI Language/zh_CN',
+      deviceBrand: 'OnePlus',
+      deviceModel: 'OnePlus 13',
     },
   },
 ] as const

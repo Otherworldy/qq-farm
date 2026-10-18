@@ -26,6 +26,7 @@ temp/
 /.pnpm-store/
 
 # Local agent credentials, session exports and private configuration
+.pi/
 .codex/
 .claude/
 .claude.json

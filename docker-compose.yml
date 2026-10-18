@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: core/Dockerfile
+      # 前端产物不在仓库里（见 .gitignore），构建前请先执行：
+      #   pnpm build:web
+      # 需要换基础镜像时：
+      #   docker compose build --build-arg NODE_IMAGE=node:20-alpine
     image: qq-farm-bot:latest
     container_name: qq-farm-bot
     restart: unless-stopped

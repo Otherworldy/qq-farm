@@ -227,15 +227,32 @@ test('催熟兜底摘要下限常量保持高斯抖动且不低于一分钟', ()
   assert.match(src, /PRIORITY_SUMMARY_FLOOR_MAX_MS = 120_000/);
 });
 
-test('unknown friend maturity uses only a five-to-eight-minute rediscovery fallback', () => {
+test('unknown friend maturity rediscovery uses the configured interval and keeps a five-to-eight-minute fallback', () => {
+  // 区间接线：面板「偷菜巡查最小/最大 (秒)」→ CONFIG，未配置时回退到硬编码常量。
   assert.match(src, /STEAL_REDISCOVERY_MIN_MS = 5 \* 60_000/);
   assert.match(src, /STEAL_REDISCOVERY_MAX_MS = 8 \* 60_000/);
+  assert.match(src, /Number\(CONFIG\.stealCheckIntervalMin\) \|\| STEAL_REDISCOVERY_MIN_MS/);
+  assert.match(src, /Number\(CONFIG\.stealCheckIntervalMax\) \|\| STEAL_REDISCOVERY_MAX_MS/);
   const start = src.indexOf('function stealRediscoveryDelayMs');
   const end = src.indexOf('function idleMaxSleepMs', start);
-  assert.match(
-    src.slice(start, end),
-    /gaussianInt\(STEAL_REDISCOVERY_MIN_MS, STEAL_REDISCOVERY_MAX_MS\)/
-  );
+  const body = src.slice(start, end);
+  assert.match(body, /gaussianInt\(min, max\)/);
+  // 分支互斥：有已知成熟墙钟时按墙钟到点（提前 return），只有 dueAt 为 0 的
+  // 末段分支才用重新发现区间。若改成无条件调用，下面的顺序断言会红。
+  const wake = src.slice(src.indexOf('function armStealWake'), src.indexOf('async function runStealTick'));
+  const rediscoveryAt = wake.indexOf('nextStealRunAt = now + stealRediscoveryDelayMs()');
+  const dueBranchAt = wake.indexOf('dueAt + randInt(30, 120)');
+  const overdueAt = wake.indexOf('stealOverdueBackoffMs(');
+  assert.ok(dueBranchAt >= 0 && overdueAt >= 0 && rediscoveryAt >= 0,
+    '到期/过期/重新发现三个分支都存在');
+  assert.ok(dueBranchAt < rediscoveryAt,
+    '到期分支在重新发现之前（有自己的到点唤醒，不借用发现区间）');
+  assert.ok(overdueAt < rediscoveryAt,
+    '过期分支在重新发现之前（走短退避，不借用发现区间）');
+  // 两个前置分支必须以 return 结束，否则会落到末段重新发现分支。
+  const beforeRediscovery = wake.slice(0, rediscoveryAt);
+  assert.equal((beforeRediscovery.match(/\n\s*return;/g) || []).length, 2,
+    '到期与过期分支各自提前 return，只有无墙钟时才走到重新发现');
 });
 
 test('the steal dashboard clock does not masquerade own-crop maturity as friend maturity', () => {
@@ -511,6 +528,9 @@ test('普通面板 getFriends 在途：自己成熟收获、好友到点偷菜�
       getNextWatchDueAt: () => Date.now() + 20,
       getNextWatchlistStealDueAtMs: () => 0,
       mergeDueAt,
+      // 到点偏移（面板偷菜延迟）不在本切片内；这里按“无延迟”注入，
+      // 本用例只关心面板读取在途时收益链是否照常出手。
+      effectiveStealDueAt: due => due,
       setTimeout,
       clearTimeout,
     };

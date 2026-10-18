@@ -1,5 +1,12 @@
 node_modules
+core/data/logs/*
+!core/data/logs/.gitkeep
+core/data/*.json
+!core/data/.gitkeep
+# web/dist 由本机 `pnpm build:web` 生成后打进镜像（见 core/Dockerfile），
+# 因此不能排除；仓库本身仍通过 .gitignore 不追踪它。
 dist
+!web/dist
 .git
 .gitignore
 .env
@@ -11,11 +18,6 @@ dist
 *.tgz
 .DS_Store
 Thumbs.db
-core/data/logs/*
-!core/data/logs/.gitkeep
-core/data/*.json
-!core/data/.gitkeep
-web/dist
 web/node_modules
 coverage
 .nyc_output

@@ -1,25 +1,11 @@
-FROM docker.1ms.run/library/node:20-alpine AS builder
-
-WORKDIR /app
-
-ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
-ENV npm_config_registry=https://registry.npmmirror.com
-
-RUN corepack enable
-
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
-COPY core/package.json ./core/
-COPY web/package.json ./web/
-
-RUN pnpm install --frozen-lockfile
-
-COPY core ./core
-COPY web ./web
-
-RUN pnpm build:web
+# 基础镜像可通过 build arg 覆盖，便于切换国内加速源或本地已有镜像：
+#   docker compose build --build-arg NODE_IMAGE=node:20-alpine
+ARG NODE_IMAGE=docker.1ms.run/library/node:20-alpine
 
 # ==========================================
-FROM docker.1ms.run/library/node:20-alpine AS prod-deps
+# core 生产依赖
+# ==========================================
+FROM ${NODE_IMAGE} AS prod-deps
 
 WORKDIR /app
 
@@ -35,8 +21,13 @@ COPY web/package.json ./web/
 RUN pnpm -C core install --prod --frozen-lockfile
 
 # ==========================================
-
-FROM docker.1ms.run/library/node:20-alpine AS runner
+# 运行镜像
+#
+# 前端产物走本地构建：仓库不追踪 web/dist（见 .gitignore），
+# 构建前请先在本机执行 `pnpm build:web`，compose 会把该目录
+# 作为构建上下文的一部分复制进来，容器内不再安装前端依赖或跑 vite。
+# ==========================================
+FROM ${NODE_IMAGE} AS runner
 
 WORKDIR /app/core
 
@@ -52,8 +43,13 @@ COPY --from=prod-deps /app/node_modules ../node_modules/
 COPY --from=prod-deps /app/core/node_modules ./node_modules/
 COPY --from=prod-deps /app/package.json ../package.json
 
-COPY --from=builder /app/core ./
-COPY --from=builder /app/web/dist ../web/dist
+COPY core ./
+COPY web/dist ../web/dist
+
+# 前端产物缺失时给出可执行的提示，而不是让面板 404。
+RUN test -f ../web/dist/index.html || ( \
+        echo "error: ../web/dist/index.html 不存在。请先在仓库根目录执行 pnpm build:web 后再构建镜像。" >&2; \
+        exit 1)
 
 RUN mkdir -p data/logs && chmod -R 755 data
 

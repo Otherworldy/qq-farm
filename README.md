@@ -86,7 +86,7 @@ export FARM_ADMIN_PASSWORD='<your-strong-password>'
 ### 把农场跑起来
 
 ```bash
-git clone https://github.com/Xb-Fishing/qq-farm-evolution.git qq-farm-bot
+git clone https://github.com/Otherworldy/qq-farm.git qq-farm-bot
 cd qq-farm-bot
 
 corepack enable
@@ -135,6 +135,8 @@ FARM_ADMIN_PASSWORD='<your-strong-password>'
 完成配置后启动：
 
 ```bash
+# 镜像不带前端产物，构建前先在本机构建一次
+pnpm build:web
 docker compose up -d --build
 ```
 
@@ -149,6 +151,7 @@ docker compose logs -f
 
 ```bash
 git pull
+pnpm build:web
 docker compose up -d --build
 ```
 

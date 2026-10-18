@@ -149,6 +149,7 @@ test('queued push fast-lane rechecks protection before harvest, with normal beha
     getPauseRemainMs: () => paused, toNum: Number, isPriorityGid: () => true,
     friendActivity: { isFriendOnlineRecently: () => true }, fastLaneRipeLandIds: () => [1],
     fastLaneRecent: new Map(), fastLaneInFlight: new Map([[42, oldRun]]),
+    getStealDelaySeconds: () => 0,
     stealHarvest: async () => { calls++; return {}; }, sumHarvestItemCount: () => ({ total: 1 }),
     recordOperation() {}, log() {}, recordEvent() {}, fastLaneDailyText: () => '', sellAllFruits: async () => {},
   };
