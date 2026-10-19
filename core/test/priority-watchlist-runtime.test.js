@@ -113,6 +113,10 @@ function fixture(t, options = {}) {
         leaveFriendFarm: async () => { leaves++; if (flags.onLeave) flags.onLeave(); },
         maybeLurkLeave: async () => { leaves++; if (flags.onLeave) flags.onLeave(); },
         getPlantBlacklist: () => [], analyzeFriendLands: () => ({ stealable: [] }),
+        // 偷菜延迟闸门（2026-10）：生产里由同模块的 gateStealByMaturity 实现，
+        // 本夹具只抽取 visitFriendForSteal，所以注入中性实现。
+        // 闸门自身的语义由 steal-timing-settings.test.js 直接覆盖。
+        gateStealByMaturity: () => {},
         getCurrentPhase: () => ({ phase: 1 }), PlantPhase: { MATURE: 4 },
         isFriendActiveEvidence: () => false, isFriendAtHomeRecently: () => false,
         isFriendAtHome: () => false, isFriendOnlineRecently: () => false,

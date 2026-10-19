@@ -2,7 +2,7 @@ const { PlantPhase } = require('../config/config');
 const { getPlantById } = require('../config/gameConfig');
 const { getPlantBlacklist, isAutomationOn, getPauseRemainMs, getStealDelaySeconds } = require('../models/store');
 const { getUserState } = require('../utils/network');
-const { toNum, log, logWarn, randomDelay, sleep } = require('../utils/utils');
+const { toNum, toTimeSec, log, logWarn, randomDelay, sleep } = require('../utils/utils');
 const {
     getGovernedRejectionInfo,
     getGovernedWarnLifecycleSeq,
@@ -18,7 +18,7 @@ const {
   checkCanOperateRemote,
   handleFriendEnterError,
 } = require('./friend-api');
-const { inspectFriendLands, unwatchFriend, isPriorityGid } = require('./fertilizer-watch');
+const { inspectFriendLands, unwatchFriend, isPriorityGid, watchFriend } = require('./fertilizer-watch');
 const friendActivity = require('./friend-activity');
 const { getCurrentPhase } = require('./farm-land-analyzer');
 const { analyzeFriendLands } = require('./friend-land-analyzer');
@@ -408,6 +408,9 @@ async function visitFriend(friend, tally, myGid, accountId) {
   const analysis = analyzeFriendLands(lands, myGid, name, { plantBlacklist });
   const actionLogs = [];
 
+  // 面板偷菜延迟同口径：帮/捣乱顺带偷也不在成熟瞬间出手。
+  gateStealByMaturity(gid, name, analysis, lands);
+
   // ---- Steal first (highest priority vs water/weed/bug) ----
   if (isAutomationOn('friend_steal') && analysis.stealable.length > 0) {
     const canOp = await checkCanOperateRemote(gid, 0x2714); // 10004
@@ -624,19 +627,112 @@ async function visitFriend(friend, tally, myGid, accountId) {
 const fastLaneInFlight = new Map(); // gid -> Promise
 const fastLaneRecent = new Map(); // gid -> Map<landId, at>（防推送回声重复开火）
 
+/**
+ * 面板「偷菜延迟」的抖动下限（秒）：成熟后等 N 秒（±5%）里的 N*0.95。
+ * 这是「不得早于」的下界；真实出手时刻由 worker 的 effectiveStealDueAt
+ * 抽同一档抖动决定。两处必须同口径。
+ */
+function stealDelayFloorSec(delaySec) {
+  return Math.max(0, Math.floor(Number(delaySec) * 0.95) || 0);
+}
+
+/** 面板配置的偷菜延迟秒数；读取失败按 0，绝不阻断偷菜。 */
+function configuredStealDelaySec() {
+  if (typeof getStealDelaySeconds !== 'function') return 0;
+  try {
+    return Math.max(0, Number(getStealDelaySeconds(process.env.FARM_ACCOUNT_ID || '')) || 0);
+  } catch { return 0; }
+}
+
+/**
+ * 地块的真实成熟时刻（秒，0 = 未知）。
+ * 成熟时服务端 phases 的最后一条就是成熟阶段，它的 begin_time 即成熟开始时刻。
+ * 与全仓其余 phases 读取（fertilizer-watch/farm-land-analyzer 等）同口径走 toTimeSec，
+ * 毫秒形态的 begin_time 不能被当成秒——那会让闸门恒不成立，把地块永久挡住。
+ */
+function landMatureAtSec(land) {
+  const phases = land && land.plant && land.plant.phases;
+  if (!Array.isArray(phases) || phases.length === 0) return 0;
+  const last = phases[phases.length - 1];
+  return toTimeSec(last && (last.begin_time != null ? last.begin_time : last.beginTime));
+}
+
+/**
+ * 按地块真实成熟时刻剔除仍处在延迟窗口内的可偷地块。
+ *
+ * 面板偷菜延迟的语义是「成熟时刻偏移」，而唯一真正知道每块地什么时候成熟的地方
+ * 就是拿到 phases 的这里。只在 worker 的唤醒时刻加偏移挡不住任何路径：巡查、巡田、
+ * 缓存派发都是「进门看到能偷就偷」，会在成熟那一秒出手，在线好友一眼能看出不是人。
+ * 早就熟透（成熟 + 延迟已过）的地块照常立即出手，不会因为该设置白送。
+ * 成熟时刻未知时放行。
+ *
+ * 返回被挡下的地块信息，供调用方把重试钉回盯梢状态。
+ */
+function applyStealDelayGate(analysis, lands, options = {}) {
+  const gate = { delayedLands: 0, earliestDelayedMatureAtMs: 0 };
+  if (!analysis || !Array.isArray(analysis.stealable) || analysis.stealable.length === 0) return gate;
+  const delaySec = options.delaySec != null ? options.delaySec : configuredStealDelaySec();
+  const floorSec = stealDelayFloorSec(delaySec);
+  if (floorSec <= 0) return gate;
+  const serverSec = Math.floor((Number(options.now) || Date.now()) / 1000);
+  // 只看本轮真正打算偷的地块：还没熟的地块本来就不在 stealable 里，
+  // 把它们算进“被延迟挡下”会凭空布控。
+  const wanted = new Set(analysis.stealable.map(toNum));
+  const delayed = new Set();
+  let earliestSec = 0;
+  for (const land of Array.isArray(lands) ? lands : []) {
+    const landId = toNum(land && land.id);
+    if (!landId || !wanted.has(landId)) continue;
+    const matureAt = landMatureAtSec(land);
+    if (matureAt <= 0 || matureAt + floorSec <= serverSec) continue;
+    delayed.add(landId);
+    if (!earliestSec || matureAt < earliestSec) earliestSec = matureAt;
+  }
+  if (delayed.size === 0) return gate;
+  analysis.stealable = analysis.stealable.filter(landId => !delayed.has(toNum(landId)));
+  if (Array.isArray(analysis.stealableInfo)) {
+    analysis.stealableInfo = analysis.stealableInfo.filter(info => !delayed.has(toNum(info && info.landId)));
+  }
+  gate.delayedLands = delayed.size;
+  // 钉回地块的**真实**成熟时刻，不带任何调用瞬间的亚秒残差。
+  gate.earliestDelayedMatureAtMs = earliestSec * 1000;
+  return gate;
+}
+
+/**
+ * 把「本轮因偷菜延迟被挡下」的地块钉回盯梢状态。
+ * 不重新布控就会被当成“没有可偷”清账，那些菜要等下一轮摘要重新发现（5-8 分钟）
+ * 才回来——等于延迟设置白送。
+ * 盯梢的 ripeAt 保持原始成熟时刻，偏移仍由 worker 的 effectiveStealDueAt 统一
+ * 施加（它保证不早于成熟 + 延迟下限），不会叠加两次。
+ */
+function rearmDelayedSteal(gid, name, gate) {
+  if (!gate || gate.delayedLands <= 0 || !(gate.earliestDelayedMatureAtMs > 0)) return;
+  try {
+    watchFriend(gid, name, {
+      now: Date.now(),
+      ripeAt: gate.earliestDelayedMatureAtMs,
+      mode: 'prearm',
+      reason: 'ripe_prearm',
+    });
+  } catch { /* 布控失败不影响本轮已完成的动作 */ }
+}
+
+/** 偷菜延迟闸门 + 必要时的盯梢重布。两处偷菜出口共用。 */
+function gateStealByMaturity(gid, name, analysis, lands) {
+  rearmDelayedSteal(gid, name, applyStealDelayGate(analysis, lands));
+}
+
 function fastLaneRipeLandIds(lands, { delaySec = 0, now = Date.now() } = {}) {
   const serverSec = Math.floor(now / 1000);
   // 面板偷菜延迟：成熟后等 N 秒（±5%）再开火。已过延迟窗口的地块照常立即出手，
   // 所以这里只需要比“成熟时刻 + 延迟下限”与当前时刻。
-  const delayFloorSec = Math.max(0, Math.floor(Number(delaySec) * 0.95) || 0);
+  const delayFloorSec = stealDelayFloorSec(delaySec);
   const ids = [];
   for (const land of Array.isArray(lands) ? lands : []) {
-    const plant = land && land.plant;
-    const phases = plant && plant.phases;
     const landId = toNum(land && land.id);
-    if (!landId || !Array.isArray(phases) || phases.length === 0) continue;
-    const last = phases[phases.length - 1];
-    const begin = toNum(last && (last.begin_time != null ? last.begin_time : last.beginTime));
+    if (!landId) continue;
+    const begin = landMatureAtSec(land);
     // 已成熟（最后阶段开始时刻已过）且植株还在 = 可偷窗口
     if (begin > 0 && begin + delayFloorSec <= serverSec) ids.push(landId);
   }
@@ -801,6 +897,8 @@ async function visitFriendForSteal(friend, tally, myGid, accountId, options = {}
   const analysis = analyzeFriendLands(lands, myGid, name, { plantBlacklist });
   const actionLogs = [];
   let stealAttemptFailed = false;
+  // 面板偷菜延迟在此收口：全量巡查、抢收快路径、巡田、缓存派发都从这里出手。
+  gateStealByMaturity(gid, name, analysis, lands);
 
   // Check if any stealable land still has remaining steal slots for us
   const hasStealSlot = lands.some(land => {
@@ -1276,6 +1374,9 @@ async function visitFriendForAutoBad(friend, tally, myGid, options = {}) {
 module.exports = {
   fastLaneSteal,
   fastLaneRipeLandIdsForTests: fastLaneRipeLandIds,
+  applyStealDelayGateForTests: applyStealDelayGate,
+  gateStealByMaturityForTests: gateStealByMaturity,
+  landMatureAtSecForTests: landMatureAtSec,
   runBatchWithFallback,
   doFriendOperation,
   visitFriend,

@@ -11,6 +11,7 @@ const { toNum, toTimeSec, getServerTimeSec, log } = require('../utils/utils');
 const { gaussianInt } = require('../utils/behavior');
 const { ripeDueAtMs } = require('./steal-schedule');
 const friendActivity = require('./friend-activity');
+const { getStealDelaySeconds } = require('../models/store');
 
 const WATCH_STATUS = Object.freeze({
   HOT: 'HOT',
@@ -44,6 +45,33 @@ const COOLDOWN_MS = 30_000;
 // 自然成熟到点后保留 90 秒受控重试；成功进门即删除。这样预算瞬时拥塞不会让
 // PREARM 5 秒后消失并退化成全好友 GetAll 重试。
 const PREARM_GRACE_MS = 90_000;
+
+/**
+ * 面板「偷菜延迟 (秒)」在盯梢状态机里的取值：成熟后等 N 秒才允许出手。
+ * 只取 ±5% 抖动的下限（与 friend-visit 的推送快车道同口径）：这是「不得早于」
+ * 的下界，真实出手时刻由 worker 的 effectiveStealDueAt 抽同一档抖动决定。
+ * 读取失败按 0 处理，绝不阻断偷菜。
+ */
+function stealDelayFloorMs() {
+  let sec = 0;
+  try {
+    sec = Math.max(0, Number(getStealDelaySeconds(process.env.FARM_ACCOUNT_ID || '')) || 0);
+  } catch { sec = 0; }
+  return Math.max(0, Math.floor(sec * 0.95)) * 1000;
+}
+
+/**
+ * 盯梢目标真正的可出手时刻。
+ * 作物已成熟（ripeAt 不晚于到点时刻）时顺延到「成熟 + 偷菜延迟」：否则会在
+ * 成熟那一秒出手，在线好友一眼能看出不是人。
+ * 尚未成熟的 HOT 保持原到点时刻——它的秒级盯梢用来发现继续施肥，与偷菜无关。
+ */
+function watchActionableAt(watch) {
+  const next = Number(watch && watch.nextVisitAt) || 0;
+  const ripeAt = Number(watch && watch.ripeAt) || 0;
+  if (ripeAt <= 0 || ripeAt > next) return next;
+  return Math.max(next, ripeAt + stealDelayFloorMs());
+}
 
 // 盯梢进门的全局预算：最多 10 次/10 秒，且相邻至少 400ms。
 // PREARM 到点可优先一次，但该次访问仍计入后续预算。
@@ -179,7 +207,10 @@ function armPreRipe(gid, name, options = {}) {
     name: resolvedName,
     status: WATCH_STATUS.PREARM,
     createdAt: now,
-    nextVisitAt: Math.max(now, ripeAt),
+    // 到点时刻保留真实的成熟时刻（可能已过去）：夹成 now 会把“成熟 + 延迟”
+    // 重新计一遍，让被延迟挡下的地块实际等成接近 2N。worker 的
+    // effectiveStealDueAt 对过去的 due 同样只加一次偏移，语义仍然正确。
+    nextVisitAt: ripeAt,
     ripeAt,
     hardUntil: Math.max(now, ripeAt) + PREARM_GRACE_MS,
     lastVisitAt: 0,
@@ -347,8 +378,8 @@ function advanceWatches(now) {
 
 function dueEntries(now, status) {
   return [...watches.entries()]
-    .filter(([, watch]) => watch.status === status && Number(watch.nextVisitAt) <= now)
-    .sort((a, b) => Number(a[1].nextVisitAt) - Number(b[1].nextVisitAt));
+    .filter(([, watch]) => watch.status === status && watchActionableAt(watch) <= now)
+    .sort((a, b) => watchActionableAt(a[1]) - watchActionableAt(b[1]));
 }
 
 function watchTarget(gid, watch) {

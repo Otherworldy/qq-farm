@@ -13,6 +13,10 @@ const store = require('../src/models/store');
 
 const sourceRoot = path.join(__dirname, '..');
 const workerSrc = fs.readFileSync(path.join(sourceRoot, 'src', 'core', 'worker.js'), 'utf8');
+const visitSrc = fs.readFileSync(
+  path.join(sourceRoot, 'src', 'services', 'friend-visit.js'),
+  'utf8'
+);
 const limitsSrc = fs.readFileSync(
   path.join(sourceRoot, 'src', 'services', 'friend-operation-limits.js'),
   'utf8'
@@ -227,9 +231,6 @@ test('the sentinel arms and pre-enters against the shifted clock', () => {
 });
 
 test('the push fast lane honours the same maturity offset before firing', () => {
-  const visitSrc = fs.readFileSync(
-    path.join(sourceRoot, 'src', 'services', 'friend-visit.js'), 'utf8'
-  );
   const ripe = visitSrc.slice(
     visitSrc.indexOf('function fastLaneRipeLandIds'),
     visitSrc.indexOf('async function fastLaneDailyText')
@@ -237,8 +238,15 @@ test('the push fast lane honours the same maturity offset before firing', () => 
   assert.match(ripe, /delaySec = 0/, 'the ripe filter takes the configured delay');
   assert.match(ripe, /begin \+ delayFloorSec <= serverSec/,
     'a land only counts as ripe once maturity + delay has passed');
-  assert.match(ripe, /Math\.floor\(Number\(delaySec\) \* 0\.95\)/,
-    'the filter respects the lower jitter bound so it never fires early');
+  // 抖动下限现在收敛在共享的 stealDelayFloorSec 里，执行器闸门与快车道必须同口径。
+  const floorFn = visitSrc.slice(
+    visitSrc.indexOf('function stealDelayFloorSec'),
+    visitSrc.indexOf('/** 面板配置的偷菜延迟秒数')
+  );
+  assert.match(floorFn, /Math\.floor\(Number\(delaySec\) \* 0\.95\)/,
+    'the shared floor respects the lower jitter bound so it never fires early');
+  assert.match(ripe, /stealDelayFloorSec\(delaySec\)/,
+    'the fast lane goes through the shared floor, not its own copy');
 
   const lane = visitSrc.slice(
     visitSrc.indexOf('async function fastLaneSteal'),
@@ -261,12 +269,16 @@ test('fastLaneRipeLandIds only reports lands past maturity plus delay', () => {
     land(2, nowSec - 30),  // 刚熟 30 秒
     land(3, nowSec + 30),  // 还没熟
   ];
-  const ctx = { Date: { now: () => now }, toNum: Number };
+  const ctx = {
+    toNum: Number,
+    toTimeSec: toTimeSecForTests,
+    Date: { now: () => now },
+    stealDelayFloorSec: (delaySec) => Math.max(0, Math.floor(Number(delaySec) * 0.95) || 0),
+  };
   vm.createContext(ctx);
-  vm.runInContext(sourceFunction(
-    fs.readFileSync(path.join(sourceRoot, 'src', 'services', 'friend-visit.js'), 'utf8'),
-    'fastLaneRipeLandIds'
-  ), ctx);
+  for (const fn of ['landMatureAtSec', 'fastLaneRipeLandIds']) {
+    vm.runInContext(sourceFunction(visitSrc, fn), ctx);
+  }
 
   // vm 在另一个 realm 建数组，展开成本 realm 数组再比较原型。
   assert.deepEqual([...ctx.fastLaneRipeLandIds(lands)], [1, 2], 'no delay: everything already ripe');
@@ -274,6 +286,148 @@ test('fastLaneRipeLandIds only reports lands past maturity plus delay', () => {
     [1], '60s delay: the 30-second-old crop must wait, the 2-minute-old one is past it');
   assert.deepEqual([...ctx.fastLaneRipeLandIds(lands, { delaySec: 300, now })],
     [], '5-minute delay: even the 2-minute-old crop waits');
+});
+
+// ==================== 到点偏移：执行器按地块真实成熟时刻收口 ====================
+
+/** 与生产同口径的秒/毫秒归一，供沙箱注入（landMatureAtSec 读它）。 */
+const toTimeSecForTests = (val) => {
+  const n = Number(val) || 0;
+  if (n <= 0) return 0;
+  return n > 1e12 ? Math.floor(n / 1000) : n;
+};
+
+function delayGateInSandbox({ lands, stealable, delaySeconds, now }) {
+  const ctx = {
+    toNum: Number,
+    toTimeSec: toTimeSecForTests,
+    Date,
+    getStealDelaySeconds: () => delaySeconds,
+    process: { env: { FARM_ACCOUNT_ID: 'synthetic-steal-timing' } },
+    analysis: { stealable: [...stealable], stealableInfo: stealable.map(landId => ({ landId })) },
+    lands,
+  };
+  vm.createContext(ctx);
+  for (const fn of ['stealDelayFloorSec', 'configuredStealDelaySec', 'landMatureAtSec', 'applyStealDelayGate']) {
+    vm.runInContext(sourceFunction(visitSrc, fn), ctx);
+  }
+  const gate = ctx.applyStealDelayGate(ctx.analysis, ctx.lands, now == null ? {} : { now });
+  return { gate, stealable: [...ctx.analysis.stealable] };
+}
+
+test('the executor drops lands still inside the delay window and keeps the ripened-out ones', () => {
+  const nowSec = 1_760_000_000;
+  const now = nowSec * 1000;
+  const land = (id, matureAtSec) => ({
+    id,
+    plant: { id: 1, phases: [{ phase: 5, begin_time: matureAtSec - 60 }, { phase: 6, begin_time: matureAtSec }] },
+  });
+  const lands = [
+    land(1, nowSec - 120), // 两分钟前就熟了
+    land(2, nowSec - 30),  // 刚熟 30 秒
+    land(3, nowSec + 30),  // 还没熟
+  ];
+
+  // 不设延迟：行为与接线前一致，看到能偷就偷。
+  const off = delayGateInSandbox({ lands, stealable: [1, 2], delaySeconds: 0, now });
+  assert.deepEqual(off.stealable, [1, 2], 'no delay: every stealable land is left alone');
+  assert.equal(off.gate.delayedLands, 0);
+
+  // 60 秒延迟：刚熟 30 秒的地块必须等，两分钟前熟透的照常出手。
+  const on = delayGateInSandbox({ lands, stealable: [1, 2], delaySeconds: 60, now });
+  assert.deepEqual(on.stealable, [1], 'the 30-second-old crop must wait, the 2-minute-old one is past it');
+  assert.equal(on.gate.delayedLands, 1, 'the gate reports how many lands it held back');
+  // 重试时刻钳回该地块的真实成熟点，不凭空拉长。
+  assert.equal(on.gate.earliestDelayedMatureAtMs, (nowSec - 30) * 1000,
+    'the retry is pinned to the real maturity of the held-back land');
+});
+
+test('the maturity gate never blocks a crop whose maturity is unknown', () => {
+  const now = 1_760_000_000_000;
+  // 服务端没给 phases（摘要来的目标、或阶段被裁剪）——无法判断就不拦。
+  const lands = [{ id: 1, plant: { id: 1 } }, { id: 2 }, { id: 3, plant: { phases: [] } }];
+  const { gate, stealable } = delayGateInSandbox({
+    lands, stealable: [1, 2, 3], delaySeconds: 60, now,
+  });
+  assert.deepEqual(stealable, [1, 2, 3], 'an unknown maturity must not cost us the steal');
+  assert.equal(gate.delayedLands, 0);
+});
+
+test('the gate holds back a land maturing exactly inside the jitter floor', () => {
+  const nowSec = 1_760_000_000;
+  const now = nowSec * 1000;
+  const land = (id, matureAtSec) => ({
+    id,
+    plant: { id: 1, phases: [{ phase: 5, begin_time: matureAtSec - 60 }, { phase: 6, begin_time: matureAtSec }] },
+  });
+  // 60 秒延迟的抖动下限是 57 秒：56 秒前熟的要等，57 秒前熟的已过下界。
+  const lands = [land(1, nowSec - 56), land(2, nowSec - 57)];
+  const { stealable } = delayGateInSandbox({ lands, stealable: [1, 2], delaySeconds: 60, now });
+  assert.deepEqual(stealable, [2],
+    'the gate uses the same +/-5% floor as the push fast lane so it can never fire early');
+});
+
+// ==================== 被延迟挡下的地块必须钉回盯梢，不能白送 ====================
+
+test('a land held back by the delay is re-armed on the watch clock instead of being lost', () => {
+  const fertilizerWatch = require('../src/services/fertilizer-watch');
+  const friendVisit = require('../src/services/friend-visit');
+  fertilizerWatch.resetFertilizerWatchForTests();
+  store.applyConfigSnapshot({ stealDelaySeconds: 60 }, { accountId: 'synthetic-steal-timing' });
+
+  const now = Date.now();
+  const nowSec = Math.floor(now / 1000);
+  const lands = [{
+    id: 1,
+    plant: { id: 1, phases: [{ phase: 5, begin_time: nowSec - 60 }, { phase: 6, begin_time: nowSec - 10 }] },
+  }];
+  const analysis = { stealable: [1], stealableInfo: [{ landId: 1, name: 'A' }] };
+
+  friendVisit.gateStealByMaturityForTests(424242, '延迟好友', analysis, lands);
+
+  assert.deepEqual(analysis.stealable, [], 'the just-ripened land is held back this round');
+  const state = fertilizerWatch.getWatchStateForTests(424242, now);
+  assert.ok(state, 'the held-back land must be pinned back onto the watch, not dropped');
+  assert.equal(state.status, fertilizerWatch.WATCH_STATUS.PREARM);
+  // 盯梢保存原始成熟时刻；偏移由 worker 的 effectiveStealDueAt 统一施加，不叠加两次。
+  assert.equal(state.ripeAt, (nowSec - 10) * 1000,
+    'the watch keeps the raw maturity so the single worker offset still applies once');
+  // 到点时刻不得夹成“现在”：地块已经熟了 10 秒，再夹一次等于把延迟重计一遍，
+  // 实际会等成接近 2N（最多约 120 秒），期间菜可能被在线主人收走。
+  assert.equal(state.nextVisitAt, (nowSec - 10) * 1000,
+    'the elapsed part of the delay must be kept, not restarted from now');
+
+  // 没有延迟时不得凭空布控。
+  fertilizerWatch.resetFertilizerWatchForTests();
+  store.applyConfigSnapshot({ stealDelaySeconds: 0 }, { accountId: 'synthetic-steal-timing' });
+  const fresh = { stealable: [1], stealableInfo: [{ landId: 1, name: 'A' }] };
+  friendVisit.gateStealByMaturityForTests(424243, '不延迟好友', fresh, lands);
+  assert.deepEqual(fresh.stealable, [1], 'no delay: the steal still fires on the spot');
+  assert.equal(fertilizerWatch.getWatchStateForTests(424243, now), null,
+    'no delay means no extra watch is invented');
+  fertilizerWatch.resetFertilizerWatchForTests();
+});
+
+test('the maturity reader uses the same second-based clock as every other phases reader', () => {
+  // proto 的 begin_time 是 int64，可能以毫秒出现。假设一个毫秒值被当成秒，
+  // 闸门就会恒不成立，把地块永久挡住（fail-closed）——必须与全仓同口径走 toTimeSec。
+  const ctx = {
+    toNum: Number,
+    toTimeSec: toTimeSecForTests,
+  };
+  vm.createContext(ctx);
+  vm.runInContext(sourceFunction(visitSrc, 'landMatureAtSec'), ctx);
+
+  const sec = 1_760_000_000;
+  assert.equal(ctx.landMatureAtSec({ plant: { phases: [{ begin_time: sec }] } }), sec,
+    'a second-based begin_time passes through');
+  assert.equal(ctx.landMatureAtSec({ plant: { phases: [{ begin_time: sec * 1000 }] } }), sec,
+    'a millisecond-based begin_time is converted, not treated as seconds');
+  assert.equal(ctx.landMatureAtSec({ plant: { phases: [{ beginTime: sec }] } }), sec,
+    'the camelCase field is read too');
+  assert.equal(ctx.landMatureAtSec({ plant: { phases: [] } }), 0, 'no phases means unknown');
+  assert.equal(ctx.landMatureAtSec({ plant: {} }), 0, 'no phases means unknown');
+  assert.equal(ctx.landMatureAtSec({}), 0, 'no plant means unknown');
 });
 
 // ==================== 旧默认值迁移 ====================
