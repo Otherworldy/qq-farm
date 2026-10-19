@@ -599,6 +599,25 @@ function createWorkerManager(deps) {
                         accountId, wrk.name, { previous: cleanText(msg.previous) });
                 }
             }
+        } else if (msg.type === 'known_friend_gids_sync' || msg.type === 'known_friend_gid_remove') {
+            // 好友 GID 只在主进程落盘。账号线程那份内存可能还是旧的偷菜延迟，
+            // 不能让它整份回写 store.json。
+            const store = require('../models/store');
+            let gids = store.getKnownFriendGids(accountId);
+            if (msg.type === 'known_friend_gid_remove') {
+                const gid = Number(msg.gid) || 0;
+                if (gid > 0) gids = gids.filter(item => item !== gid);
+            } else if (Array.isArray(msg.gids)) {
+                gids = msg.gids;
+            }
+            store.applyConfigSnapshot({ knownFriendGids: gids }, { accountId });
+            const currentWrk = workers[accountId];
+            if (currentWrk && currentWrk.process) {
+                currentWrk.process.send({
+                    type: 'config_sync',
+                    config: buildConfigSnapshotForAccount(accountId)
+                });
+            }
         } else if (msg.type === 'automation_patch') {
             const patch = msg.patch && typeof msg.patch === 'object' ? msg.patch : {};
             if ((patch.automation && typeof patch.automation === 'object')

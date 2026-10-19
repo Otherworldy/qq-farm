@@ -334,6 +334,24 @@ test('global budget yields one due trend target and enforces a minimum gap', () 
   assert.notEqual(secondDue[0].gid, firstDue[0].gid);
 });
 
+test('a PREARM armed after the delay gate stays due at maturity plus the delay floor', () => {
+  const store = require('../src/models/store');
+  const previousAccount = process.env.FARM_ACCOUNT_ID;
+  process.env.FARM_ACCOUNT_ID = 'delay-rearm';
+  store.applyConfigSnapshot({ stealDelaySeconds: 60 }, { accountId: 'delay-rearm', persist: false });
+  try {
+    const now = 1_792_400_000_000;
+    const ripeAt = now - 48_000;
+    watchFriend(77, '刚熟', { now, ripeAt, mode: 'prearm', reason: 'ripe_prearm' });
+    assert.equal(getNextWatchDueAt(now), ripeAt + 57_000);
+    assert.equal(getDueWatchFriends(ripeAt + 57_000 - 1).length, 0);
+    assert.equal(getDueWatchFriends(ripeAt + 57_000)[0].gid, 77);
+  } finally {
+    if (previousAccount == null) delete process.env.FARM_ACCOUNT_ID;
+    else process.env.FARM_ACCOUNT_ID = previousAccount;
+  }
+});
+
 test('PREARM is isolated from fertilizer trend and fires only at ripeAt once', () => {
   const now = Date.now();
   const ripeAt = now + 5000;

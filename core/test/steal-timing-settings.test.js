@@ -52,6 +52,24 @@ test('steal delay accepts an explicit zero instead of forcing the old default of
   assert.equal(store.getStealDelaySeconds('synthetic-clamp-high'), 60);
 });
 
+test('a worker write keeps the panel steal delay that is already on disk', () => {
+  const memory = {
+    stealDelaySeconds: 0,
+    knownFriendGids: [7],
+    intervals: { stealMin: 25, stealMax: 30 },
+  };
+  const disk = {
+    stealDelaySeconds: 60,
+    knownFriendGids: [1],
+    intervals: { stealMin: 300, stealMax: 480 },
+  };
+  const kept = store.retainPanelOwnedFields(memory, disk);
+  assert.equal(memory.stealDelaySeconds, 60);
+  assert.equal(memory.intervals.stealMin, 300);
+  assert.deepEqual(memory.knownFriendGids, [7], 'worker-owned fields stay with the worker');
+  assert.deepEqual(kept, [{ memDelay: 0, diskDelay: 60 }]);
+});
+
 test('default account config keeps steal delay at zero so upstream behavior is unchanged', () => {
   const cfg = store.getDefaultAccountConfig();
   assert.equal(cfg.stealDelaySeconds, 0, 'default must not silently add a one second wait');
@@ -213,14 +231,16 @@ test('the sentinel arms and pre-enters against the shifted clock', () => {
     workerSrc.indexOf('function armStealWake'),
     workerSrc.indexOf('async function runStealTick')
   );
-  assert.match(wake, /effectiveStealDueAt\(mergeDueAt\(/, 'wake clocks go through the shift');
+  assert.match(wake, /nextAdjustedStealDueAt\(now\)/, 'wake clocks go through the shift');
+  assert.match(workerSrc, /mergeDueAt\(effectiveStealDueAt\(rawDue\), getNextWatchDueAt\(now\)\)/,
+    'raw maturity is shifted once; an already-delayed watch is not shifted again');
   assert.match(wake, /markStealDueAt\(dueAt\)/, 'the shifted clock is what stealIsDue sees');
 
   const sentinel = workerSrc.slice(
     workerSrc.indexOf('function armMaturitySentinel'),
     workerSrc.indexOf('// 偷菜 due 连续')
   );
-  assert.match(sentinel, /effectiveStealDueAt\(mergeDueAt\(/,
+  assert.match(sentinel, /nextAdjustedStealDueAt\(now\)/,
     'the arming window is measured to the shifted clock, not raw maturity');
   // 预进门复用 armed.dueAt（已是偏移后时刻），因此提前量自动对齐。
   const preEnter = workerSrc.slice(

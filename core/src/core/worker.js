@@ -777,6 +777,19 @@ function effectiveStealDueAt(dueAt) {
     return due + stealDelayOffsetMsFor(due);
 }
 
+/**
+ * 下一次偷菜唤醒。摘要/重点墙钟是原始成熟时刻，在这里加一次延迟。
+ * 盯梢自己的 getNextWatchDueAt 已经是可出手时刻（含延迟下限），不能再加，
+ * 否则被闸门挡下的地块会等到大约 2 倍延迟，宽限耗尽后直接丢菜。
+ */
+function nextAdjustedStealDueAt(now = Date.now()) {
+    const rawDue = mergeDueAt(
+        Number(getNextStealDueAtMs()) || 0,
+        Number(getNextWatchlistStealDueAtMs()) || 0
+    );
+    return mergeDueAt(effectiveStealDueAt(rawDue), getNextWatchDueAt(now));
+}
+
 // ==================== 好友成熟哨兵：最后几秒武装，到点即刻出手 ====================
 // 自己的菜由下方独立绝对墙钟保护器负责；好友哨兵只处理偷菜，避免两种 due 共用状态。
 const SENTINEL_ARM_WATCHLIST_MS = 5_000;  // 重点好友：剩 5s 武装
@@ -931,13 +944,9 @@ async function runSentinelStrike() {
  */
 function armMaturitySentinel(now = Date.now()) {
     if (friendSyncPaused) { clearSentinel(); return; }
-    // 好友侧最近 due：盯梢目标(重点好友)与普通好友分开取
-    const friendDue = Number(getNextStealDueAtMs()) || 0;
-    const watchDue = getNextWatchDueAt(now);
-    const watchlistDue = Number(getNextWatchlistStealDueAtMs()) || 0;
     // 武装窗口按“实际可偷时刻”（成熟 + 面板偷菜延迟）计算：
     // 设 60 秒时应在 10:00:55 武装、而非 09:59:55。
-    const nearestFriendDue = effectiveStealDueAt(mergeDueAt(friendDue, watchDue, watchlistDue));
+    const nearestFriendDue = nextAdjustedStealDueAt(now);
 
     let candidate = null;
     if (nearestFriendDue > now && nearestFriendDue - now <= SENTINEL_ARM_NORMAL_MS) {
@@ -972,11 +981,7 @@ let stealOverdueStrikes = 0;
 function armStealWake(now = Date.now()) {
     const watchlistDue = Number(getNextWatchlistStealDueAtMs()) || 0;
     // 原始成熟时刻用于“是否有重点好友未来墙钟”判断；对外生效的时刻带延迟偏移。
-    const dueAt = effectiveStealDueAt(mergeDueAt(
-        Number(getNextStealDueAtMs()) || 0,
-        getNextWatchDueAt(now),
-        watchlistDue
-    ));
+    const dueAt = nextAdjustedStealDueAt(now);
     if (dueAt > now) {
         stealOverdueStrikes = 0;
         // 普通偷菜按成熟墙钟一次性到点唤醒；若 dueAt 来自 HOT/PREARM，

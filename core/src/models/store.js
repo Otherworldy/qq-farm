@@ -916,6 +916,18 @@ function getAccountConfigSnapshot(accountId) {
     return normalizeAccountConfig(globalConfig.accountConfigs[id], accountFallbackConfig);
 }
 
+function noteStealDelayChange(accountId, before, after) {
+    const prev = normalizeStealDelaySeconds(before, 0);
+    const next = normalizeStealDelaySeconds(after, 0);
+    if (prev === next) return;
+    const caller = (new Error().stack || '')
+        .split('\n')
+        .slice(2, 5)
+        .map(line => line.trim())
+        .join(' | ');
+    console.warn(`[系统] 偷菜延迟变更 account=${accountId || '-'} ${prev} -> ${next} ${caller}`);
+}
+
 function setAccountConfigSnapshot(accountId, config, save = true) {
     const id = resolveAccountId(accountId);
     if (!id) {
@@ -925,7 +937,9 @@ function setAccountConfigSnapshot(accountId, config, save = true) {
         return cloneAccountConfig(accountFallbackConfig);
     }
 
+    const previous = globalConfig.accountConfigs[id] && globalConfig.accountConfigs[id].stealDelaySeconds;
     globalConfig.accountConfigs[id] = normalizeAccountConfig(config, accountFallbackConfig);
+    noteStealDelayChange(id, previous, globalConfig.accountConfigs[id].stealDelaySeconds);
     if (save) saveGlobalConfig();
     return cloneAccountConfig(globalConfig.accountConfigs[id]);
 }
@@ -1266,10 +1280,64 @@ function sanitizeGlobalConfigBeforeSave() {
     globalConfig.accountDeviceProtocols = cleanAccountProtocols;
 }
 
+// 面板拥有的字段。账号线程和主进程各有一份内存，但共用 store.json。
+// 线程回写时如果带着自己启动时的旧值，会把主进程刚保存的偷菜延迟盖回 0。
+const PANEL_OWNED_FIELDS = [
+    'stealDelaySeconds', 'plantOrderRandom', 'plantDelaySeconds', 'intervals',
+    'plantingStrategy', 'preferredSeedId', 'prioritize2x2Crops', 'autoCodeRefresh',
+    'friendQuietHours', 'kickoutRelogin',
+    'fertilizerBuyOrganicCount', 'fertilizerBuyOrganicThresholdHours',
+    'fertilizerBuyNormalCount', 'fertilizerBuyNormalThresholdHours',
+    'fertilizerBuyCheckIntervalMinutes', 'goldenBugKeepCount', 'goldenBugRoundLimit',
+    'autoAcceptFriendMinLevel', 'bagSeedPriority', 'bagSeedKnownIds', 'bagSeedFallbackStrategy'
+];
+
+function isWorkerConfigProcess() {
+    try {
+        return require('node:worker_threads').isMainThread === false;
+    } catch {
+        return false;
+    }
+}
+
+/** 账号线程回写前，用磁盘上的面板字段盖住线程内存里的旧副本。返回被保住的延迟变更。 */
+function retainPanelOwnedFields(memoryConfig, diskConfig) {
+    if (!memoryConfig || !diskConfig) return null;
+    const kept = [];
+    for (const field of PANEL_OWNED_FIELDS) {
+        if (diskConfig[field] === undefined) continue;
+        if (field === 'stealDelaySeconds') {
+            const memDelay = normalizeStealDelaySeconds(memoryConfig.stealDelaySeconds, 0);
+            const diskDelay = normalizeStealDelaySeconds(diskConfig.stealDelaySeconds, 0);
+            if (memDelay !== diskDelay) kept.push({ memDelay, diskDelay });
+        }
+        memoryConfig[field] = diskConfig[field];
+    }
+    return kept;
+}
+
+function retainPanelOwnedFieldsFromDisk(diskText) {
+    if (!diskText) return;
+    let disk;
+    try { disk = JSON.parse(diskText); } catch { return; }
+    const diskAccounts = disk && disk.accountConfigs;
+    if (!diskAccounts || typeof diskAccounts !== 'object') return;
+    const memoryAccounts = globalConfig.accountConfigs || {};
+    for (const [id, diskCfg] of Object.entries(diskAccounts)) {
+        const memoryCfg = memoryAccounts[id];
+        if (!memoryCfg || !diskCfg || typeof diskCfg !== 'object') continue;
+        const kept = retainPanelOwnedFields(memoryCfg, diskCfg) || [];
+        for (const row of kept) {
+            console.warn(`[系统] 账号线程回写已保留偷菜延迟 account=${id} 内存 ${row.memDelay} -> 磁盘 ${row.diskDelay}`);
+        }
+    }
+}
+
 function saveGlobalConfig(options = {}) {
     ensureDataDir();
     try {
         const oldContent = readTextFile(STORE_FILE, '');
+        if (isWorkerConfigProcess()) retainPanelOwnedFieldsFromDisk(oldContent);
         sanitizeGlobalConfigBeforeSave();
         const newContent = JSON.stringify(globalConfig, null, 2);
         if (oldContent !== newContent) {
@@ -2320,6 +2388,7 @@ module.exports = {
     getAutoBadFriendGids,
     setAutoBadFriendGids,
     getStealDelaySeconds,
+    retainPanelOwnedFields,
     getPlantOrderRandom,
     getPlantDelaySeconds,
     getAutoAcceptFriendMinLevel,

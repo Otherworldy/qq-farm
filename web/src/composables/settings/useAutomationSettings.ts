@@ -152,8 +152,11 @@ export function useAutomationSettings({
     automationSaving.value = true
     try {
       localAutoCodeRefresh.value.intervalMinutes = normalizeAutoCodeRefreshInterval(localAutoCodeRefresh.value.intervalMinutes)
+      // 自动控制页不编辑偷菜延迟。旧页面内存里常常还是 0，整份提交会把
+      // 已经保存的延迟盖掉，所以这里明确不带这个字段。
+      const { stealDelaySeconds: _stealDelaySeconds, ...settingsWithoutDelay } = settings.value || {}
       const fullSettings = {
-        ...settings.value,
+        ...settingsWithoutDelay,
         automation: localAutomationSettings.value.automation,
         autoCodeRefresh: localAutoCodeRefresh.value,
         autoAcceptFriendMinLevel: localAutomationSettings.value.autoAcceptFriendMinLevel,

@@ -207,7 +207,9 @@ test('known ordinary steal maturity waits for due while HOT and PREARM keep inde
   const start = src.indexOf('function armStealWake');
   const end = src.indexOf('async function runStealTick', start);
   const body = src.slice(start, end);
-  assert.match(body, /getNextWatchDueAt\(now\)/);
+  assert.match(body, /nextAdjustedStealDueAt\(now\)/);
+  const adjusted = src.slice(src.indexOf('function nextAdjustedStealDueAt'), src.indexOf('function armMaturitySentinel'));
+  assert.match(adjusted, /getNextWatchDueAt\(now\)/, 'HOT/PREARM keep their own actionable visit time');
   // 2026-09-22 催熟兜底：重点好友挂未来墙钟时，真实到期与 60-120s 摘要
   // 刷新下限取 min；无重点墙钟时保持按真实到期一次性唤醒。
   assert.match(body, /nextStealRunAt = Math\.min\(/);

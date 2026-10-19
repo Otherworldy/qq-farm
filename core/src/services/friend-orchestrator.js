@@ -763,10 +763,19 @@ async function bootstrapFriendDogInfoCacheIfNeeded() {
 }
 
 function syncAutomationPatchToMaster(patch) {
-  postToMaster({
+  return postToMaster({
     type: 'automation_patch',
     patch,
   });
+}
+
+/** 账号线程只改内存。主进程落盘；送不出去才由线程自己写，避免旧内存盖掉面板设置。 */
+function publishWorkerPatch(patch) {
+  const accountId = process.env.FARM_ACCOUNT_ID || '';
+  applyConfigSnapshot(patch, { accountId, persist: false });
+  if (!syncAutomationPatchToMaster(patch)) {
+    applyConfigSnapshot(patch, { accountId, persist: true });
+  }
 }
 
 function resetBadFailureCount() {
@@ -783,13 +792,8 @@ function getLocalDateKey(offsetDays = 0) {
 }
 
 function pauseFriendBadUntilTomorrow(reason) {
-  const accountId = process.env.FARM_ACCOUNT_ID || '';
   const retryDate = getLocalDateKey(1);
-  applyConfigSnapshot(
-    { friendBadRetryDate: retryDate },
-    { accountId }
-  );
-  syncAutomationPatchToMaster({ friendBadRetryDate: retryDate });
+  publishWorkerPatch({ friendBadRetryDate: retryDate });
   resetBadFailureCount();
   log('好友', `捣乱连续失败 ${BAD_FAILURE_LIMIT} 次，已暂停至 ${retryDate} 再尝试。最后错误: ${reason || '未知'}`, {
     module: 'friend',
@@ -807,8 +811,7 @@ function isFriendBadPaused() {
   if (!retryDate) return false;
   if (getLocalDateKey() < retryDate) return true;
 
-  applyConfigSnapshot({ friendBadRetryDate: '' }, { accountId });
-  syncAutomationPatchToMaster({ friendBadRetryDate: '' });
+  publishWorkerPatch({ friendBadRetryDate: '' });
   resetBadFailureCount();
   return false;
 }

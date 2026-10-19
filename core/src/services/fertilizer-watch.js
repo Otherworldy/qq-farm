@@ -411,7 +411,9 @@ function getNextWatchDueAt(now = Date.now()) {
   let prearmAt = 0;
   let trendAt = 0;
   for (const watch of watches.values()) {
-    const t = Number(watch.nextVisitAt) || 0;
+    // 用可出手时刻，不用原始 nextVisitAt。延迟挡下后 nextVisitAt 仍是已过去的
+    // 成熟时刻，调度器会把它当成“没有墙钟”睡过整个延迟窗口，菜就丢了。
+    const t = watchActionableAt(watch);
     if (!t) continue;
     if (watch.status === WATCH_STATUS.PREARM) {
       prearmAt = prearmAt ? Math.min(prearmAt, t) : t;

@@ -306,7 +306,9 @@ export const useSettingStore = defineStore('setting', () => {
         intervals: newSettings.intervals,
         friendQuietHours: newSettings.friendQuietHours,
         kickoutRelogin: newSettings.kickoutRelogin,
-        stealDelaySeconds: newSettings.stealDelaySeconds ?? 0,
+        ...(newSettings.stealDelaySeconds !== undefined && newSettings.stealDelaySeconds !== null
+          ? { stealDelaySeconds: newSettings.stealDelaySeconds }
+          : {}),
         plantOrderRandom: newSettings.plantOrderRandom ?? false,
         plantDelaySeconds: newSettings.plantDelaySeconds ?? 0,
         fertilizerBuyOrganicCount: newSettings.fertilizerBuyOrganicCount ?? 10,
