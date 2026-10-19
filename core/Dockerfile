@@ -57,7 +57,10 @@ VOLUME ["/app/core/data"]
 
 EXPOSE 3007
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://localhost:3007/api/status || exit 1
+# 探活不能写 localhost：容器内 localhost 优先解到 IPv6 ::1，而服务只监听
+# 0.0.0.0（IPv4），会直接 Connection refused 变成永假 unhealthy。
+# 也不能探 /api/status：那个端点要认证，401 会被 wget --spider 判失败。
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD wget -q --spider http://127.0.0.1:3007/ || exit 1
 
 CMD ["node", "client.js"]

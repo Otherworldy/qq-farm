@@ -16,7 +16,10 @@ services:
       - "18000-18999:18000-18999" # 抓包登录 MITM 代理端口池（iPhone Wi-Fi 代理连入）
 
     volumes:
-      - ../data:/app/core/data
+      # 数据目录默认放在仓库外（重建镜像/重新 clone 都不丢数据）。
+      # 需要复用仓库内的 core/data 时，在仓库根新建 .env 写：
+      #   FARM_DATA_PATH=./core/data
+      - ${FARM_DATA_PATH:-../data}:/app/core/data
 
     environment:
       TZ: Asia/Shanghai
@@ -33,7 +36,8 @@ services:
       # CAPTURE_ADVERTISE_IPS=203.0.113.10,198.51.100.20
 
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3007/api/status"]
+      # 同 core/Dockerfile：避开 IPv6 localhost 与需要认证的 /api/status。
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3007/"]
       interval: 30s
       timeout: 10s
       retries: 3

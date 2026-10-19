@@ -720,7 +720,22 @@ function rearmDelayedSteal(gid, name, gate) {
 
 /** 偷菜延迟闸门 + 必要时的盯梢重布。两处偷菜出口共用。 */
 function gateStealByMaturity(gid, name, analysis, lands) {
-  rearmDelayedSteal(gid, name, applyStealDelayGate(analysis, lands));
+  const gate = applyStealDelayGate(analysis, lands);
+  if (gate.delayedLands > 0) {
+    // 不打印就无法判断该设置是否生效：日志里“成熟到点后 XXXms”是哨兵唤醒后的
+    // 执行耗时，与延迟无关（延迟只决定哨兵什么时候醒）。这条才是真凭据。
+    const floorSec = stealDelayFloorSec(configuredStealDelaySec());
+    log('好友', `${name}: 偷菜延迟挡下 ${gate.delayedLands} 块地，成熟 + ${floorSec}s 后才出手`, {
+      module: 'friend',
+      event: '偷菜延迟闸门',
+      result: 'deferred',
+      friendGid: gid,
+      delayedLands: gate.delayedLands,
+      delayFloorSec: floorSec,
+      earliestMatureAt: gate.earliestDelayedMatureAtMs,
+    });
+  }
+  rearmDelayedSteal(gid, name, gate);
 }
 
 function fastLaneRipeLandIds(lands, { delaySec = 0, now = Date.now() } = {}) {

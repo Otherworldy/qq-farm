@@ -1,4 +1,9 @@
+# 递归排除所有层级的 node_modules：Docker 的 .dockerignore 模式
+# 不递归，单写 node_modules 只匹配根目录，core/node_modules 会漏进
+# 构建上下文并覆盖 prod-deps 阶段装好的依赖（符号链接指向宿主机
+# 绝对路径，容器内 require 全部失效）。
 node_modules
+**/node_modules
 core/data/logs/*
 !core/data/logs/.gitkeep
 core/data/*.json
