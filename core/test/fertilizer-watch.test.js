@@ -352,6 +352,33 @@ test('a PREARM armed after the delay gate stays due at maturity plus the delay f
   }
 });
 
+test('a mature farm keeps the delayed steal through a later look', () => {
+  const store = require('../src/models/store');
+  const previousAccount = process.env.FARM_ACCOUNT_ID;
+  process.env.FARM_ACCOUNT_ID = 'delay-keep';
+  store.applyConfigSnapshot({ stealDelaySeconds: 20 }, { accountId: 'delay-keep', persist: false });
+  try {
+    const now = Date.now();
+    const sec = Math.floor(now / 1000);
+    const ripeAt = now - 5_000;
+    watchFriend(88, '刚熟', { now, ripeAt, mode: 'prearm', reason: 'ripe_prearm' });
+    const matureLand = {
+      id: 1,
+      plant: { id: 200, phases: [{ begin_time: sec - 30 }, { begin_time: sec - 5 }] },
+    };
+    inspectFriendLands(88, '刚熟', [matureLand], now);
+    inspectFriendLands(88, '刚熟', [matureLand], now + 1000, { partial: true });
+    noteWatchVisit(88, now + 1000);
+    assert.equal(getWatchStateForTests(88, now + 1000).status, WATCH_STATUS.PREARM);
+    assert.equal(getNextWatchDueAt(now + 1000), ripeAt + 19_000);
+    inspectFriendLands(88, '刚熟', [], now + 2000);
+    assert.equal(getWatchStateForTests(88, now + 2000), null);
+  } finally {
+    if (previousAccount == null) delete process.env.FARM_ACCOUNT_ID;
+    else process.env.FARM_ACCOUNT_ID = previousAccount;
+  }
+});
+
 test('PREARM is isolated from fertilizer trend and fires only at ripeAt once', () => {
   const now = Date.now();
   const ripeAt = now + 5000;

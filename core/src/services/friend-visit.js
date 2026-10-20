@@ -722,16 +722,20 @@ function rearmDelayedSteal(gid, name, gate) {
 function gateStealByMaturity(gid, name, analysis, lands) {
   const gate = applyStealDelayGate(analysis, lands);
   if (gate.delayedLands > 0) {
-    // 不打印就无法判断该设置是否生效：日志里“成熟到点后 XXXms”是哨兵唤醒后的
-    // 执行耗时，与延迟无关（延迟只决定哨兵什么时候醒）。这条才是真凭据。
+    // 19s 是规则（成熟时刻 + 下限），不是“从这条日志再等 19 秒”。
+    // 进门时地已经熟了一阵，剩下的往往只有几秒；日志必须写剩余时间，
+    // 否则会看成没等够就偷了。
     const floorSec = stealDelayFloorSec(configuredStealDelaySec());
-    log('好友', `${name}: 偷菜延迟挡下 ${gate.delayedLands} 块地，成熟 + ${floorSec}s 后才出手`, {
+    const openAt = gate.earliestDelayedMatureAtMs + floorSec * 1000;
+    const remainSec = Math.max(0, Math.ceil((openAt - Date.now()) / 1000));
+    log('好友', `${name}: 偷菜延迟挡下 ${gate.delayedLands} 块地，最早还要 ${remainSec}s（成熟 + ${floorSec}s 才出手）`, {
       module: 'friend',
       event: '偷菜延迟闸门',
       result: 'deferred',
       friendGid: gid,
       delayedLands: gate.delayedLands,
       delayFloorSec: floorSec,
+      remainSec,
       earliestMatureAt: gate.earliestDelayedMatureAtMs,
     });
   }

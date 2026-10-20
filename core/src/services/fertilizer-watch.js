@@ -341,6 +341,9 @@ function noteWatchVisit(gid, now = Date.now()) {
   watch.lastVisitAt = now;
 
   if (watch.status === WATCH_STATUS.PREARM) {
+    // 偷菜延迟还没到。这次进门是帮忙或被挡下的观察，不是补偷，
+    // 删掉的话空闲歇息会睡过窗口，菜就丢了。
+    if (watchActionableAt(watch) > now) return;
     watches.delete(id);
     return;
   }
@@ -619,9 +622,12 @@ function inspectFriendLands(gid, name, lands, now = Date.now(), options = {}) {
   }
   landObservedAt.set(id, now);
 
-  // 只有完整基线（或其增量合并）才能证明全场没有作物。
+  // 只有完整基线证明「一块菜都没有」才撤盯梢。已经成熟、还站在地里的
+  // 作物不是空场：偷菜延迟会先挡下，再等十几秒补偷。这段时间里的帮忙进门
+  // 或地块推送如果把盯梢删掉，空闲歇息就会睡过补偷窗口。
   if (!growing && completeLandSnapshotGids.has(id)) {
-    unwatchFriend(id);
+    const matureWaiting = [...next.values()].some(snapshot => snapshot && snapshot.matureAt > 0);
+    if (!matureWaiting) unwatchFriend(id);
     return { ripeAt: 0, growing: false };
   }
 
