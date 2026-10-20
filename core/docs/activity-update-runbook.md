@@ -141,27 +141,45 @@ message OperateRequest {
 
 不要用生成图片替代可取得的官方素材。
 
-### macOS 微信缓存
+### 微信小游戏缓存
 
-常见位置：
+微信端 AppID 为 `wx5306c5978fdb76e4`。代码包和远程资源都从微信客户端取。
+
+代码包：
 
 ```text
-~/Library/Containers/com.tencent.xinWeChat/Data/.wxapplet/
-~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/*/applet/
+Windows: %APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\packages\wx5306c5978fdb76e4\<版本>\
+macOS:   ~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/<hash>/applet/packages/wx5306c5978fdb76e4/
 ```
 
-先按 AppID 缩小范围：
+远程资源（贴图、Spine、活动图）：
+
+```text
+Windows: %APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\local\wx5306c5978fdb76e4\usr\gamecaches\
+macOS:   ~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/<hash>/applet/local/wx5306c5978fdb76e4/usr/gamecaches/
+```
+
+微信 `cacheList.json` 与 QQ 结构相同，只是 url 前缀为 `wxfile://usr/gamecaches/`
+（QQ 为 `qqfile://`）；目录内容一致（`plant`、`mainscene`、`extraRes`、`delayRes`、
+`petdog`、`audio`、`aiHead`），CDN 同为 `cdn-resource.nqf.qq.com`。
+
+包必须解包，Windows 包带 `V1MMWX` 加密：
 
 ```bash
-find "$HOME/Library/Containers/com.tencent.xinWeChat/Data" \
-  -path '*目标AppID*' -type f -mtime -3 -print
+npm run unpack:wx
+```
+
+`extract:plant-phases` 已自动探测 QQ 与微信两套缓存；需要指定时：
+
+```bash
+npm run extract:plant-phases -- --cache-root "<...>/usr/gamecaches" --all
 ```
 
 微信只能取得微信端实际加载的包和缓存，不能据此判断 QQ 包是否存在。
 
-### macOS QQ 缓存
+### QQ 小游戏缓存
 
-QQ 农场小程序的已确认展开目录：
+QQ 农场小游戏的已确认展开目录：
 
 ```text
 ~/Library/Containers/com.tencent.qqexminiprogram/Data/Library/Application Support/QQEX/miniapp/temps/miniapp_src
@@ -243,12 +261,13 @@ npm run extract:plant-phases -- \
 
 - `--install-tool`：首次运行时下载 ARM 官方 macOS 通用版 `astcenc` 到被 Git 忽略的
   `core/data/tools/`，后续复用。
-- `--download-missing`：本地QQ账号缓存缺少某阶段时，从QQ官方CDN下载到系统临时目录；
-  不回写或修改QQ缓存。
+- `--cache-root`：显式指定 `usr/gamecaches` 目录，逗号分隔；默认自动探测 QQ 与微信。
+- `--download-missing`：本地 QQ/微信缓存缺少某阶段时，从官方 CDN 下载到系统临时目录；
+  不回写或修改客户端缓存。
 - `--all`：根据 `Plant.json` 推导普通植物资产名，导出能够定位的全部阶段。
 - `--assets`：仅更新逗号分隔的指定资产，适合新活动植物的增量验证。
 
-工具会跨本机多个QQ账号的 `gamecaches` 查找资源，按最新 `plant/config.*.json` 解析
+工具会跨本机多个 QQ/微信账号的 `gamecaches` 查找资源，按最新 `plant/config.*.json` 解析
 Cocos压缩UUID和阶段路径，将ASTC转换成透明PNG，并合并更新：
 
 ```text
@@ -500,3 +519,5 @@ Google Fonts 网络失败若只是 UnoCSS 警告且 Vite 最终成功，不视�
 | 兑换成功但余额未刷新 | 操作后是否重新读取活动详情和背包 |
 | HAR 请求正文乱码 | TSDK 加密是正常现象，检查相同 sequence 的响应和通知 |
 | QQ 找不到 `.wxapkg` | 优先查 QQ `miniapp_src`，不要套用微信缓存路径 |
+| 微信包头部是 `V1MMWX` | Windows PC 微信加密，用 `npm run unpack:wx`，不要硬接解包器 |
+| `extract:plant-phases` 报未找到 gamecaches | 用 `--cache-root` 指向 `usr/gamecaches`，注意微信端是 `wxfile://` |

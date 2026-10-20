@@ -6,20 +6,22 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { filterInvalidPlants } = require('../src/config/invalidPlants');
 
-const APP_ID = '1112386029';
 const ASTCENC_VERSION = '5.5.0';
 const ASTCENC_URL = `https://github.com/ARM-software/astc-encoder/releases/download/${ASTCENC_VERSION}/astcenc-${ASTCENC_VERSION}-macos-universal.zip`;
 const BASE64_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const HEX = '0123456789abcdef';
+const CACHE_MARKER = 'usr/gamecaches/';
+const FARM_APP_IDS = ['1112386029', 'wx5306c5978fdb76e4'];
 const coreRoot = path.resolve(__dirname, '..');
 const defaultOutput = path.join(coreRoot, 'src', 'gameConfig', 'plant_images');
 const toolDir = path.join(coreRoot, 'data', 'tools', `astcenc-${ASTCENC_VERSION}`);
 
 function parseArgs(argv) {
-  const args = { assets: [], all: false, installTool: false, downloadMissing: false, output: defaultOutput };
+  const args = { assets: [], cacheRoot: [], all: false, installTool: false, downloadMissing: false, output: defaultOutput };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === '--assets') args.assets.push(...String(argv[++index] || '').split(',').filter(Boolean));
+    else if (value === '--cache-root') args.cacheRoot.push(...String(argv[++index] || '').split(',').filter(Boolean).map(item => path.resolve(item)));
     else if (value === '--all') args.all = true;
     else if (value === '--output') args.output = path.resolve(argv[++index]);
     else if (value === '--astcenc') args.astcenc = path.resolve(argv[++index]);
@@ -33,7 +35,7 @@ function parseArgs(argv) {
 
 function usage() {
   return [
-    '从本机 QQ 农场缓存导出浏览器可用的植物阶段 PNG。',
+    '从本机 QQ / 微信农场缓存导出浏览器可用的植物阶段 PNG。',
     '',
     '用法：',
     '  npm run extract:plant-phases -- --install-tool --download-missing --assets Crop_1037,Crop_9003',
@@ -43,36 +45,79 @@ function usage() {
     '  --assets <列表>   只导出指定 Crop 资源，逗号分隔',
     '  --all             导出 Plant.json 可推导且已缓存的全部资源',
     '  --install-tool    缺少 astcenc 时下载 ARM 官方 macOS 通用版',
-    '  --download-missing 从QQ官方CDN下载本地尚未缓存的阶段纹理（不写入QQ缓存）',
+    '  --download-missing 从官方 CDN 下载本地尚未缓存的阶段纹理（不写入缓存）',
+    '  --cache-root <目录> 显式指定 gamecaches 目录，逗号分隔（默认自动探测 QQ 和微信）',
     '  --astcenc <路径>  显式指定 astcenc',
     '  --output <目录>   修改输出目录',
   ].join('\n');
 }
 
-function getQqGameCacheRoots() {
-  const root = path.join(
-    os.homedir(),
-    'Library/Containers/com.tencent.qqexminiprogram/Data/Library/Application Support/QQEX/miniapp/fs',
-  );
-  if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => path.join(root, entry.name, APP_ID, 'usr', 'gamecaches'))
-    .filter(candidate => fs.existsSync(path.join(candidate, 'cacheList.json')));
+/** 平台对应的 gamecaches 候选根目录。 */
+function defaultCacheSearchRoots() {
+  const home = os.homedir();
+  const roots = [];
+  if (process.platform === 'darwin') {
+    roots.push(path.join(home, 'Library/Containers/com.tencent.qqexminiprogram/Data/Library/Application Support/QQEX/miniapp/fs'));
+    roots.push(path.join(home, 'Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users'));
+    roots.push(path.join(home, 'Library/Containers/com.tencent.xinWeChat/Data/.wxapplet'));
+  }
+  if (process.platform === 'win32') {
+    if (process.env.APPDATA) roots.push(path.join(process.env.APPDATA, 'Tencent', 'xwechat', 'radium', 'users'));
+    roots.push(path.join(home, 'Documents', 'xwechat_files'));
+    roots.push(path.join(home, 'Documents', 'WeChat Files', 'Applet'));
+  }
+  return roots.filter(root => fs.existsSync(root));
 }
 
-function resolveQqFile(cacheRoot, value) {
-  const prefix = 'qqfile://usr/gamecaches/';
-  if (!value || !value.startsWith(prefix)) return null;
-  return path.join(cacheRoot, value.slice(prefix.length));
+/** 在有限深度内查找所有含 cacheList.json 的 gamecaches 目录。 */
+function findCacheRoots(dir, depth = 0, found = []) {
+  if (depth > 8) return found;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.name === 'gamecaches') {
+      if (FARM_APP_IDS.some(appid => full.includes(appid)) && fs.existsSync(path.join(full, 'cacheList.json'))) found.push(full);
+      continue;
+    }
+    findCacheRoots(full, depth + 1, found);
+  }
+  return found;
+}
+
+/** 显式指定的目录优先；否则自动探测 QQ 和微信。 */
+function getGameCacheRoots(args) {
+  if (args.cacheRoot.length) {
+    return args.cacheRoot.filter(root => fs.existsSync(path.join(root, 'cacheList.json')));
+  }
+  return defaultCacheSearchRoots().flatMap(root => findCacheRoots(root));
+}
+
+/** QQ 用 qqfile://、微信用 wxfile://，只按公共路径段解析，不依赖协议前缀。 */
+function resolveCacheFile(cacheRoot, value) {
+  const text = String(value || '').replace(/\\/g, '/');
+  const index = text.indexOf(CACHE_MARKER);
+  if (index < 0) return null;
+  return path.join(cacheRoot, text.slice(index + CACHE_MARKER.length));
 }
 
 function loadCacheEntries(cacheRoots) {
   const entries = [];
   for (const cacheRoot of cacheRoots) {
-    const cacheList = JSON.parse(fs.readFileSync(path.join(cacheRoot, 'cacheList.json'), 'utf8'));
+    let cacheList;
+    try {
+      cacheList = JSON.parse(fs.readFileSync(path.join(cacheRoot, 'cacheList.json'), 'utf8'));
+    } catch {
+      console.warn(`跳过无法读取的缓存清单：${cacheRoot}`);
+      continue;
+    }
     for (const [url, metadata] of Object.entries(cacheList.files || {})) {
-      const localPath = resolveQqFile(cacheRoot, metadata && metadata.url);
+      const localPath = resolveCacheFile(cacheRoot, metadata && metadata.url);
       if (localPath && fs.existsSync(localPath)) {
         entries.push({ url, localPath, lastTime: Number(metadata.lastTime) || 0 });
       }
@@ -447,8 +492,9 @@ function main() {
     return;
   }
 
-  const cacheRoots = getQqGameCacheRoots();
-  if (!cacheRoots.length) throw new Error('未找到 QQ 农场 gamecaches');
+  const cacheRoots = getGameCacheRoots(args);
+  if (!cacheRoots.length) throw new Error('未找到农场 gamecaches（QQ 或微信）；请先用 --cache-root 指定包含 cacheList.json 的目录');
+  console.log(`缓存目录: ${cacheRoots.length} 个${args.cacheRoot.length ? '（--cache-root 指定）' : ''}`);
   const entries = loadCacheEntries(cacheRoots);
   const latestConfig = findLatestPlantConfig(entries);
   if (!latestConfig) throw new Error('未找到 plant Bundle配置');
