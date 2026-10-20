@@ -137,6 +137,19 @@ function checkRequest(serviceName, methodName, now = Date.now()) {
     return { allowed: true, reason: 'ok' };
 }
 
+/**
+ * 当前 60s 窗口是否还有总预算。
+ * 供批量派发循环在预算耗尽时提前退出：被拦的请求不会成功，继续按
+ * 毫秒级间隔重试只会把整轮的 Enter 刷成拦截日志（实测单轮 325 次），
+ * 并把 CheckCanOperate 预检查等关键请求一起挤掉。
+ */
+function hasBudget(now = Date.now(), headroom = 0) {
+    pruneWindow(now);
+    const totalLimit = watchModeActive(now) ? Math.floor(TOTAL_LIMIT * 1.5) : TOTAL_LIMIT;
+    const reserve = Math.max(0, Number(headroom) || 0);
+    return windowEvents.length < Math.max(1, totalLimit - reserve);
+}
+
 /** 发送已放行/白名单请求后登记（ok=是否成功） */
 function recordSent(serviceName, methodName, ok, now = Date.now(), options = {}) {
     pruneWindow(now);
@@ -246,6 +259,7 @@ function resetForTest() {
 module.exports = {
     checkRequest,
     recordSent,
+    hasBudget,
     getRequestProfile,
     getBreakerState,
     clearBreaker,

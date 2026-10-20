@@ -660,6 +660,7 @@ function handleNotify(msg) {
             || type.includes('ListChangedNTF')
             || type.includes('ActiviesChangeNotify')
             || type.includes('ItemUseDailyNotify')
+            || type.endsWith('.NeedNotify')
         ) return;
 
         // 未识别推送绝不触发新接口或重试，只留一条有界证据给下一轮安全巡检。

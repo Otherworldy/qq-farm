@@ -33,7 +33,7 @@ const {
   getFriendRipeSnapshots,
   getNextKnownFriendRipeEntry,
 } = require('./fertilizer-watch');
-const { getBreakerState } = require('./request-governor');
+const { getBreakerState, hasBudget } = require('./request-governor');
 const {
   getGovernedRejectionInfo,
   resetGovernedWarnAggregation,
@@ -263,6 +263,9 @@ async function dispatchDueCacheStealTargets(targets, { myGid, preEnter = null, s
     require('./request-governor').setContentionMode(true, Date.now() + 60_000);
     for (const target of targets) {
       if (seq !== friendReadLifecycleSeq || !canOperate(0x2714) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
+      // 预算已满：继续派发只会被治理器逐条拦下（实测单段 325 次），
+      // 未进门又清不掉缓存，下一轮重复同一批目标。留到窗口恢复后再试。
+      if (!hasBudget()) break;
       const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid)
         ? preEnter
         : null;
@@ -948,6 +951,7 @@ async function checkFriends(options = {}) {
         const tally = { steal: 0, water: 0, weed: 0, bug: 0, putBug: 0, putWeed: 0 };
         for (const target of dueWatches) {
           if (roundSeq !== friendReadLifecycleSeq || !canOperate(0x2714) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
+          if (!hasBudget()) break;
           const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid)
             ? preEnter
             : null;
