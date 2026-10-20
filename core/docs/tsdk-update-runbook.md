@@ -1,14 +1,14 @@
 # TSDK/WASM 标准更新手册
 
-本文用于把 QQ 农场官方包中的新版 `tsdk.wasm` 更新到 Node.js 宿主。目标是让后续
+本文用于把 QQ / 微信农场官方包中的新版 `tsdk.wasm` 更新到 Node.js 宿主。目标是让后续
 维护者可以重复执行、比较差异、验证结果和安全回退，而不是直接覆盖二进制文件。
 
 当前基线及运行时调用约定见 [tsdk-ace-runtime.md](./tsdk-ace-runtime.md)。
 
 ## 适用范围和原则
 
-- 仅分析自己设备上由 QQ 客户端正常下载和展开的官方运行文件。
-- 全程复制源文件后分析，不直接修改 QQ 容器中的缓存。
+- 仅分析自己设备上由 QQ 或微信客户端正常下载和展开的官方运行文件。
+- 全程复制源文件后分析，不直接修改 QQ/微信容器中的缓存。
 - WASM 和同目录 `game.js` 必须来自同一个包目录，不能跨版本拼接。
 - 新文件先使用版本化名称加入项目；旧版至少保留到在线验收完成。
 - SHA-256 相同表示没有二进制更新，不重复升级。
@@ -48,6 +48,45 @@ tsdk/tsdk.wasm
 若没有展开目录，再考虑从对应 `.tqapkg` 复制后解包；不要默认使用微信
 `.wxapkg` 工具。Mac QQ 正常运行时通常已经生成 `miniapp_src`，无需二次解包。
 
+### 微信小游戏客户端
+
+微信端是同一个游戏，AppID 为 `wx5306c5978fdb76e4`。微信不会把包展开成目录，
+必须解包；Windows PC 微信的 `.wxapkg` 还带 `V1MMWX` 加密。
+
+Windows（微信 4.x / `xwechat`）：
+
+```text
+%APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\packages\wx5306c5978fdb76e4\<版本>\
+```
+
+macOS：
+
+```text
+~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/<hash>/applet/packages/wx5306c5978fdb76e4/
+~/Library/Containers/com.tencent.xinWeChat/Data/.wxapplet/
+```
+
+一条命令完成定位、解密和解包：
+
+```bash
+npm run unpack:wx
+npm run unpack:wx -- --package "<包含 wxapkg 的目录>" --out ./tmp-unpack
+```
+
+解出结构：
+
+```text
+__APP__/                game.js、tsdk/tsdk.wasm、tsdk/acesdk.wasm.br
+_subpackages_main_/     subpackages/main/game.js（业务逻辑）
+_cocos-js_chunks_/      cocos-js/chunks/game.js
+_cocos-js_assets_/      cocos-js/assets/spine.wasm
+```
+
+微信端顶层 `game.js` 是 Cocos 引擎入口，不含 `SdkInitEx` / `AnoUserLogin` /
+`AceManager` / `3167` 等 QQ 封装标记；核对时直接用 `tsdk/tsdk.wasm` 做结构对比，
+不要因为标记缺失判定包拿错了。`unpack:wx` 会直接打印 `tsdk.wasm` 的 SHA-256，
+可与 `OFFICIAL_SHA256` 当场对比。
+
 ## 2. 固化源文件
 
 先在仓库外或临时目录创建快照，避免 QQ 自动更新导致分析过程中两个文件版本不一致：
@@ -74,7 +113,7 @@ stat -f '%z bytes, %Sm' -t '%Y-%m-%d %H:%M:%S' "$TSDK_SNAPSHOT/tsdk.wasm"
 npm run inspect:tsdk -- \
   --wasm "$TSDK_SNAPSHOT/tsdk.wasm" \
   --game-js "$TSDK_SNAPSHOT/game.js" \
-  --baseline src/utils/tsdk-v3.9.0.wasm
+  --baseline src/utils/tsdk-v3.9.0.1792070005.wasm
 ```
 
 需要保存机器可读结果时追加 `--json`：
@@ -83,7 +122,7 @@ npm run inspect:tsdk -- \
 npm run --silent inspect:tsdk -- \
   --wasm "$TSDK_SNAPSHOT/tsdk.wasm" \
   --game-js "$TSDK_SNAPSHOT/game.js" \
-  --baseline src/utils/tsdk-v3.9.0.wasm \
+  --baseline src/utils/tsdk-v3.9.0.1792070005.wasm \
   --json
 ```
 
@@ -122,7 +161,7 @@ rg -n -S \
 | WASM 路径 | `tsdk/tsdk.wasm` |
 | TSDK 初始化 | `SdkInitEx(3167, 0)` |
 | 用户绑定 | `AnoUserLogin(0, openId)` |
-| 小游戏 AppID | `1112386029` |
+| 小游戏 AppID | QQ 端 `1112386029`；微信端 `wx5306c5978fdb76e4` |
 | 网关 Token | `AceManager.randomStr()` 语义 |
 | imports | `a.a` 至 `a.v`，共 22 个函数 |
 | 运行时表 | 与 `OFFICIAL_RUNTIME_TABLE` 相同 |
@@ -149,7 +188,7 @@ rg -n -S \
 假设检查出的版本为 `vX.Y.Z.BUILD`：
 
 ```bash
-cp "$TSDK_SNAPSHOT/tsdk.wasm" "src/utils/tsdk-vX.Y.Z.wasm"
+cp "$TSDK_SNAPSHOT/tsdk.wasm" "src/utils/tsdk-vX.Y.Z.BUILD.wasm"
 ```
 
 在 `src/utils/tsdk-runtime.js` 更新：

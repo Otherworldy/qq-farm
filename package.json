@@ -6,6 +6,7 @@
     "dev:web": "pnpm -C web dev",
     "dev": "pnpm build:web && pnpm dev:core",
     "extract:plant-phases": "npm --prefix core run extract:plant-phases --",
+    "unpack:wx": "npm --prefix core run unpack:wx --",
     "capture:start": "npm --prefix core run capture:start",
     "lint": "pnpm lint:core && pnpm lint:web",
     "lint:core": "pnpm -C core lint",

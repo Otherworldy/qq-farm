@@ -20,6 +20,7 @@
     "audit:seed-catalog": "node scripts/inspect-seed-catalog.js",
     "fetch:official-icons": "node scripts/fetch-official-icons.js",
     "inspect:tsdk": "node scripts/inspect-tsdk-update.js",
+    "unpack:wx": "node scripts/unpack-wxapkg.js",
     "capture:start": "node capture-server.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

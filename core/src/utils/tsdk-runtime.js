@@ -8,8 +8,8 @@ const { performance } = require('node:perf_hooks');
 
 const { ensureDataDir } = require('../config/runtime-paths');
 
-const OFFICIAL_VERSION = 'v3.9.0.1787057219';
-const OFFICIAL_SHA256 = '98cc5301cff10f5b87a014d0a4af92630e4a6e91292cc7de5eb86422275f0070';
+const OFFICIAL_VERSION = 'v3.9.0.1792070005';
+const OFFICIAL_SHA256 = '1a9416db8b328e8957a079c583ffc5fc7e48d6af8c45aa40d9969dd68157beca';
 const DEFAULT_APP_ID = '1112386029';
 const DEFAULT_GAME_ID = 3167;
 const DEFAULT_APP_KEY = '0';
@@ -58,7 +58,7 @@ const MERGED_DATA_SEGMENTS = [
     [17040, 103], [67371008, 404],
 ];
 
-// This 64-byte table is part of the matching official JavaScript host wrapper.
+// This 59-byte table is part of the matching official JavaScript host wrapper.
 const OFFICIAL_RUNTIME_TABLE = Buffer.from([
     93, 86, 110, 34, 65, 129, 8, 113, 53, 192, 121, 32, 86, 162, 255, 139,
     217, 70, 223, 0, 45, 176, 85, 103, 234, 116, 120, 194, 206, 7, 176, 222,
@@ -83,7 +83,7 @@ class TsdkRuntime {
         this.appId = String(options.appId || DEFAULT_APP_ID);
         this.gameId = Number(options.gameId || process.env.FARM_TSDK_GAME_ID || DEFAULT_GAME_ID);
         this.appKey = String(options.appKey ?? process.env.FARM_TSDK_APP_KEY ?? DEFAULT_APP_KEY);
-        this.wasmPath = options.wasmPath || path.join(__dirname, 'tsdk-v3.9.0.wasm');
+        this.wasmPath = options.wasmPath || path.join(__dirname, 'tsdk-v3.9.0.1792070005.wasm');
         this.dataDir = options.dataDir || path.join(ensureDataDir(), 'tsdk', this.accountId);
         this.deviceInfo = options.deviceInfo || {};
         this.logger = typeof options.logger === 'function' ? options.logger : () => {};

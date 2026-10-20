@@ -80,6 +80,32 @@ WASM 更新的完整发现、快照、比较、验证和回退流程见：
 core/docs/tsdk-update-runbook.md
 ```
 
+## 微信小游戏（同一游戏的另一入口）
+
+微信端 AppID 为 `wx5306c5978fdb76e4`，与 QQ 端共用同一个游戏后端、同一套 TSDK。
+
+微信不会把包展开成目录，必须解包；Windows PC 微信的 `.wxapkg` 还带 `V1MMWX` 加密。
+
+```text
+Windows: %APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\packages\wx5306c5978fdb76e4\<版本>\
+macOS:   ~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/<hash>/applet/packages/wx5306c5978fdb76e4/
+```
+
+一条命令完成定位、解密和解包：
+
+```bash
+npm run unpack:wx
+```
+
+远程资源（贴图、Spine、活动图）：
+
+```text
+.../applet/local/wx5306c5978fdb76e4/usr/gamecaches/
+```
+
+结构与 QQ `gamecaches` 相同，只是 `cacheList.json` 前缀为 `wxfile://`，CDN 同为
+`cdn-resource.nqf.qq.com`。`npm run extract:plant-phases` 已自动探测两种平台。
+
 ## 活动植物占地大小
 
 向 `core/src/gameConfig/EventPlants.json` 补充活动植物时，不要只填写 ID、名称和
