@@ -8,12 +8,42 @@
 
 # 当前状态
 
+- 2026-10-20 微信端 TSDK 升级：从本机 Windows 微信 4.x 缓存
+  （`%APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\packages\wx5306c5978fdb76e4\75`）
+  解出微信小游戏包，TSDK 为 `v3.9.0.1792070005`（161133 字节，SHA-256
+  `1a9416db8b328e8957a079c583ffc5fc7e48d6af8c45aa40d9969dd68157beca`）。
+  `inspect:tsdk` 确认 22 个 imports、61 个 exports、17 个数据段和
+  `decrypt_all_data` 密钥常量 `1871261153` 与上一版完全一致，属“仅版本、哈希和代码体
+  变化”。默认运行文件已切换为 `tsdk-v3.9.0.1792070005.wasm`，`tsdk-v3.9.0.wasm`
+  保留用于回退。TSDK/网关定向测试 6/6 通过；在线 5/30 分钟验收待测试账号。
+- Windows 微信 4.x 的 `.wxapkg` 带 `V1MMWX` 加密（AES-256-CBC 前 1024 字节 + 其余
+  整段 XOR）。新增 `npm run unpack:wx`（`core/scripts/unpack-wxapkg.js`）自动定位
+  最新版本目录、解密并解包，纯 Node 实现、只读源缓存。
+- `extract:plant-phases` 不再只认 QQ：自动探测 QQ macOS 与微信 Windows/macOS 的
+  `usr/gamecaches`，按 `usr/gamecaches/` 公共路径解析而不依赖 `qqfile://` 前缀，
+  并新增 `--cache-root` 显式指定。微信端 `cacheList.json` 与植物目录结构与 QQ 一致。
+- 2026-10-20 在线验收（微信端）：容器内扫码登录“耀西不爱做检查”（Lv22）成功，
+  `ACE 初始化成功：v3.9.0.1792070005，耗时 12ms`，15 块土地（森野甜莓）全部读取，
+  无 checksum mismatch、无 AntiData 上报失败；活动中心、背包、好友列表均正常。
+  静态比对 74/75 两个包：ACE 暴露的 13 个 JS API 与 WASM 的 22 imports / 61 exports /
+  17 数据段完全一致，17 个数据段中 15 个字节完全相同，仅剩 2 段各 394 字节
+  （同一份加密元数据的两份副本）不同，因此本次升级属常规版本更新，检测能力未变。
+- 2026-10-20 数据补齐：`EventPlants.json` 增加茱萸 `seed_id 20165`（Crop_165、
+  单格、`fruit 40165×48`，与铃兰 20108 同档）；`EventItems.json` 增加
+  黄金·森野甜橙 `1040527`（`gold/Crop_527`，图标未取得官方资源，走通用回退）。
+- 2026-10-20 日志治理：`network.js` 未知推送改为按类别静默（`RedDotNotify` /
+  `ListChangedNTF` / `ActiviesChangeNotify` / `ItemUseDailyNotify`），业务推送仍告警；
+  `batchGetFriendDogInfo` 治理器拦截不再逐条 warn，改由批次汇总 `governedCount`，
+  并把好友间隔从 0.5-1.5s 放宽到 2-3.5s，避免 60+ 好友时打满 80/min 总预算排掉
+  活动与偷菜请求。
+
 - TSDK/ACE 安全链路已升级到 QQ Mac 客户端 2026-08-20 10:32 包内的官方
   `v3.9.0.1787057219` WASM（161114 字节，SHA-256
   `98cc5301cff10f5b87a014d0a4af92630e4a6e91292cc7de5eb86422275f0070`）。
   同包 `game.js` 和 WASM 静态检查确认 22 个 imports、导出映射、
   `SdkInitEx(3167, 0)`、17 个 mergewasm 数据段及解密密钥均与现有 Node 宿主兼容；
-  默认运行文件已切换为 `tsdk-v3.9.0.wasm`，保留 `tsdk-v3.8.6.wasm` 用于回退。
+  默认运行文件已切换为 `tsdk-v3.9.0.wasm`（即 `v3.9.0.1787057219`，已被
+  2026-10-20 微信端升级条目取代，仅作历史与回退记录），保留 `tsdk-v3.8.6.wasm` 用于回退。
   语法检查、定向 ESLint 和 6/6 TSDK/网关测试通过；完整后端套件中 TSDK 项通过，
   总计 152/153 通过，既有 `capture-core` 代理启动用例在当前环境失败，未改动该模块。
   调用映射和内存所有权见 `core/docs/tsdk-ace-runtime.md`；受控在线 5/30 分钟好友
