@@ -653,6 +653,15 @@ function handleNotify(msg) {
             return;
         }
 
+        // 红点 / 列表变更 / 每日计数类推送：纯 UI 状态提示，业务数据由定时轮询兜底。
+        // 按后缀匹配而不是逐条列举，新增同类推送不应反复刷成“未知推送风险”。
+        if (
+            type.includes('RedDotNotify')
+            || type.includes('ListChangedNTF')
+            || type.includes('ActiviesChangeNotify')
+            || type.includes('ItemUseDailyNotify')
+        ) return;
+
         // 未识别推送绝不触发新接口或重试，只留一条有界证据给下一轮安全巡检。
         const safeType = String(type || '(empty)')
             .replace(/[^\w.$/-]/g, '?')

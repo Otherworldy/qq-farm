@@ -178,6 +178,11 @@ async function getFriendDogInfo(gid, friendName = '') {
     if (handled.handled && handled.kind === 'blacklist') {
       return { dogId: 0, dogName: '无狗', blacklisted: true };
     }
+    // 预算治理器拦截是本批请求超限的预期结果，逐条 warn 只会淹没真实错误，
+    // 由 batchGetFriendDogInfo 汇总一次，这里只标记不打印。
+    if (/请求被治理器拦截/.test(String(err.message || ''))) {
+      return { dogId: 0, dogName: '无狗', governed: true };
+    }
     logWarn('好友', `获取好友 ${numericGid} 狗信息失败: ${err.message}`, {
       module: 'friend',
       event: '获取好友狗信息',
@@ -198,6 +203,7 @@ async function batchGetFriendDogInfo(friends) {
   const friendList = Array.isArray(friends) ? friends : [];
   let noDogCount = 0;
   let blacklistCount = 0;
+  let governedCount = 0;
   const BATCH_LOG_INTERVAL = 30;
   const BATCH_SLEEP_MS = 1000;
   const accountId = process.env.FARM_ACCOUNT_ID || '';
@@ -232,6 +238,7 @@ async function batchGetFriendDogInfo(friends) {
 
     const dogInfo = await getFriendDogInfo(gid, entry.name);
     if (dogInfo.dogId === 0) noDogCount++;
+    if (dogInfo.governed) governedCount++;
     if (dogInfo.blacklisted) {
       blacklistCount++;
       blacklist.add(gid);
@@ -239,7 +246,10 @@ async function batchGetFriendDogInfo(friends) {
     dogMap.set(gid, dogInfo);
 
     if (i < entries.length - 1) {
-      await randomDelay(500, 1500);
+      // 每个好友要 Enter+Leave 两次请求。0.5-1.5s 间隔在 60+ 好友时会打满
+      // 80/min 总预算，把活动/偷菜等正常请求挤成 budget_total。
+      // 2-3.5s 只占约一半预算，仍能让整批在数分钟内跑完。
+      await randomDelay(2000, 3500);
     }
 
     // Periodic sleep to avoid rate limiting
@@ -249,18 +259,19 @@ async function batchGetFriendDogInfo(friends) {
   }
 
   log('好友',
-    `batchGetFriendDogInfo 完成: 成功获取 ${dogMap.size} 个好友的狗信息，无狗 ${noDogCount} 个，黑名单 ${blacklistCount} 个`,
+    `batchGetFriendDogInfo 完成: 成功获取 ${dogMap.size} 个好友的狗信息，无狗 ${noDogCount} 个，预算拦截 ${governedCount} 个，黑名单 ${blacklistCount} 个`,
     {
       module: 'friend',
       event: 'batchGetFriendDogInfo',
       step: 'done',
       resultCount: dogMap.size,
       failCount: noDogCount,
+      governedCount,
       blacklistCount,
     }
   );
 
-  return { map: dogMap, failCount: noDogCount, blacklistCount };
+  return { map: dogMap, failCount: noDogCount, governedCount, blacklistCount };
 }
 
 // ===== Friends list =====

@@ -233,6 +233,8 @@ function workerEntry(h) {
     // 到点偏移（面板偷菜延迟）在切片之外：此处按“无延迟”注入，
     // 该文件只关心过期退避与统一 tick 的节奏。
     effectiveStealDueAt: due => due,
+    // 同属切片之外的到点偏移；本 fixture 只关心过期退避与统一 tick 节奏。
+    nextAdjustedStealDueAt: now => now,
     stealRediscoveryDelayMs: () => 60000, checkFriends: h.orchestrator.checkFriends,
     isTransientNetworkError: () => false, runOwnHarvestStrike: async () => {},
     runFarmTick: async () => {}, runHelpTick: async () => {},
