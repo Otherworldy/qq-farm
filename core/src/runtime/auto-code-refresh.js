@@ -45,12 +45,6 @@ function nextCredentialKeepaliveDelayMs(account = {}, options = {}) {
     : randomDelayBetween(WX_KEEPALIVE_MIGRATION_MIN_MS, WX_KEEPALIVE_MIGRATION_MAX_MS, random);
 }
 
-function recordEvolutionIssue(type, level) {
-  try {
-    require('../services/evolution-issue-inbox').recordRuntimeIssue(type, level);
-  } catch { /* 进化线索记录失败不能影响登录或保活 */ }
-}
-
 function createAutoCodeRefreshService(deps) {
   const {
     store,
@@ -296,7 +290,6 @@ function createAutoCodeRefreshService(deps) {
         addAccountLog('auto_relogin_blocked', '微信授权已明确失效，请重新扫码后再继续自动登录',
           account.id, account.name, { reason });
       }
-      recordEvolutionIssue('code_refresh_failed', 'error');
       addAccountLog('auto_code_refresh_failed', `自动刷新 Code 失败: ${  err.message}`,
         account.id, account.name, { reason });
       log('错误', `自动刷新 Code 失败: ${  account.name  } - ${  err.message}`, {
@@ -344,7 +337,6 @@ function createAutoCodeRefreshService(deps) {
             nextReason = result.definitive === true || isDefinitiveCredentialFailure(result.Message)
               ? 'definitive' : 'retry';
             if (nextReason === 'definitive') blockCredential(accountId);
-            recordEvolutionIssue('credential_keepalive_failed', 'warn');
             const stateLabel = mode === 'offline' ? '断线等待期间' : '当前游戏连接不重启';
             log('错误', `微信凭证保活失败（${stateLabel}）: ${latest.name} - ${result.Message || '未知错误'}`, {
               accountId: accountKey, accountName: latest.name,
@@ -357,7 +349,6 @@ function createAutoCodeRefreshService(deps) {
           consecutiveFailures += 1;
           nextReason = isDefinitiveCredentialFailure(error) ? 'definitive' : 'retry';
           if (nextReason === 'definitive') blockCredential(accountId);
-          recordEvolutionIssue('credential_keepalive_failed', 'warn');
           const failureLabel = nextReason === 'definitive' ? '等待重新授权' : '将受控重试';
           log('错误', `微信凭证保活异常（${failureLabel}）: ${latest.name}`, {
             accountId: accountKey, accountName: latest.name,

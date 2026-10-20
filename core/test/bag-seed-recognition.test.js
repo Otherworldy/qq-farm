@@ -405,51 +405,6 @@ test('寒兰登记后审计零缺口且不新增通用回退', () => {
   assert.deepEqual(getGenericFallbackItemIds(), []);
 });
 
-test('bag_unclassified 签名变化同步进运行时待办,同签名不风暴', () => {
-  const utilsPath = require.resolve('../src/utils/utils');
-  const warehousePath = require.resolve('../src/services/warehouse');
-  const inboxPath = require.resolve('../src/services/evolution-issue-inbox');
-  const previousUtils = require.cache[utilsPath];
-  const previousWarehouse = require.cache[warehousePath];
-  const previousInbox = require.cache[inboxPath];
-  const recorded = [];
-  const utilsMod = require('../src/utils/utils');
-  require.cache[utilsPath] = mockModule(utilsPath, {
-    ...utilsMod,
-    log: () => {},
-    logWarn: () => {},
-  });
-  require.cache[inboxPath] = mockModule(inboxPath, {
-    recordRuntimeIssue: (type, level) => {
-      recorded.push({ type, level });
-      return true;
-    },
-  });
-  delete require.cache[warehousePath];
-  try {
-    const { getBagSeedsFromItems: getSeeds } = require('../src/services/warehouse');
-    getSeeds([{ id: 4299981, count: 1 }]);
-    assert.equal(recorded.length, 1, 'first unknown id must enter the issue inbox');
-    assert.deepEqual(recorded[0], { type: 'bag_unclassified', level: 'warn' });
-    getSeeds([{ id: 4299981, count: 1 }]);
-    assert.equal(recorded.length, 1, 'same signature must not storm the inbox');
-    // 签名变化但只是旧 ID 消失（无新增）：不刷待办次数
-    getSeeds([{ id: 4299982, count: 1 }]);
-    assert.equal(recorded.length, 2);
-    // 全部补齐后复位，再出现可重新上报
-    getSeeds([{ id: 29004, count: 3 }]);
-    getSeeds([{ id: 4299981, count: 1 }]);
-    assert.equal(recorded.length, 3, 'after reset, new unknown must re-enter the inbox');
-  } finally {
-    delete require.cache[warehousePath];
-    if (previousUtils === undefined) delete require.cache[utilsPath];
-    else require.cache[utilsPath] = previousUtils;
-    if (previousInbox === undefined) delete require.cache[inboxPath];
-    else require.cache[inboxPath] = previousInbox;
-    if (previousWarehouse !== undefined) require.cache[warehousePath] = previousWarehouse;
-  }
-});
-
 test('乌云使坏瓶 5006 按快照登记,非种子只读展示且不新增使用/出售能力', async () => {
   const utilsPath = require.resolve('../src/utils/utils');
   const networkPath = require.resolve('../src/utils/network');
@@ -513,69 +468,6 @@ test('乌云使坏瓶 5006 按快照登记,非种子只读展示且不新增使�
       if (entry === undefined) delete require.cache[path];
       else require.cache[path] = entry;
     }
-  }
-});
-
-test('5006 登记后不再进未识别清单与运行时待办,混入未知物品仍上报且同签名不重复', () => {
-  const utilsPath = require.resolve('../src/utils/utils');
-  const warehousePath = require.resolve('../src/services/warehouse');
-  const inboxPath = require.resolve('../src/services/evolution-issue-inbox');
-  const previousUtils = require.cache[utilsPath];
-  const previousWarehouse = require.cache[warehousePath];
-  const previousInbox = require.cache[inboxPath];
-  const logs = [];
-  const recorded = [];
-  const utilsMod = require('../src/utils/utils');
-  require.cache[utilsPath] = mockModule(utilsPath, {
-    ...utilsMod,
-    log: (tag, message, meta) => logs.push({ tag, message, meta }),
-    logWarn: () => {},
-  });
-  require.cache[inboxPath] = mockModule(inboxPath, {
-    recordRuntimeIssue: (type, level) => {
-      recorded.push({ type, level });
-      return true;
-    },
-  });
-  delete require.cache[warehousePath];
-  try {
-    const { getBagSeedsFromItems: getSeeds } = require('../src/services/warehouse');
-    const { auditBagSeedCoverage } = require('../src/services/seed-catalog-audit');
-    // 仅 5006：已登记非种子，零日志零待办
-    getSeeds([{ id: 5006, count: 7 }]);
-    assert.equal(logs.length, 0, 'registered 5006 must not log unclassified');
-    assert.equal(recorded.length, 0, 'registered 5006 must not enter the issue inbox');
-    // 同一输入混入已登记种子 + 合成未知物品
-    const mixed = [
-      { id: 5006, count: 7 },
-      { id: 21625, count: 4 },
-      { id: 4299995, count: 1 },
-    ];
-    const seeds = getSeeds(mixed);
-    assert.deepEqual(seeds.map(seed => [seed.seedId, seed.name, seed.count]), [
-      [21625, '枸杞种子', 4],
-    ]);
-    const unclassified = logs.filter(l => l.meta && l.meta.event === 'bag_unclassified_item');
-    assert.equal(unclassified.length, 1, 'synthetic unknown must still be reported');
-    assert.deepEqual(unclassified[0].meta.unclassifiedItemIds, [4299995]);
-    assert.equal(recorded.length, 1);
-    assert.deepEqual(recorded[0], { type: 'bag_unclassified', level: 'warn' });
-    // 同签名不重复
-    getSeeds(mixed);
-    assert.equal(logs.filter(l => l.meta && l.meta.event === 'bag_unclassified_item').length, 1,
-      'same signature must not log again');
-    assert.equal(recorded.length, 1, 'same signature must not storm the inbox');
-    // 审计消费同一输入：5006 无缺口，合成未知仍报 unclassified_item
-    const audit = auditBagSeedCoverage(mixed, seeds);
-    assert.ok(audit.issues.some(i => i.itemId === 4299995 && i.kind === 'unclassified_item'));
-    assert.equal(audit.issues.filter(i => i.itemId === 5006).length, 0);
-  } finally {
-    delete require.cache[warehousePath];
-    if (previousUtils === undefined) delete require.cache[utilsPath];
-    else require.cache[utilsPath] = previousUtils;
-    if (previousInbox === undefined) delete require.cache[inboxPath];
-    else require.cache[inboxPath] = previousInbox;
-    if (previousWarehouse !== undefined) require.cache[warehousePath] = previousWarehouse;
   }
 });
 

@@ -9,8 +9,6 @@ const { auditBagSeedCoverage, compareClientSeedCatalog } = require('../src/servi
 const { getBagSeedsFromItems } = require('../src/services/warehouse');
 const config = require('../src/config/gameConfig');
 const { readTable } = require('../scripts/inspect-seed-catalog');
-const { activityEvidenceFingerprint, planDailyActivityEvolution } = require('../src/services/activity-evolver');
-const { execFileSync } = require('node:child_process');
 
 function bagBody(show) {
   const item = pb.Writer.create().uint32(8).int64(25995).uint32(16).int64(30)
@@ -67,15 +65,6 @@ test('源表未声明 size/null 时不伪造占地差异；源表声明数字而
   const quadPlants = [{ id: 1020046, seed_id: 20046, fruit: { id: 40046 }, size: 2, land_level_need: 1 }];
   const noSizeLocal = { ...config, getPlantBySeedId: () => ({ id: 1020046, fruit: { id: 40046 }, land_level_need: 1 }) };
   assert.ok(compareClientSeedCatalog(quadSource, quadPlants, noSizeLocal)[0].differences.includes('size'));
-});
-
-test('种子识别未决缺口即使活动指纹不变也进入每日 Agent 复盘', () => {
-  const report = { online: { available: true, checkedActivityIds: [2026090100], seedRecognition: { available: true, issues: [{ itemId: 999, kind: 'unclassified_item' }] } } };
-  const state = { evolutionMemory: { activity: { reviewedHead: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), evidenceFingerprint: activityEvidenceFingerprint(report) } } };
-  const plan = planDailyActivityEvolution(report, state);
-  assert.equal(plan.evidenceChanged, false);
-  assert.equal(plan.seedRecognitionNeedsReview, true);
-  assert.equal(plan.shouldRun, true);
 });
 
 test('配置检查只解析同名 Cocos JsonAsset，不执行外部代码', () => {

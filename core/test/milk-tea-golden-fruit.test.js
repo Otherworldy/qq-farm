@@ -457,16 +457,7 @@ test('模拟 BagReply 经真实 getBagDetail：黄金果实展示为 fruit/type1
   }
 });
 
-test('getBagSeedsFromItems 不把黄金果实当种子；同输入混合未知仍进待办收件箱', async () => {
-  const inboxPath = require.resolve('../src/services/evolution-issue-inbox');
-  const previousInbox = require.cache[inboxPath];
-  const recorded = [];
-  require.cache[inboxPath] = mockModule(inboxPath, {
-    recordRuntimeIssue: (type, level) => {
-      recorded.push({ type, level });
-      return true;
-    },
-  });
+test('getBagSeedsFromItems 不把黄金果实当种子；同输入混合未知仍如实上报', async () => {
   const bagBody = await encodeSimulatedBagReply();
   const { warehouse, logs, restore } = await reloadWarehouseWithNetworkStub({ bagBody });
   try {
@@ -479,10 +470,7 @@ test('getBagSeedsFromItems 不把黄金果实当种子；同输入混合未知�
     const unclassified = logs.filter(l => l.meta && l.meta.event === 'bag_unclassified_item');
     assert.equal(unclassified.length, 1);
     assert.deepEqual(unclassified[0].meta.unclassifiedItemIds, [SYNTHETIC_UNKNOWN_ID]);
-    assert.equal(recorded.length, 1, '合成未知仍进自动进化待办');
-    assert.deepEqual(recorded[0], { type: 'bag_unclassified', level: 'warn' });
-    // 空输入与全无效数量：零日志零待办零种子
-    recorded.length = 0;
+    // 空输入与全无效数量：零日志零种子
     logs.length = 0;
     assert.deepEqual(warehouse.getBagSeedsFromItems([]), []);
     assert.deepEqual(warehouse.getBagSeedsFromItems([
@@ -491,11 +479,8 @@ test('getBagSeedsFromItems 不把黄金果实当种子；同输入混合未知�
       { id: SYNTHETIC_UNKNOWN_ID, count: -1 },
     ]), []);
     assert.equal(logs.filter(l => l.meta && l.meta.event === 'bag_unclassified_item').length, 0);
-    assert.equal(recorded.length, 0);
   } finally {
     restore();
-    if (previousInbox === undefined) delete require.cache[inboxPath];
-    else require.cache[inboxPath] = previousInbox;
   }
 });
 

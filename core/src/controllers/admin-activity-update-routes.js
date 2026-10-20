@@ -5,15 +5,6 @@ const {
   runActivityUpdateScan,
   startActivityUpdateMonitor,
 } = require('../services/activity-update-monitor');
-const activityEvolver = require('../services/activity-evolver');
-
-const NON_FAILURE_EVOLUTION_START_REASONS = new Set([
-  'busy',
-  'blocked',
-  'deferred',
-  'report_unavailable',
-  'no_candidates',
-]);
 
 function selectUnknownOnlineActivities(activities, knownIds) {
   const known = new Set((knownIds || []).map(Number));
@@ -63,31 +54,6 @@ function selectKnownActivityReviewRoots(activities, knownIds, nowSeconds = Math.
     .slice(0, 4);
 }
 
-function buildEvolutionStartResponse(result, evolve) {
-  if (result?.ok) {
-    return { statusCode: 200, body: { ok: true, started: true, evolve } };
-  }
-  const reason = String(result?.reason || 'failed');
-  const message = String(result?.error || '启动进化失败');
-  if (NON_FAILURE_EVOLUTION_START_REASONS.has(reason)) {
-    return {
-      statusCode: 200,
-      body: { ok: true, started: false, reason, message, evolve },
-    };
-  }
-  return {
-    statusCode: 400,
-    body: { ok: false, reason, error: message },
-  };
-}
-
-function requireEvolutionConfigAdmin(req, res, next) {
-  if (!['admin', 'super_admin'].includes(req.currentUser?.role)) {
-    return res.status(403).json({ ok: false, error: '只有管理员可以修改进化 Agent 配置' });
-  }
-  return next();
-}
-
 function registerAdminActivityUpdateRoutes({ app, provider, store, requireAdminToken }) {
   const knownActivityIds = Object.entries(activity)
     .filter(([key, value]) => key.endsWith('_ACTIVITY_ID') && Number.isFinite(Number(value)))
@@ -127,7 +93,7 @@ function registerAdminActivityUpdateRoutes({ app, provider, store, requireAdminT
       }
     }
     // 每 30 分钟的既有活动扫描顺带复核最多 4 个当前活动根节点。这样活动 ID
-    // 已登记后，活动说明、玩法和 UI 完整性仍有证据可供每日 Agent 检查；不会对
+    // 已登记后，活动说明、玩法和 UI 完整性仍有证据可供人工核对；不会对
     // 每个子节点逐个请求，也不会改变任何活动状态。
     const reviewRoots = selectKnownActivityReviewRoots(activities, knownIds);
     const groupedIds = new Set(groups.map(item => Number(item?.id)));
@@ -171,17 +137,13 @@ function registerAdminActivityUpdateRoutes({ app, provider, store, requireAdminT
     knownActivityIds,
     onlineScanner: scanOnlineActivities,
     localScanEnabled: String(process.env.ACTIVITY_LOCAL_SCAN_ENABLED || '').toLowerCase() === 'true',
-    // 每次扫描登记新/结束活动；自主开启时空闲后立即进化，同批去重，不占每日名额。
-    onReport: report => activityEvolver.checkAndMaybeEvolve(report),
   });
-  activityEvolver.startActivityEvolver({ store });
 
   app.get('/api/activity/update/status', requireAdminToken, (req, res) => {
     res.json({
       ok: true,
       ...getActivityUpdateState(),
       upstreamCacheMs: MANUAL_SCAN_UPSTREAM_CACHE_MS,
-      evolve: activityEvolver.getEvolveState(),
     });
   });
 
@@ -195,94 +157,14 @@ function registerAdminActivityUpdateRoutes({ app, provider, store, requireAdminT
         ...getActivityUpdateState(),
         upstreamCached: previousScannedAt > 0 && Number(report?.scannedAt) === previousScannedAt,
         upstreamCacheMs: MANUAL_SCAN_UPSTREAM_CACHE_MS,
-        evolve: activityEvolver.getEvolveState(),
       });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message || '活动更新扫描失败' });
     }
   });
-
-  app.post('/api/activity/update/evolve', requireAdminToken, (req, res) => {
-    const task = String(req.query.task || req.body?.task || 'activity') === 'safety' ? 'safety' : 'activity';
-    const force = task === 'activity'
-      && ['1', 'true'].includes(String(req.query.force ?? req.body?.force ?? '').toLowerCase());
-    const result = activityEvolver.runEvolutionNow(task, { force });
-    const response = buildEvolutionStartResponse(result, activityEvolver.getEvolveState());
-    res.status(response.statusCode).json(response.body);
-  });
-
-  // review_blocked 的人工重试出口（2026-09-26）：仅管理员，不带任何透传参数，
-  // 服务端自行核对状态/工作区/远端同步/待审候选，失败原样返回不改状态。
-  app.post('/api/activity/update/evolve-retry', requireAdminToken, requireEvolutionConfigAdmin, (req, res) => {
-    const result = activityEvolver.retryReviewBlockedEvolution();
-    const response = buildEvolutionStartResponse(result, activityEvolver.getEvolveState());
-    res.status(response.statusCode).json(response.body);
-  });
-
-  app.post('/api/activity/update/agent', requireAdminToken, requireEvolutionConfigAdmin, (req, res) => {
-    const result = activityEvolver.setEvolutionAgent(req.body?.agent);
-    if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
-    res.json({ ok: true, evolve: activityEvolver.getEvolveState() });
-  });
-
-  app.post('/api/activity/update/agents', requireAdminToken, requireEvolutionConfigAdmin, (req, res) => {
-    const result = activityEvolver.setEvolutionAgents(req.body);
-    if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
-    res.json({ ok: true, evolve: activityEvolver.getEvolveState() });
-  });
-
-  app.post('/api/activity/update/instruction', requireAdminToken, (req, res) => {
-    const result = activityEvolver.setEvolutionInstruction(req.body?.instruction);
-    if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
-    res.json({ ok: true, evolve: activityEvolver.getEvolveState() });
-  });
-
-  app.post('/api/activity/update/revise', requireAdminToken, async (req, res) => {
-    const result = await activityEvolver.reviseEvolution(req.body?.instruction);
-    if (!result.ok) return res.status(400).json({ ok: false, error: result.error, reverted: result.reverted });
-    res.json({ ok: true, ...result, evolve: activityEvolver.getEvolveState() });
-  });
-
-  app.post('/api/activity/update/notify-test', requireAdminToken, async (req, res) => {
-    try {
-      const { sendFeishuText } = require('../services/feishu-notify');
-      await sendFeishuText('农场 bot 通知', '面板「发送测试通知」按钮触发：飞书通道正常 ✅');
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(500).json({ ok: false, error: error.message || '通知发送失败' });
-    }
-  });
-
-  // 自进化总开关：关闭后跳过每日自动进化（面板手动触发仍可用）
-  app.post('/api/activity/update/evolution-enabled', requireAdminToken, (req, res) => {
-    const result = activityEvolver.setEvolutionEnabled(req.body?.enabled !== false);
-    res.json({ ok: true, ...result, evolve: activityEvolver.getEvolveState() });
-  });
-
-  // 自主进化开关（默认关闭）：开启后待应用自动应用（严格同提交 + 远端实测 + 主
-  // Agent 批准凭据）、失败/验收未通过按退避自动返工、repairOnly 应用后自动续接
-  // 原任务；关闭立即撤定时器并恢复人工确认应用。
-  app.post('/api/activity/update/autonomous-evolution', requireAdminToken, requireEvolutionConfigAdmin, (req, res) => {
-    const result = activityEvolver.setAutonomousEvolution(req.body?.enabled === true);
-    res.json({ ok: true, ...result, evolve: activityEvolver.getEvolveState() });
-  });
-
-  // 面板手动同步待应用提交到当前 HEAD（本地推进后 web 不知道导致无法应用的自助修复）
-  app.post('/api/activity/update/sync-head', requireAdminToken, (req, res) => {
-    const result = activityEvolver.syncEvolutionHead();
-    res.json({ ok: result.ok, ...result, evolve: activityEvolver.getEvolveState() });
-  });
-
-  app.post('/api/activity/update/apply', requireAdminToken, (req, res) => {
-    const result = activityEvolver.applyEvolution();
-    if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
-    res.json({ ok: true, evolve: activityEvolver.getEvolveState() });
-  });
 }
 
 module.exports = {
-  buildEvolutionStartResponse,
-  requireEvolutionConfigAdmin,
   registerAdminActivityUpdateRoutes,
   selectKnownActivityReviewRoots,
   selectActivitySnapshotRoots,

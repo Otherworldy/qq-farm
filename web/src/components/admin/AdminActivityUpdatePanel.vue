@@ -1,10 +1,7 @@
 <script setup lang="ts">
-import type { EvolutionState } from '@/stores/evolution'
-import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '@/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import { useEvolutionStore } from '@/stores/evolution'
 import { useToastStore } from '@/stores/toast'
 
 interface ActivityUpdateReport {
@@ -116,77 +113,13 @@ interface ActivityItemDetail {
 }
 
 const toast = useToastStore()
-const evolutionStore = useEvolutionStore()
 const loading = ref(false)
 const report = ref<ActivityUpdateReport | null>(null)
 const error = ref('')
 const intervalMs = ref(0)
 const nextScanAt = ref(0)
 const upstreamCacheMs = ref(2 * 60 * 1000)
-const { evolve } = storeToRefs(evolutionStore)
-const evolving = ref(false)
-const forceEvolving = ref(false)
-const safetyRunning = ref(false)
-const applying = ref(false)
-const syncingHead = ref(false)
-const togglingEvolution = ref(false)
-const togglingAutonomy = ref(false)
-const testingNotify = ref(false)
-const instructionDraft = ref('')
-const instructionSaving = ref(false)
-const revisionRunning = ref(false)
-const reviewRetrying = ref(false)
-
-const EVOLVE_STATUS_LABELS: Record<string, string> = {
-  idle: '空闲',
-  running: '执行中…',
-  revising: '正在回退并重做…',
-  pending_apply: '待确认应用',
-  applying: '正在重启应用…',
-  applied: '已应用',
-  push_failed: 'GitHub 推送失败，禁止应用',
-  failed: '执行失败',
-  interrupted: '已中止，可重试',
-  rejected: '已拒绝，等待重做',
-  revision_failed: '拒绝/重做失败',
-  deferred: '有人工改动，已延期',
-  privacy_blocked: '隐私检查未通过',
-  privacy_blocked_local: '本地改动待检查，已阻止推送',
-  review_blocked: '任务未完成，草稿已保留',
-  no_change: '无需改动',
-}
-const evolveStatusLabel = computed(() => EVOLVE_STATUS_LABELS[evolve.value?.status || ''] || '空闲')
-function completedDate(value?: string) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value))
-    return ''
-  const parsed = new Date(`${value}T00:00:00Z`)
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : ''
-}
-const standaloneActivityDate = computed(() => {
-  const state = evolve.value
-  // 独立活动轮在启动时也写日期；未验收的本轮不能冒充已完成记录。
-  if (state?.lastTask === 'activity' && !['', 'idle', 'applied', 'no_change', 'pending_apply'].includes(state.status || ''))
-    return ''
-  return completedDate(state?.lastEvolveDate)
-})
-const latestActivityReview = computed(() => {
-  const standalone = standaloneActivityDate.value
-  const combined = completedDate(evolve.value?.lastActivityReviewDate)
-  return combined && (!standalone || combined > standalone)
-    ? { date: combined, combined: true }
-    : { date: standalone, combined: false }
-})
-const evolutionBlocked = computed(() => ['running', 'revising', 'pending_apply', 'applying', 'push_failed', 'privacy_blocked_local', 'review_blocked'].includes(evolve.value?.status || ''))
-// 可「拒绝重做」的状态：待应用提交，或被隐私闸门拦截的轮次（可续接原会话修复）
-const redoeableStatus = computed(() => ['pending_apply', 'privacy_blocked', 'privacy_blocked_local'].includes(evolve.value?.status || ''))
-
-// 所有任务/扫描响应里的 evolve 都同步进共享 store，保证活动中心顶部与弹窗状态一致；
-// 修改要求草稿只在用户动作的响应里重置，10 秒轮询不会覆盖正在编辑的内容
-function syncEvolveState(value: EvolutionState | null | undefined) {
-  evolutionStore.syncEvolve(value)
-  instructionDraft.value = value?.userInstruction || ''
-}
-
+let pollTimer = 0
 const discoveredGroups = computed(() => report.value?.online?.groups || [])
 const candidateGroupCount = computed(() => discoveredGroups.value.filter(group => groupContainsUnknown(group)).length)
 const currentReviewGroupCount = computed(() => discoveredGroups.value.length - candidateGroupCount.value)
@@ -426,7 +359,6 @@ async function scanUpdates() {
     intervalMs.value = Number(data.intervalMs) || intervalMs.value
     nextScanAt.value = Number(data.nextScanAt) || nextScanAt.value
     upstreamCacheMs.value = Number(data.upstreamCacheMs) || upstreamCacheMs.value
-    syncEvolveState(data.evolve)
     if (data.report?.status === 'update-found')
       toast.warning(`发现 ${data.report.unknownActivityIds.length} 个候选活动 ID`)
     else if (data.report?.status === 'unavailable')
@@ -442,234 +374,17 @@ async function scanUpdates() {
   }
 }
 
-async function triggerEvolve(force = false) {
-  if (force)
-    forceEvolving.value = true
-  else
-    evolving.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post(`/api/activity/update/evolve?task=activity${force ? '&force=1' : ''}`)
-    if (!data.ok)
-      throw new Error(data.error || '启动进化失败')
-    syncEvolveState(data.evolve)
-    if (data.started === false) {
-      toast.warning(data.message || '当前无需启动活动进化')
-      return
-    }
-    toast.success(force ? '已按当前扫描证据重新启动活动进化' : '已启动活动进化任务，完成后飞书通知')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '启动进化失败'
-  }
-  finally {
-    if (force)
-      forceEvolving.value = false
-    else
-      evolving.value = false
-  }
-}
-
-async function triggerSafetyEvolve() {
-  safetyRunning.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post('/api/activity/update/evolve?task=safety')
-    if (!data.ok)
-      throw new Error(data.error || '启动安全巡检失败')
-    syncEvolveState(data.evolve)
-    if (data.started === false) {
-      toast.warning(data.message || '当前暂不能启动安全巡检')
-      return
-    }
-    toast.success('已启动防封安全巡检，完成后飞书通知')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '启动安全巡检失败'
-  }
-  finally {
-    safetyRunning.value = false
-  }
-}
-
-async function testNotify() {
-  testingNotify.value = true
-  try {
-    const { data } = await api.post('/api/activity/update/notify-test')
-    if (data.ok)
-      toast.success('测试消息已发送到飞书')
-    else
-      throw new Error(data.error || '发送失败')
-  }
-  catch (err: any) {
-    toast.warning(err?.response?.data?.error || err.message || '发送失败')
-  }
-  finally {
-    testingNotify.value = false
-  }
-}
-
-async function saveEvolutionInstruction() {
-  instructionSaving.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post('/api/activity/update/instruction', {
-      instruction: instructionDraft.value,
-    })
-    if (!data.ok)
-      throw new Error(data.error || '保存修改要求失败')
-    syncEvolveState(data.evolve)
-    toast.success(instructionDraft.value ? '修改要求已保存，后续每轮 Claude/Codex 都会读取' : '已清空额外修改要求')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '保存修改要求失败'
-  }
-  finally {
-    instructionSaving.value = false
-  }
-}
-
-async function reviseEvolution() {
-  if (!instructionDraft.value.trim()) {
-    toast.warning('请先写明哪里不满意，以及希望怎么改')
-    return
-  }
-  revisionRunning.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post('/api/activity/update/revise', {
-      instruction: instructionDraft.value,
-    })
-    if (!data.ok)
-      throw new Error(data.error || '拒绝并重做失败')
-    syncEvolveState(data.evolve)
-    toast.success('已回退不满意的提交，并按你的要求重新启动进化')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '拒绝并重做失败'
-    await loadUpdateStatus()
-  }
-  finally {
-    revisionRunning.value = false
-  }
-}
-
-// review_blocked 专属人工重试：点击即触发，无额外确认；前置条件（工作区干净、
-// HEAD 与远端一致）由后端最终检查，失败原因原样展示。
-async function retryReviewBlocked() {
-  if (reviewRetrying.value)
-    return
-  reviewRetrying.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post('/api/activity/update/evolve-retry')
-    if (!data.ok)
-      throw new Error(data.error || '重试失败')
-    syncEvolveState(data.evolve)
-    if (data.started === false) {
-      toast.warning(data.message || '当前不满足重试条件')
-      await loadUpdateStatus()
-      return
-    }
-    toast.success('已重新启动综合巡检，完成后飞书通知')
-  }
-  catch (err: any) {
-    // 先刷新状态再落错误文案：loadUpdateStatus 开头会清空 error
-    await loadUpdateStatus()
-    error.value = err?.response?.data?.error || err.message || '重试失败'
-  }
-  finally {
-    reviewRetrying.value = false
-  }
-}
-
-async function toggleEvolutionEnabled() {
-  togglingEvolution.value = true
-  error.value = ''
-  try {
-    const next = evolve.value?.evolutionEnabled === false
-    const { data } = await api.post('/api/activity/update/evolution-enabled', { enabled: next })
-    if (!data.ok)
-      throw new Error(data.error || '切换失败')
-    syncEvolveState(data.evolve)
-    toast.success(next ? '自进化已开启' : '自进化已关闭（手动触发仍可用）')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '切换失败'
-  }
-  finally {
-    togglingEvolution.value = false
-  }
-}
-
-async function toggleAutonomousEvolution() {
-  togglingAutonomy.value = true
-  error.value = ''
-  try {
-    const next = evolve.value?.autonomousEvolutionEnabled !== true
-    const { data } = await api.post('/api/activity/update/autonomous-evolution', { enabled: next })
-    if (!data.ok)
-      throw new Error(data.error || '切换失败')
-    syncEvolveState(data.evolve)
-    toast.success(next ? '自主进化已开启：失败自动返工、验收通过自动应用' : '自主进化已关闭：恢复人工确认应用')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '切换失败'
-  }
-  finally {
-    togglingAutonomy.value = false
-  }
-}
-
-async function syncEvolutionHead() {
-  syncingHead.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post('/api/activity/update/sync-head')
-    if (!data.ok)
-      throw new Error(data.error || '同步失败')
-    syncEvolveState(data.evolve)
-    toast.success(`待应用提交已同步到当前 HEAD（${String(data.commit || '').slice(0, 8)}）`)
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '同步失败'
-  }
-  finally {
-    syncingHead.value = false
-  }
-}
-
-async function applyEvolve() {
-  applying.value = true
-  error.value = ''
-  try {
-    const { data } = await api.post('/api/activity/update/apply')
-    if (!data.ok)
-      throw new Error(data.error || '应用进化失败')
-    syncEvolveState(data.evolve)
-    toast.warning('正在重启应用进化，面板稍等片刻恢复')
-  }
-  catch (err: any) {
-    error.value = err?.response?.data?.error || err.message || '应用进化失败'
-  }
-  finally {
-    applying.value = false
-  }
-}
-
 async function loadUpdateStatus() {
   loading.value = true
   error.value = ''
   try {
-    // 复用共享状态请求（在途合并），避免与 10 秒轮询重复打同一接口
-    const data = await evolutionStore.loadStatus()
+    const { data } = await api.get('/api/activity/update/status')
     if (!data.ok)
       throw new Error(data.error || '读取活动更新状态失败')
     report.value = data.report || null
     intervalMs.value = Number(data.intervalMs) || 0
     nextScanAt.value = Number(data.nextScanAt) || 0
     upstreamCacheMs.value = Number(data.upstreamCacheMs) || upstreamCacheMs.value
-    instructionDraft.value = data.evolve?.userInstruction || ''
   }
   catch (err: any) {
     error.value = err?.response?.data?.error || err.message || '读取活动更新状态失败'
@@ -681,9 +396,9 @@ async function loadUpdateStatus() {
 
 onMounted(() => {
   void loadUpdateStatus()
-  evolutionStore.startPolling()
+  pollTimer = globalThis.setInterval(() => { void loadUpdateStatus() }, 10_000)
 })
-onUnmounted(() => evolutionStore.stopPolling())
+onUnmounted(() => globalThis.clearInterval(pollTimer))
 </script>
 
 <template>
@@ -739,194 +454,6 @@ onUnmounted(() => evolutionStore.stopPolling())
       </div>
     </template>
 
-    <div class="rounded-lg border border-purple-200 bg-purple-50 p-4 dark:border-purple-800 dark:bg-purple-900/20">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="min-w-0">
-          <h4 class="text-sm font-semibold text-purple-900 dark:text-purple-200">
-            自动进化（活动 + 防封安全巡检）
-          </h4>
-          <p class="mt-1 text-xs text-purple-700/90 dark:text-purple-300/90">
-            每天北京时间 00:00-01:00 合并巡检一次；自主开启后，新活动空闲时立即进化。主 Agent 持续统筹，子 Agent 首次实施后，由主 Agent 自行修正并反复验证，每轮保存失败原因、改动与剩余问题；验收通过先通知，再按自主设置应用。{{ evolve?.autonomousEvolutionEnabled === true ? '完成的改动会自动应用，就绪后再确认。' : '验收通过后由你点「应用进化」生效。' }}
-          </p>
-        </div>
-        <button
-          class="rounded bg-purple-100 px-3 py-1.5 text-xs text-purple-700 transition hover:bg-purple-200 dark:bg-purple-900/50 dark:text-purple-300"
-          :loading="testingNotify"
-          @click="testNotify"
-        >
-          发送测试通知
-        </button>
-      </div>
-      <div class="grid mt-3 gap-2 sm:grid-cols-2">
-        <div class="border border-purple-200 rounded bg-white/70 px-3 py-2 text-xs text-purple-800 dark:border-purple-700/50 dark:bg-gray-800/70 dark:text-purple-300">
-          <div class="font-medium">
-            下次自动进化
-          </div>
-          <div class="mt-1">
-            {{ formatTime(evolve?.nextAutoRunAt) }}
-          </div>
-        </div>
-        <div class="border border-purple-200 rounded bg-white/70 px-3 py-2 text-xs text-purple-800 dark:border-purple-700/50 dark:bg-gray-800/70 dark:text-purple-300">
-          <div class="font-medium">
-            待 Agent 复盘的运行问题
-          </div>
-          <div class="mt-1">
-            {{ evolve?.pendingRuntimeIssueCount || 0 }} 类 · {{ evolve?.pendingRuntimeIssueOccurrences || 0 }} 次
-          </div>
-          <div class="mt-1 opacity-75">
-            只保留脱敏摘要；确认无需修改或更新生效后清除，最长保留 72 小时。
-          </div>
-        </div>
-      </div>
-      <div class="mt-3 rounded border border-purple-200 bg-white/70 p-3 dark:border-purple-700/50 dark:bg-gray-800/70">
-        <label class="text-xs font-medium text-purple-900 dark:text-purple-200" for="evolution-user-instruction">
-          给 Claude/Codex 的修改要求
-        </label>
-        <textarea
-          id="evolution-user-instruction"
-          v-model="instructionDraft"
-          maxlength="4000"
-          rows="3"
-          class="mt-2 w-full resize-y rounded border border-purple-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-purple-500 dark:border-purple-700 dark:bg-gray-900 dark:text-white"
-          placeholder="例如：本次熔断收得太紧。保持当前收菜/偷菜优先级，只降低普通巡查频率；自己成熟收获、好友到点偷菜、重点用户 HOT/PREARM 不得被 cooldown 阻断。"
-          :disabled="evolve?.status === 'running' || evolve?.status === 'revising'"
-        />
-        <p class="mt-1 text-xs text-purple-700/90 dark:text-purple-300/90">
-          保存后会持久加入以后每一轮提示词，清空并保存即可取消。拒绝重做时会先回退旧提交，再强制读取完整 HANDOFF、上一轮日志和被拒绝 diff，沿用原分析继续修改；没有待应用提交时按钮保持可见但置灰。
-        </p>
-        <div class="mt-2 flex flex-wrap gap-2">
-          <button
-            class="rounded bg-purple-600 px-3 py-1.5 text-xs text-white transition hover:bg-purple-700 disabled:opacity-50"
-            :disabled="instructionSaving || evolve?.status === 'running' || evolve?.status === 'revising'"
-            @click="saveEvolutionInstruction"
-          >
-            {{ instructionSaving ? '保存中…' : '保存修改要求' }}
-          </button>
-          <button
-            class="rounded bg-rose-600 px-3 py-1.5 text-xs text-white transition hover:bg-rose-700 disabled:opacity-50"
-            :disabled="revisionRunning || !redoeableStatus || !instructionDraft.trim()"
-            :title="redoeableStatus ? '回退当前待应用提交并续接上一轮上下文重做；隐私拦截轮会续接原 Agent 会话修复' : '当前没有可重做的进化提交'"
-            @click="reviseEvolution"
-          >
-            {{ revisionRunning
-              ? '正在回退并重做…'
-              : redoeableStatus
-                ? '拒绝本次并按要求重做'
-                : '拒绝本次并按要求重做（当前无可重做提交）' }}
-          </button>
-        </div>
-      </div>
-      <div class="mt-3 grid gap-2 md:grid-cols-2">
-        <div class="rounded border border-purple-200 bg-white/60 p-2.5 dark:border-purple-700/50 dark:bg-gray-800/60">
-          <div class="text-xs font-medium text-purple-900 dark:text-purple-200">
-            {{ evolve?.lastTask === 'activity' ? '活动进化' : '安全巡检（防封审计）' }}
-          </div>
-          <div class="mt-1 text-xs text-purple-800 dark:text-purple-300">
-            状态：{{ evolveStatusLabel }}
-            <span v-if="evolve?.commit">（提交 {{ String(evolve.commit).slice(0, 8) }}）</span>
-          </div>
-          <p v-if="evolve?.summary" class="mt-1 text-xs break-all text-purple-700 dark:text-purple-300">
-            {{ evolve.summary }}
-          </p>
-          <div class="mt-2 flex flex-wrap gap-2">
-            <button
-              class="rounded bg-purple-600 px-3 py-1.5 text-xs text-white transition hover:bg-purple-700 disabled:opacity-50"
-              :disabled="evolutionBlocked || safetyRunning || evolving || forceEvolving"
-              @click="triggerSafetyEvolve"
-            >
-              {{ safetyRunning ? '启动中…' : '立即巡检' }}
-            </button>
-          </div>
-        </div>
-        <div class="rounded border border-purple-200 bg-white/60 p-2.5 dark:border-purple-700/50 dark:bg-gray-800/60">
-          <div class="text-xs font-medium text-purple-900 dark:text-purple-200">
-            活动进化
-          </div>
-          <div class="mt-1 text-xs text-purple-800 dark:text-purple-300">
-            最近完成：{{ latestActivityReview.date || '尚未完成' }}
-            <span
-              v-if="latestActivityReview.date"
-              class="text-purple-500 dark:text-purple-400"
-            >{{ latestActivityReview.combined ? '（综合巡检含活动复核）' : '（独立活动进化）' }}</span>
-          </div>
-          <div v-if="latestActivityReview.combined && standaloneActivityDate" class="mt-1 text-xs text-purple-500 dark:text-purple-400">
-            上次独立活动进化：{{ standaloneActivityDate }}
-          </div>
-          <div class="mt-2 flex flex-wrap gap-2">
-            <button
-              class="rounded bg-purple-600 px-3 py-1.5 text-xs text-white transition hover:bg-purple-700 disabled:opacity-50"
-              :disabled="evolutionBlocked || evolving || forceEvolving"
-              @click="triggerEvolve(false)"
-            >
-              {{ evolving ? '启动中…' : '立即进化' }}
-            </button>
-            <button
-              class="rounded border border-purple-400 bg-white px-3 py-1.5 text-xs text-purple-700 transition hover:bg-purple-50 disabled:opacity-50 dark:bg-gray-900 dark:text-purple-300"
-              :disabled="evolutionBlocked || evolving || forceEvolving || !(report?.online?.groups?.length)"
-              title="使用最新活动说明与只读证据，重新复核候选活动或当前已登记活动"
-              @click="triggerEvolve(true)"
-            >
-              {{ forceEvolving ? '重新启动中…' : '重新进化当前活动' }}
-            </button>
-          </div>
-        </div>
-      </div>
-      <div class="mt-2">
-        <button
-          class="rounded bg-amber-500 px-3 py-1.5 text-xs text-white transition hover:bg-amber-600 disabled:opacity-50"
-          :disabled="evolve?.status !== 'pending_apply'"
-          @click="applyEvolve"
-        >
-          {{ applying ? '正在重启…' : '应用进化（重启生效）' }}
-        </button>
-        <button
-          v-if="evolve?.status === 'review_blocked'"
-          class="ml-2 rounded bg-purple-600 px-3 py-1.5 text-xs text-white transition hover:bg-purple-700 disabled:opacity-50"
-          :disabled="reviewRetrying"
-          title="继续处理未完成任务。主 Agent 模式沿用原合同、草稿和批次；其他旧记录从当前基线复核，后端检查工作区、检查点和发布条件"
-          @click="retryReviewBlocked"
-        >
-          {{ reviewRetrying ? '重试启动中…' : '重新验收并重试' }}
-        </button>
-        <button
-          class="ml-2 rounded bg-slate-200 px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-          :disabled="syncingHead || !['pending_apply', 'privacy_blocked_local', 'push_failed'].includes(evolve?.status || '')"
-          title="本地已推进提交但面板还挂着旧待应用提交时，把待应用提交重指向当前 HEAD（要求旧提交是 HEAD 祖先）"
-          @click="syncEvolutionHead"
-        >
-          {{ syncingHead ? '同步中…' : '同步 HEAD' }}
-        </button>
-        <button
-          class="ml-2 rounded px-3 py-1.5 text-xs transition disabled:opacity-50"
-          :class="evolve?.evolutionEnabled === false
-            ? 'bg-gray-200 text-gray-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400'
-            : 'bg-emerald-500 text-white hover:bg-emerald-600'"
-          :disabled="togglingEvolution"
-          :title="evolve?.evolutionEnabled === false ? '自动进化已关闭，点击开启' : '每日自动进化运行中，点击关闭（手动触发不受影响）'"
-          @click="toggleEvolutionEnabled"
-        >
-          {{ togglingEvolution ? '切换中…' : (evolve?.evolutionEnabled === false ? '自进化：关' : '自进化：开') }}
-        </button>
-        <button
-          class="ml-2 rounded px-3 py-1.5 text-xs transition disabled:opacity-50"
-          :class="evolve?.autonomousEvolutionEnabled === true
-            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-            : 'bg-gray-200 text-gray-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400'"
-          :disabled="togglingAutonomy"
-          :title="evolve?.autonomousEvolutionEnabled === true
-            ? '自主进化运行中：失败自动返工，通过的改动自动应用并重启生效；点击关闭恢复人工确认应用'
-            : '自主进化已关闭，点击开启：通过的改动自动应用生效、失败自动返工重试（默认关闭）'"
-          @click="toggleAutonomousEvolution"
-        >
-          {{ togglingAutonomy ? '切换中…' : (evolve?.autonomousEvolutionEnabled === true ? '自主进化：开' : '自主进化：关') }}
-        </button>
-        <span
-          v-if="evolve?.autonomousEvolutionEnabled === true && evolve?.autonomy?.nextReworkAt"
-          class="ml-1 text-xs text-emerald-700 dark:text-emerald-300"
-          title="自主进化下一次自动重试/应用时刻（失败按间隔递增退避）"
-        >下次自动处理 {{ formatTime(evolve.autonomy.nextReworkAt) }}</span>
-      </div>
-    </div>
 
     <template v-if="report">
       <div class="grid gap-4 lg:grid-cols-2">

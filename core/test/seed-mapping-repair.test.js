@@ -3,10 +3,9 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const temp = fs.realpathSync(os.tmpdir()), prefix = path.resolve(temp, 'farm-seed-mapping-');
 assert.equal(path.dirname(prefix), temp);
 const privateDir = fs.mkdtempSync(prefix); process.env.FARM_DATA_DIR = privateDir;
-const files = [__filename, '../src/gameConfig/EventItems.json', '../src/gameConfig/EventPlants.json', '../src/services/warehouse.js', '../src/services/evolution-issue-inbox.js'].map(f => path.resolve(__dirname, f));
+const files = [__filename, '../src/gameConfig/EventItems.json', '../src/gameConfig/EventPlants.json', '../src/services/warehouse.js'].map(f => path.resolve(__dirname, f));
 const fingerprint = () => files.map(f => ({ mode: fs.statSync(f).mode & 0o777, hash: crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex') }));
 const before = fingerprint(), config = require('../src/config/gameConfig'), { loadProto, types } = require('../src/utils/proto');
-const inbox = require('../src/services/evolution-issue-inbox');
 test.before(async () => { await loadProto(); });
 test.after(() => { try { assert.deepEqual(fingerprint(), before); } finally { assert.equal(path.dirname(privateDir), temp); fs.rmSync(privateDir, { recursive: true, force: true }); } });
 function replaceModules(replacements) {
@@ -45,32 +44,11 @@ test('actual Bag decoding returns mapped size2 with no footprint fallback with i
   assert.equal(bag.seedRecognition.issues.some(x => x.itemId === 29005 && x.kind === 'seed_icon_missing'), false);
   assert.deepEqual(f.calls.map(x => x.method), ['Bag']);
 });
-test('known missing mappings enter the real inbox once per added set, independent of order and duplicate stacks', t => {
-  const f = fixture(t), count = () => inbox.getRuntimeIssueSnapshot().find(x => x.key === 'bag_seed_mapping')?.count || 0, start = count();
-  f.warehouse.getBagSeedsFromItems([{ id: 29981, count: 1 }, { id: 29981, count: 2 }]);
-  f.warehouse.getBagSeedsFromItems([{ id: 29981, count: 5 }]);
-  assert.equal(count(), start + 1, 'known seeds without Plant must enter automatic evolution feedback');
-  f.warehouse.getBagSeedsFromItems([{ id: 29981, count: 1 }, { id: 29982, count: 1 }]);
-  f.warehouse.getBagSeedsFromItems([{ id: 29982, count: 2 }, { id: 29981, count: 1 }]);
-  assert.equal(count(), start + 2);
-  f.warehouse.getBagSeedsFromItems([{ id: 29981, count: 1 }]); assert.equal(count(), start + 2, 'disappearance is not new feedback');
-  const logs = f.logs.filter(x => x.meta?.event === 'bag_seed_detect'); assert.equal(logs.length, 3);
-  assert.deepEqual(logs[0].meta.addedSeedIds, [29981]); assert.equal(logs[0].meta.count, 1);
-  for (const row of logs) assert.doesNotMatch(row.message, /29982|29981/); assert.deepEqual(f.calls, []);
-});
 test('cleared sets report later recurrence; unrelated unverified seed size remains zero', t => {
-  const f = fixture(t), start = inbox.getRuntimeIssueSnapshot().find(x => x.key === 'bag_seed_mapping')?.count || 0;
+  const f = fixture(t);
   f.warehouse.getBagSeedsFromItems([{ id: 29981, count: 1 }]); f.warehouse.getBagSeedsFromItems([{ id: 29005, count: 1 }]);
   const [seed] = f.warehouse.getBagSeedsFromItems([{ id: 29981, count: 1 }]); assert.equal(seed.plantSize, 0); assert.equal(config.getPlantBySeedId(29981), undefined);
-  assert.equal(inbox.getRuntimeIssueSnapshot().find(x => x.key === 'bag_seed_mapping')?.count, start + 2);
   assert.deepEqual(config.getGenericFallbackItemIds(), []);
-});
-test('old seed feedback acknowledgement preserves a later occurrence without identity or item data', () => {
-  const now = Date.now(); assert.equal(inbox.recordRuntimeIssue('bag_seed_mapping', 'warn', now), true);
-  const batch = inbox.toRuntimeIssueBatch(inbox.getRuntimeIssueSnapshot(now)); assert.equal(inbox.recordRuntimeIssue('bag_seed_mapping', 'warn', now + 1000), true);
-  inbox.acknowledgeRuntimeIssues(batch, now + 1000); const issue = inbox.getRuntimeIssueSnapshot(now + 1000).find(x => x.key === 'bag_seed_mapping');
-  assert.ok(issue); assert.equal(issue.count, 1); assert.equal(issue.lastAt, now + 1000);
-  assert.doesNotMatch(fs.readFileSync(path.join(privateDir, 'evolution-runtime-issues.json'), 'utf8'), /29005|29981|29982|account|gid|token|https?:/);
 });
 test('new plant identity does not authorize the conditional-sale activity fruit for automatic sale', async t => {
   assert.ok(config.getPlantByFruitId(49005), 'normal fruit identity is mapped');

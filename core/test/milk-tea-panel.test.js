@@ -63,13 +63,12 @@ test('实际页面确认到store；切号往返/卸载后迟到写成功、普�
 
 test('管理面板真实渲染奶茶说明的已适配与占地/图标/自动样本待证边界', async () => {
   let loads = 0;
-  const useEvolutionStore = h.pinia.defineStore('evolution-panel', () => ({ evolve: vue.ref(null), startPolling() {}, stopPolling() {}, loadStatus: async () => { loads += 1; return { ok: true, report: { scannedAt: 1, status: 'up-to-date', warnings: [], unknownActivityIds: [], detectedActivityIds: [], candidateCount: 0, caches: [], incompleteCandidates: [], online: { available: true, activities: [], unknownActivityIds: [], groups: [{ id: 2026110100, title: '奶茶热销中', payload: { tips: { txt: ['开店营业，升级小店，收银台','种植加工，奶茶工坊','雇佣好友，每班互动','宣传加速，宣传喇叭，排行榜，销量日志','成长基金，累计快乐值，人气装饰','48小时结算期，停止自动营业，未领收益通过邮件补发'] } } }] } } }; } }));
+  const statusReport = { scannedAt: 1, status: 'up-to-date', warnings: [], unknownActivityIds: [], detectedActivityIds: [], candidateCount: 0, caches: [], incompleteCandidates: [], online: { available: true, activities: [], unknownActivityIds: [], groups: [{ id: 2026110100, title: '奶茶热销中', payload: { tips: { txt: ['开店营业，升级小店，收银台','种植加工，奶茶工坊','雇佣好友，每班互动','宣传加速，宣传喇叭，排行榜，销量日志','成长基金，累计快乐值，人气装饰','48小时结算期，停止自动营业，未领收益通过邮件补发'] } } }] } };
   h.pinia.setActivePinia(h.pinia.createPinia());
   const Panel = compileSfcModule(path.join(WEB,'src/components/admin/AdminActivityUpdatePanel.vue'), spec => {
     if(spec==='vue')return vue; if(spec==='vue-router')return require(path.join(WEB,'node_modules/vue-router')); if(spec==='pinia')return h.pinia;
-    if(spec==='@/stores/evolution')return {useEvolutionStore};
     if(spec==='@/stores/toast')return {useToastStore:()=>({success(){},error(){}})};
-    if(spec==='@/api')return {__esModule:true,default:{}};
+    if(spec==='@/api')return {__esModule:true,default:{ get: async () => { loads += 1; return { data: { ok: true, intervalMs: 1800000, nextScanAt: 0, upstreamCacheMs: 0, report: statusReport } }; } }};
   });
   const root=makeNode('root');activeRoots.push(root);render(vue.h(Panel),root);await flush(); await vue.nextTick(); assert.equal(loads, 1, '真实mounted读取状态');
   assert.match(textOf(root),/奶茶工坊与果实加工/);assert.match(textOf(root),/七种普通森野作物单格、黄金芽四格和种子、果实专属图已核验/);assert.match(textOf(root),/真正未登记的作物仍保留未知占地/);assert.match(textOf(root),/自然成功样本/);render(null,root);

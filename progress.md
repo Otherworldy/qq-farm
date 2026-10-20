@@ -8,6 +8,16 @@
 
 # 当前状态
 
+- 2026-10-20 移除自动进化 agent（改为全部人工更新）：删除 `activity-evolver.js`、
+  15 个 `evolution-*.js`、`feishu-notify.js`、`approved-runtime-entry.js`、4 个进化
+  脚本、`scripts/evolution-hooks/`、面板 `EvolutionAgentSettings.vue` 与
+  `stores/evolution.ts`，以及 34 个进化测试。保留活动更新扫描
+  （`activity-update-monitor.js` + `/api/activity/update/status|scan`）、微信凭据
+  保活（`auto-code-refresh.js`）、隐私脱敏（`privacy-guard.js`）与通用重启脚本
+  `scripts/restart-bot.sh`。`warehouse.js` / `daily-events.js` /
+  `auto-code-refresh.js` 里的 `recordRuntimeIssue` 投递点一并移除，背包与事件
+  上报只保留日志。
+
 - 2026-10-20 微信端 TSDK 升级：从本机 Windows 微信 4.x 缓存
   （`%APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\packages\wx5306c5978fdb76e4\75`）
   解出微信小游戏包，TSDK 为 `v3.9.0.1792070005`（161133 字节，SHA-256

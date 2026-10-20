@@ -126,27 +126,6 @@ function collectRuntimePrivacyTerms(options = {}) {
   for (const item of Array.isArray(privateConfig.privacyDenylist) ? privateConfig.privacyDenylist : []) {
     addPrivacyTerm(terms, item);
   }
-  // Public reference identities belong in private evidence, never in published notes.
-  const references = [
-    ...(Array.isArray(privateConfig.evolutionReferenceRepositories) ? privateConfig.evolutionReferenceRepositories : []),
-    ...Object.values(privateConfig.evolutionReferenceAliases || {}),
-  ];
-  try {
-    const cache = JSON.parse(fs.readFileSync(path.join(dataDir, 'evolution-references.json'), 'utf8'));
-    for (const item of [...(Array.isArray(cache.candidates) ? cache.candidates : []), ...(Array.isArray(cache.seenCandidates) ? cache.seenCandidates : [])].slice(0, 100)) {
-      if (typeof item?.ownerRepo === 'string' && /(?:farm|nqf|农场)/i.test(item.ownerRepo.split('/')[1] || '')) references.push(item.ownerRepo);
-    }
-  } catch {}
-  for (const reference of references) {
-    if (typeof reference === 'string' && /^[a-z\d][a-z\d-]{0,38}\/[\w.-]{1,100}$/i.test(reference)) {
-      addPrivacyTerm(terms, reference);
-      const owner = reference.split('/')[0];
-      if (owner.length >= 8) {
-        addPrivacyTerm(terms, owner);
-        addPrivacyTerm(terms, owner.toLowerCase());
-      }
-    }
-  }
   for (const term of collectLocalPrivacyTerms({ ...options, dataDir, privateConfig })) terms.add(term);
   return terms;
 }
@@ -290,9 +269,7 @@ function getReviewedOfficialResources(repoRoot, head, options = {}) {
 
 function auditGitRange(repoRoot, base, head, options = {}) {
   // 仅父进程持有已完成双 Agent 验收凭据时传入；隐私文件不在这个例外集合中。
-  const orchestrationFiles = new Set([
-    'core/scripts/run-evolution-team.js', 'core/src/services/evolution-team.js',
-  ]);
+  const orchestrationFiles = new Set();
   const reviewedOrchestrationFiles = new Set((Array.isArray(options.reviewedOrchestrationFiles)
     ? options.reviewedOrchestrationFiles : []).filter(file => orchestrationFiles.has(file)));
   const protectedFiles = new Set([
@@ -300,28 +277,9 @@ function auditGitRange(repoRoot, base, head, options = {}) {
     'core/src/services/privacy-guard.js',
     'core/src/services/local-privacy-terms.js',
     'core/src/services/private-config.js',
-    'core/src/services/feishu-notify.js',
-    'core/src/services/activity-evolver.js',
-    'core/src/services/evolution-countercheck.js', 'core/scripts/countercheck-reporter.cjs',
-    'core/src/services/evolution-learning.js', 'core/src/services/evolution-validation.js', 'core/src/services/evolution-references.js',
     'core/src/services/daily-feedback.js', 'core/src/controllers/admin-feedback-routes.js',
     'web/src/utils/daily-feedback.ts',
-    'core/src/services/evolution-team.js',
-    'core/scripts/run-evolution-team.js',
-    'core/src/services/evolution-main-workflow.js',
-    'core/src/services/evolution-main-mcp.js',
-    'core/scripts/run-evolution-main-mcp.js',
-    'scripts/evolution-hooks/pre-push',
-    // 2026-10-07 R6 owner 授权新增（仅此两条路径，不放宽任何扫描/豁免）：
-    // worktree 指纹与原生会话登记是完整性控制面，提交面出现即报 privacy-control-changed。
-    'core/src/services/evolution-worktree.js',
-    'core/src/services/evolution-sessions.js',
-    'core/src/services/evolution-publish.js',
-    // 2026-10-08 owner 授权新增（仅启动引导/应用 helper 路径，不放宽任何扫描/豁免）：
-    // 入口、批准运行时路由与应用 helper 是完整性控制面，提交面出现即报 privacy-control-changed。
     'core/client.js',
-    'core/src/runtime/approved-runtime-entry.js',
-    'core/scripts/evolution-apply-process.js',
   ]);
   const privatePath = /(?:^|\/)(?:core\/data|logs?|tmp|temp|\.tmp|\.codex|\.claude)(?:\/|$)|(?:^|\/)(?:\.env(?:\.|$)|\.claude\.json$|auth\.json$|\.?credentials\.json$|private-config\.json$)|\.(?:log|pem|key|p12|pfx)$/i;
   const git = args => execFileSync('git', args, {

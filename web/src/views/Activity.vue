@@ -5,24 +5,20 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 // 上一期 BearActivityPanel 已退役；只保留历史迁移定位，默认页面仅挂载当前奶茶面板。
 import MilkTeaActivityPanel from '@/components/activity/MilkTeaActivityPanel.vue'
 import AdminActivityUpdatePanel from '@/components/admin/AdminActivityUpdatePanel.vue'
-import EvolutionAgentSettings from '@/components/admin/EvolutionAgentSettings.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import { useAccountStore } from '@/stores/account'
 import { useActivityStore } from '@/stores/activity'
-import { useEvolutionStore } from '@/stores/evolution'
 import { useToastStore } from '@/stores/toast'
 import { useUserStore } from '@/stores/user'
 
 const accountStore = useAccountStore()
 const activityStore = useActivityStore()
-const evolutionStore = useEvolutionStore()
 const toast = useToastStore()
 const userStore = useUserStore()
 const { currentAccountId, currentAccount } = storeToRefs(accountStore)
 const { milkTeaActivity, milkTeaLoading, milkTeaError, milkTeaOperating, milkTeaQueries } = storeToRefs(activityStore)
 const { claimAllRunning, claimAllStep, claimAllResults } = storeToRefs(activityStore)
 const { activityRetired } = storeToRefs(activityStore)
-const { evolve } = storeToRefs(evolutionStore)
 
 const operationFeedback = ref<any>(null)
 const showActivityAnalysis = ref(false)
@@ -126,9 +122,8 @@ watch(currentAccountId, () => {
 })
 watch(() => userStore.isAdmin, (isAdmin, _previous, onCleanup) => {
   if (isAdmin) {
-    void evolutionStore.loadStatus().catch(() => {})
-    evolutionStore.startPolling()
-    onCleanup(() => evolutionStore.stopPolling())
+    // 活动分析弹窗仅在管理员下可用，关闭时复位避免残留。
+    onCleanup(() => {})
   }
   else {
     showActivityAnalysis.value = false
@@ -163,16 +158,9 @@ onMounted(() => {
           <BaseButton variant="primary" :loading="milkTeaLoading" :disabled="!currentAccountId" @click="refreshAll">
             刷新
           </BaseButton>
-          <EvolutionAgentSettings v-if="userStore.isAdmin" dark />
-          <span
-            v-if="userStore.isAdmin"
-            class="inline-flex items-center border border-sky-200/25 rounded-lg bg-[#071b43]/75 px-3 py-1.5 text-xs text-sky-50 backdrop-blur-sm"
-          >
-            下次自动：{{ evolve?.nextAutoRunAt ? new Date(evolve.nextAutoRunAt).toLocaleString() : '待调度' }} · 待复盘 {{ evolve?.pendingRuntimeIssueCount || 0 }} 类
-          </span>
           <BaseButton v-if="userStore.isAdmin" variant="secondary" @click="showActivityAnalysis = true">
             <span class="i-carbon-analytics mr-1.5" />
-            自动进化 / 活动分析
+            活动分析
           </BaseButton>
         </div>
       </div>
@@ -278,7 +266,6 @@ onMounted(() => {
               </p>
             </div>
             <div class="min-w-0 flex items-center gap-3">
-              <EvolutionAgentSettings />
               <button
                 class="grid h-9 w-9 place-items-center rounded-lg text-gray-500 transition hover:bg-gray-100 dark:hover:bg-gray-700"
                 aria-label="关闭活动分析"

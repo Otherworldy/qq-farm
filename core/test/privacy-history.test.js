@@ -140,34 +140,13 @@ test('公共管理接口名称不会被当成机器目录，真实用户目录�
   }
 });
 
-test('已验收修复仅能放行指定协作文件，发布器与隐私控制不可豁免', (t) => {
+test('受保护隐私控制文件改动一律拦截', (t) => {
   const f = fixture(t);
-  const runner = 'core/scripts/run-evolution-team.js';
-  const publisher = 'core/src/services/activity-evolver.js';
   const privacy = 'core/src/services/privacy-guard.js';
-  f.write(runner, 'module.exports = 1;\n');
-  const repaired = f.commit();
-  assert.equal(f.audit(repaired).ok, false);
-  assert.equal(auditGitRange(f.root, f.base, repaired, {
-    runtimeTerms: new Set(), reviewedOrchestrationFiles: [runner],
-  }).ok, true);
-  const secret = ['sk', 'c'.repeat(32)].join('-');
-  f.write(runner, `module.exports = '${secret}';\n`);
-  const secretResult = auditGitRange(f.root, f.base, f.commit(), {
-    runtimeTerms: new Set(), reviewedOrchestrationFiles: [runner],
-  });
-  assert.ok(secretResult.findings.some(item => item.rule === 'provider-token'));
-  f.write(publisher, 'module.exports = 1;\n');
-  f.write(privacy, 'module.exports = 1;\n');
   const feedbackControl = 'core/src/services/daily-feedback.js';
-  const validationControl = 'core/src/services/evolution-validation.js';
+  f.write(privacy, 'module.exports = 1;\n');
   f.write(feedbackControl, 'module.exports = 1;\n');
-  f.write(validationControl, 'module.exports = 1;\n');
-  const result = auditGitRange(f.root, f.base, f.commit(), {
-    runtimeTerms: new Set(), reviewedOrchestrationFiles: [runner, publisher, privacy],
-  });
+  const result = auditGitRange(f.root, f.base, f.commit(), { runtimeTerms: new Set() });
   assert.equal(result.ok, false);
-  assert.ok(result.findings.some(item => item.file === publisher && item.rule === 'privacy-control-changed'));
-  assert.ok(result.findings.some(item => item.file === privacy && item.rule === 'privacy-control-changed'));
-  for (const file of [feedbackControl, validationControl]) assert.ok(result.findings.some(item => item.file === file && item.rule === 'privacy-control-changed'));
+  for (const file of [privacy, feedbackControl]) assert.ok(result.findings.some(item => item.file === file && item.rule === 'privacy-control-changed'));
 });

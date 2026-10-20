@@ -12,7 +12,6 @@ const {
   auditGitRange,
 } = require('../src/services/privacy-guard');
 const { getPrivateValue } = require('../src/services/private-config');
-const { sendFeishuText } = require('../src/services/feishu-notify');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -106,24 +105,6 @@ test('本地私密配置优先使用显式环境且不需要源码默认值', ()
   }), 'from-file');
 });
 
-test('飞书发送使用私密地址但正文不会携带 URL', async () => {
-  const originalFetch = globalThis.fetch;
-  const webhook = buildUrl('https:/', '/open.feishu.cn/open-apis/bot/v2/hook/', 'example-secret-value');
-  let request = null;
-  globalThis.fetch = async (url, options) => {
-    request = { url, options };
-    return { json: async () => ({ code: 0 }) };
-  };
-  try {
-    await sendFeishuText('privacy test', buildUrl('changed ', 'https:/', '/private.invalid/path'), webhook);
-    assert.equal(request.url, webhook);
-    assert.doesNotMatch(request.options.body, /private\.invalid|example-secret-value/);
-    assert.match(request.options.body, /URL_REDACTED/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
 test('受跟踪内容不含机器用户路径、真实 Webhook 或隐藏管理员凭据', () => {
   const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' })
     .split('\0')
@@ -171,18 +152,3 @@ test('机器尾注域不触发 personal-email,真实邮箱仍拦截', () => {
   }
 });
 
-test('privately configured and discovered reference identities cannot enter public changes; code locations remain usable', (t) => {
-  const dataDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'reference-privacy-'));
-  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(dataDir, 'evolution-references.json'), JSON.stringify({
-    candidates: [{ ownerRepo: 'sample-new/qq-farm' }, { ownerRepo: 'core/src' }],
-  }));
-  const { collectRuntimePrivacyTerms } = require('../src/services/privacy-guard');
-  const runtimeTerms = collectRuntimePrivacyTerms({ dataDir, homeDir: dataDir, env: {},
-    privateConfig: { evolutionReferenceRepositories: ['sample-fixed/qq-farm'], evolutionReferenceAliases: { old: 'sample-old/qq-farm' } } });
-  for (const name of ['sample-fixed/qq-farm', 'sample-old/qq-farm', 'sample-new/qq-farm']) {
-    assert.ok(scanTextForPrivacy(name, { runtimeTerms }).some(f => f.rule === 'runtime-personal-data'));
-  }
-  assert.ok(scanTextForPrivacy('source author sample-fixed', { runtimeTerms }).some(f => f.rule === 'runtime-personal-data'));
-  assert.equal(scanTextForPrivacy('core/src/services/friend-orchestrator.js:100 @ abcdef1234', { runtimeTerms }).length, 0);
-});

@@ -77,23 +77,14 @@ test('seed→plant→fruit 双向映射与占地（官方 Plant 1020435/1120435 
 test('背包识别：20435 进种子列表，果实分类正确，三者均不再报 unknown', () => {
   const utilsPath = require.resolve('../src/utils/utils');
   const warehousePath = require.resolve('../src/services/warehouse');
-  const inboxPath = require.resolve('../src/services/evolution-issue-inbox');
   const previousUtils = require.cache[utilsPath];
   const previousWarehouse = require.cache[warehousePath];
-  const previousInbox = require.cache[inboxPath];
   const logs = [];
-  const recorded = [];
   const utilsMod = require('../src/utils/utils');
   require.cache[utilsPath] = mockModule(utilsPath, {
     ...utilsMod,
     log: (tag, message, meta) => logs.push({ message, meta }),
     logWarn: () => {},
-  });
-  require.cache[inboxPath] = mockModule(inboxPath, {
-    recordRuntimeIssue: (type, level) => {
-      recorded.push({ type, level });
-      return true;
-    },
   });
   delete require.cache[warehousePath];
   try {
@@ -114,13 +105,11 @@ test('背包识别：20435 进种子列表，果实分类正确，三者均不�
     assert.match(seeds[0].image, /20435_Crop_435_Seed\.png$/);
     assert.equal(logs.filter(l => l.meta && l.meta.event === 'bag_unclassified_item').length, 0,
       '已登记家族不得再报 unknown');
-    assert.equal(recorded.length, 0);
     // 未登记的新未知 ID 仍必须如实上报（回归保留）
     getSeeds([...bag, { id: 4299991, count: 1 }]);
     const reported = logs.filter(l => l.meta && l.meta.event === 'bag_unclassified_item');
     assert.equal(reported.length, 1);
     assert.deepEqual(reported[0].meta.unclassifiedItemIds, [4299991]);
-    assert.deepEqual(recorded, [{ type: 'bag_unclassified', level: 'warn' }]);
     // 审计消费同一输入：山丹丹家族零缺口（含 seed_icon_missing）
     const audit = auditBagSeedCoverage(bag, getSeeds(bag));
     assert.equal(audit.issues.filter(i => [20435, 40435, 1040435].includes(i.itemId)).length, 0);
@@ -128,8 +117,6 @@ test('背包识别：20435 进种子列表，果实分类正确，三者均不�
     delete require.cache[warehousePath];
     if (previousUtils === undefined) delete require.cache[utilsPath];
     else require.cache[utilsPath] = previousUtils;
-    if (previousInbox === undefined) delete require.cache[inboxPath];
-    else require.cache[inboxPath] = previousInbox;
     if (previousWarehouse !== undefined) require.cache[warehousePath] = previousWarehouse;
   }
 });
