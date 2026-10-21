@@ -159,6 +159,7 @@ function rejectAllPendingRequests(reason = '请求被中断') {
 // ============ 用户状态 (登录后设置) ============
 const userState = {
     gid: 0,
+    accountId: '',
     name: '',
     level: 0,
     gold: 0,
@@ -170,7 +171,14 @@ const userState = {
     avatar: '',
 };
 
-function getUserState() { return userState; }
+function getUserState() {
+    // 账号ID来自 worker 环境变量，而 worker.js 是在 require 之后才把它写进
+    // process.env 的，所以不能在模块加载时固化。不在这里补齐的话，所有
+    // userState.accountId 都是 undefined，账号级配置（植物黑名单、偷菜白名单）
+    // 会静默退化成兜底值。
+    if (!userState.accountId) userState.accountId = process.env.FARM_ACCOUNT_ID || '';
+    return userState;
+}
 function getWsErrorState() { return { ...wsErrorState }; }
 function setWsErrorState(code, message) {
     wsErrorState = { code: Number(code) || 0, at: Date.now(), message: message || '' };

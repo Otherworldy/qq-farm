@@ -166,3 +166,9 @@
   过滤点、`GET/PUT /api/steal-whitelist` 已接线；前端新增
   `StealWhitelistPanel`（策略设置页可搜索、全选当前、清空、保存），
   测试见 `core/test/steal-whitelist.test.js`。
+- 修复账号级配置读取：`getUserState()` 返回的对象缺少 `accountId` 字段，
+  导致所有 `userState.accountId` 为 `undefined`，账号级配置（植物黑名单、
+  偷菜白名单、好友静默时段、暂停）一直静默退化成兜底值——实测白名单未含
+  非洲菊（seed 20104）却仍被偷取。改为在 `getUserState()` 内按需从
+  `FARM_ACCOUNT_ID` 补齐（worker 在 require 之后才写入该变量，不能在模块
+  加载时固化），并新增断言覆盖。

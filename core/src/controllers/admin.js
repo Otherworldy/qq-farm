@@ -51,10 +51,8 @@ const {
 const { registerAdminFriendRoutes } = require("./admin-friend-routes");
 const { registerAdminIllustratedRoutes } = require("./admin-illustrated-routes");
 const { registerAdminLoginLogRoutes } = require("./admin-login-log-routes");
-const {
-  registerAdminPlantBlacklistRoutes,
-  registerAdminStealWhitelistRoutes,
-} = require("./admin-plant-blacklist-routes");
+const { registerAdminPlantBlacklistRoutes } = require("./admin-plant-blacklist-routes");
+const { registerAdminStealWhitelistRoutes } = require("./admin-steal-whitelist-routes");
 const { registerAdminProxyRoutes } = require("./admin-proxy-routes");
 const { registerAdminPublicInfoRoutes } = require("./admin-public-info-routes");
 const { registerAdminQrLoginRoutes } = require("./admin-qr-login-routes");

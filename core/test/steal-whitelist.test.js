@@ -66,6 +66,15 @@ test('whitelist takes precedence over the blacklist', () => {
   assert.deepEqual(analysis.stealable, [1]);
 });
 
+test('getUserState picks up the worker account id from the environment', () => {
+  process.env.FARM_ACCOUNT_ID = 'acc-from-env';
+  const { getUserState } = require('../src/utils/network');
+  assert.equal(getUserState().accountId, 'acc-from-env');
+  assert.deepEqual(store.getStealWhitelist(getUserState().accountId), []);
+  store.setStealWhitelist('acc-from-env', [SEED_A]);
+  assert.deepEqual(store.getStealWhitelist(getUserState().accountId), [SEED_A]);
+});
+
 test('store persists the whitelist independently of the blacklist', () => {
   const accountId = 'acc-steal-whitelist';
   assert.deepEqual(store.getStealWhitelist(accountId), []);
