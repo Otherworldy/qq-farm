@@ -13,14 +13,29 @@ function registerAdminAccountRuntimeRoutes({
         return res.status(403).json({ ok: false, error: "无权访问此账号" });
       }
 
+      // 手动直接登录是明确的启动意图：先解除“不登录”标记。否则
+      // refreshAccountCode 刷新成功后的 restartWorker 会被 autoLogin=false
+      // 静默拦掉，接口却仍返回 ok，前端就会误报“直接登录成功”。
+      const store = require("../models/store");
+      const readAccount = () => {
+        const data = typeof store.getAccounts === "function" ? store.getAccounts() : {};
+        return (Array.isArray(data.accounts) ? data.accounts : [])
+          .find(item => String(item.id) === String(accountId));
+      };
+      const wasAutoLogin = (readAccount() || {}).autoLogin !== false;
+      if (typeof store.addOrUpdateAccount === "function") {
+        store.addOrUpdateAccount({ id: accountId, autoLogin: true });
+      }
+
       const refreshed = await provider.refreshAccountCode(accountId, "manual_relogin");
       // provider 返回 { ok }，旧代码按对象真值判断导致失败也报"直接登录成功"，
       // 用户永远等不到扫码入口。必须按 ok 字段判断。
       if (!refreshed || refreshed.ok !== true) {
-        const store = require("../models/store");
-        const data = typeof store.getAccounts === "function" ? store.getAccounts() : {};
-        const account = (Array.isArray(data.accounts) ? data.accounts : [])
-          .find(item => String(item.id) === String(accountId));
+        // 刷新失败：恢复原来的“不登录”标记，避免没上号却留下会自动拉号的状态
+        if (!wasAutoLogin && typeof store.addOrUpdateAccount === "function") {
+          store.addOrUpdateAccount({ id: accountId, autoLogin: false });
+        }
+        const account = readAccount();
         const needScan = !account || !account.refreshtoken;
         return res.status(409).json({
           ok: false,

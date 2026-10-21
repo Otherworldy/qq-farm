@@ -177,3 +177,8 @@
   地块记入 `stealSkipped`（含 landId、seedId、作物名、reason），
   三条偷菜路径分别写 `steal_skipped`（规则跳过）、`steal_blocked`
   （预检查不允许）、`steal_failed`（请求被拒）、`steal_partial`（部分成功）。
+- 修复“不登录 → 立即登录无效”：点“不登录”会写 `autoLogin=false` 并停
+  worker，而微信账号的“立即登录”走 `/relogin` 只刷凭证，随后的
+  `restartWorker` 被 `worker-manager` 的 `autoLogin===false` 静默拦掉，
+  接口仍返回 `ok:true`，面板因此误报“直接登录成功”。现在 `/relogin`
+  在刷新前解除该标记，刷新失败则回滚，避免没上号却留下会自动拉号的状态。
