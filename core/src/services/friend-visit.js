@@ -414,6 +414,7 @@ async function visitFriend(friend, tally, myGid, accountId) {
   gateStealByMaturity(gid, name, analysis, lands);
 
   // ---- Steal first (highest priority vs water/weed/bug) ----
+  if (isAutomationOn('friend_steal')) logSkippedByCropRule(gid, name, analysis);
   if (isAutomationOn('friend_steal') && analysis.stealable.length > 0) {
     const canOp = await checkCanOperateRemote(gid, 0x2714); // 10004
     if (canOp.canOperate) {
@@ -467,6 +468,13 @@ async function visitFriend(friend, tally, myGid, accountId) {
           });
         }
       }
+      logStealMiss(gid, name, { canOperate: true, targetCount: targetLands.length, stolen });
+    } else {
+      logStealMiss(gid, name, {
+        canOperate: false,
+        targetCount: analysis.stealable.length,
+        stolen: 0,
+      });
     }
   }
 
@@ -744,6 +752,55 @@ function gateStealByMaturity(gid, name, analysis, lands) {
   rearmDelayedSteal(gid, name, gate);
 }
 
+/**
+ * 偷菜结论日志：把“被作物规则跳过”和“真去偷但没偷到”分开写。
+ * 以前只写成功记录，用户无法判断某块地是没被选中还是请求被拒。
+ */
+function logSkippedByCropRule(gid, friendName, analysis, mode) {
+  const skipped = analysis && Array.isArray(analysis.stealSkipped) ? analysis.stealSkipped : [];
+  if (skipped.length === 0) return;
+  const names = [...new Set(skipped.map(item => item.name).filter(Boolean))];
+  const allWhitelist = skipped.every(item => item.reason === 'whitelist');
+  const allBlacklist = skipped.every(item => item.reason === 'blacklist');
+  const reasonText = allWhitelist ? '不在偷菜白名单' : allBlacklist ? '在偷菜黑名单' : '被作物规则';
+  const label = names.slice(0, 4).join('/') + (names.length > 4 ? ` 等 ${names.length} 种` : '');
+  log('好友', `${friendName}: 跳过偷菜 ${skipped.length} 块（${reasonText}：${label || '未知作物'}）`, {
+    module: 'friend', event: 'steal_skipped', friendGid: gid, result: 'skipped',
+    reason: reasonText, skipped: skipped.length, crops: names,
+    landIds: skipped.map(item => item.landId),
+    ...(mode ? { mode } : {}),
+  });
+}
+
+/**
+ * 偷菜没到手的原因：预检查拒绝、整批被拒、部分失败。成功记录仍由原堆栈写入。
+ */
+function logStealMiss(gid, friendName, { canOperate, targetCount, stolen, mode }) {
+  if (canOperate === false) {
+    log('好友', `${friendName}: 跳过偷菜 ${targetCount} 块（服务器预检查不允许操作）`, {
+      module: 'friend', event: 'steal_blocked', friendGid: gid, result: 'blocked',
+      reason: 'precheck', lands: targetCount,
+      ...(mode ? { mode } : {}),
+    });
+    return;
+  }
+  if (targetCount > 0 && stolen === 0) {
+    logWarn('好友', `${friendName}: 偷菜失败 ${targetCount} 块（请求被服务器拒绝）`, {
+      module: 'friend', event: 'steal_failed', friendGid: gid, result: 'failed',
+      reason: 'request_rejected', lands: targetCount,
+      ...(mode ? { mode } : {}),
+    });
+    return;
+  }
+  if (stolen > 0 && stolen < targetCount) {
+    logWarn('好友', `${friendName}: 偷菜部分失败，成功 ${stolen}/${targetCount} 块`, {
+      module: 'friend', event: 'steal_partial', friendGid: gid, result: 'partial',
+      stolen, lands: targetCount,
+      ...(mode ? { mode } : {}),
+    });
+  }
+}
+
 function fastLaneRipeLandIds(lands, { delaySec = 0, now = Date.now() } = {}) {
   const serverSec = Math.floor(now / 1000);
   // 面板偷菜延迟：成熟后等 N 秒（±5%）再开火。已过延迟窗口的地块照常立即出手，
@@ -824,6 +881,21 @@ async function fastLaneSteal(gid, lands) {
     allowedLandIds = new Set(analysis.stealable);
   }
   const targets = ripeIds.filter(landId => !recent.has(landId) && (!allowedLandIds || allowedLandIds.has(landId)));
+  // 被作物规则挡掉的地块单独记一条：快车道没有 analyzer 明细，只能按地块反查名字。
+  // 写在 targets 空判定之前，否则全被挡掉时反而看不到原因。
+  if (allowedLandIds) {
+    const skipped = ripeIds.filter(landId => !allowedLandIds.has(landId));
+    if (skipped.length > 0) {
+      const names = [...new Set(skipped.map((landId) => {
+        const land = lands.find(item => toNum(item && item.id) === landId);
+        return String(getPlantById(toNum(land && land.plant && land.plant.id))?.name || '').trim();
+      }).filter(Boolean))];
+      log('好友', `[重点] 快车道跳过 ${skipped.length} 块（被偷菜作物规则：${names.slice(0, 4).join('/') || '未知作物'}）`, {
+        module: 'friend', event: 'steal_skipped', friendGid: id, result: 'skipped',
+        mode: 'fast_lane', skipped: skipped.length, crops: names, landIds: skipped,
+      });
+    }
+  }
   if (targets.length === 0) return;
   targets.forEach(landId => recent.set(landId, now));
   fastLaneRecent.set(id, recent);
@@ -959,6 +1031,7 @@ async function visitFriendForSteal(friend, tally, myGid, accountId, options = {}
   }
 
   // Steal
+  logSkippedByCropRule(gid, name, analysis);
   if (analysis.stealable.length > 0) {
     const canOp = await checkCanOperateRemote(gid, 0x2714); // 10004
     if (canOp.canOperate) {
@@ -1016,6 +1089,13 @@ async function visitFriendForSteal(friend, tally, myGid, accountId, options = {}
         // 告诉调度器保留短时成熟重试，不能误当成“已被偷光”清掉 due。
         stealAttemptFailed = true;
       }
+      logStealMiss(gid, name, { canOperate: true, targetCount: targetLands.length, stolen });
+    } else {
+      logStealMiss(gid, name, {
+        canOperate: false,
+        targetCount: analysis.stealable.length,
+        stolen: 0,
+      });
     }
   }
 

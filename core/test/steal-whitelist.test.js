@@ -44,6 +44,27 @@ test('whitelist restricts stealing to the listed seeds', () => {
   assert.equal(analysis.stealableInfo[0].landId, 2);
 });
 
+test('whitelist records every land it skipped and why', () => {
+  const analysis = analyzeFriendLands(lands, 100, 'test', { stealWhitelist: [SEED_B] });
+  assert.deepEqual([...analysis.stealSkipped].map(s => s.landId).sort((a, b) => a - b), [1, 3]);
+  assert.ok(analysis.stealSkipped.every(s => s.reason === 'whitelist'));
+  assert.ok(analysis.stealSkipped.every(s => s.seedId === SEED_A || s.seedId === SEED_C));
+});
+
+test('blacklist skips are recorded with their own reason', () => {
+  const analysis = analyzeFriendLands(lands, 100, 'test', {
+    stealWhitelist: [],
+    plantBlacklist: [SEED_C],
+  });
+  assert.deepEqual(analysis.stealSkipped.map(s => s.landId), [3]);
+  assert.equal(analysis.stealSkipped[0].reason, 'blacklist');
+});
+
+test('nothing is recorded as skipped when no crop rule is set', () => {
+  const analysis = analyzeFriendLands(lands, 100, 'test', {});
+  assert.deepEqual(analysis.stealSkipped, []);
+});
+
 test('whitelist without a match steals nothing', () => {
   const analysis = analyzeFriendLands(lands, 100, 'test', { stealWhitelist: [123456] });
   assert.deepEqual(analysis.stealable, []);

@@ -172,3 +172,8 @@
   非洲菊（seed 20104）却仍被偷取。改为在 `getUserState()` 内按需从
   `FARM_ACCOUNT_ID` 补齐（worker 在 require 之后才写入该变量，不能在模块
   加载时固化），并新增断言覆盖。
+- 偷菜日志补全结论：此前只记录成功，无法区分“被作物规则跳过”和
+  “去偷但没偷到”。`analyzeFriendLands` 现在把被白/黑名单丢掉的
+  地块记入 `stealSkipped`（含 landId、seedId、作物名、reason），
+  三条偷菜路径分别写 `steal_skipped`（规则跳过）、`steal_blocked`
+  （预检查不允许）、`steal_failed`（请求被拒）、`steal_partial`（部分成功）。

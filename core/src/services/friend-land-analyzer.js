@@ -57,6 +57,8 @@ function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
   const result = {
     stealable: [],
     stealableInfo: [],
+    // 被作物规则跳过偷取的地块：日志要能区分“被规则跳过”和“没偷到”
+    stealSkipped: [],
     needWater: [],
     needWeed: [],
     needBug: [],
@@ -113,8 +115,12 @@ function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
 
         // 白名单非空时只偷名录内作物，此模式下不再参考黑名单
         if (stealWhitelist && stealWhitelist.length > 0) {
-          if (!stealWhitelist.includes(seedId)) continue;
+          if (!stealWhitelist.includes(seedId)) {
+            result.stealSkipped.push({ landId, seedId, name: plantName, reason: 'whitelist' });
+            continue;
+          }
         } else if (plantBlacklist && seedId > 0 && plantBlacklist.includes(seedId)) {
+          result.stealSkipped.push({ landId, seedId, name: plantName, reason: 'blacklist' });
           continue;
         }
 
