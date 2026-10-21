@@ -23,6 +23,7 @@ const {
 const { getUserState } = require('../utils/network');
 const {
   getPlantBlacklist,
+  getStealWhitelist,
   getFriendBlacklist,
   readFriendDogInfoCache,
   writeFriendDogInfoCache,
@@ -52,7 +53,7 @@ const GOLDEN_BUG_SOCIAL_TYPE = 2;
  * Returns actionable ordinary-farm and golden-bug land groups.
  */
 function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
-  const { plantBlacklist = null } = options;
+  const { plantBlacklist = null, stealWhitelist = null } = options;
   const result = {
     stealable: [],
     stealableInfo: [],
@@ -110,8 +111,12 @@ function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
           || toNum(plant.seed_id)
           || (isSeedItem(rawPlantId) ? rawPlantId : 0);
 
-        // Respect plant blacklist
-        if (plantBlacklist && seedId > 0 && plantBlacklist.includes(seedId)) continue;
+        // 白名单非空时只偷名录内作物，此模式下不再参考黑名单
+        if (stealWhitelist && stealWhitelist.length > 0) {
+          if (!stealWhitelist.includes(seedId)) continue;
+        } else if (plantBlacklist && seedId > 0 && plantBlacklist.includes(seedId)) {
+          continue;
+        }
 
         result.stealable.push(landId);
         result.stealableInfo.push({ landId, plantId, name: plantName });
@@ -535,7 +540,8 @@ async function getFriendLandsDetail(gid) {
     inspectFriendLands(gid, '', lands);
     const userState = getUserState();
     const plantBlacklist = getPlantBlacklist(userState.accountId);
-    const analysis = analyzeFriendLands(lands, userState.gid, '', { plantBlacklist });
+    const stealWhitelist = getStealWhitelist(userState.accountId);
+    const analysis = analyzeFriendLands(lands, userState.gid, '', { plantBlacklist, stealWhitelist });
     await leaveFriendFarm(gid);
 
     const detailLands = [];

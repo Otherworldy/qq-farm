@@ -160,3 +160,9 @@
   `core/docs/activity-update-runbook.md`，并新增
   `npm run inspect:activity-har -- <HAR>` 脱敏检查命令，后续活动按“完整抓包、协议表、
   官方资源、种子/植物/果实映射、分层接入、离线与在线验收”流程更新。
+- 偷菜作物白名单（账号级）：新增 `stealWhitelist`，非空时只偷列表内 seedId
+  对应的作物，空数组保持原“全偷”行为；白名单模式下不再参考植物黑名单。
+  后端 `store.getStealWhitelist/setStealWhitelist`、`friend-land-analyzer`
+  过滤点、`GET/PUT /api/steal-whitelist` 已接线；前端新增
+  `StealWhitelistPanel`（策略设置页可搜索、全选当前、清空、保存），
+  测试见 `core/test/steal-whitelist.test.js`。

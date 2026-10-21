@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BagSeedPriorityPanel from '@/components/settings/BagSeedPriorityPanel.vue'
+import StealWhitelistPanel from '@/components/settings/StealWhitelistPanel.vue'
 import StrategyTimingPanel from '@/components/settings/StrategyTimingPanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
@@ -171,6 +172,8 @@ const settings = defineModel<StrategySettings>('settings', { required: true })
           @drop="(seedId, event) => emit('dropBagSeed', seedId, event)"
         />
       </div>
+
+      <StealWhitelistPanel />
 
       <StrategyTimingPanel v-model:settings="settings" />
 

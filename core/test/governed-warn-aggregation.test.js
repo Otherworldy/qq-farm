@@ -131,7 +131,7 @@ function makeHarness(t, options = {}) {
   const configStub = { ...config, CONFIG: { ...config.CONFIG, platform: options.platform || 'wechat' } };
   const store = {
     isAutomationOn: key => !!state.automation[key], getAutomation: () => state.automation,
-    getFriendBlacklist: () => [], getPlantBlacklist: () => [], getWatchlistFriendGids: () => state.priorities,
+    getFriendBlacklist: () => [], getPlantBlacklist: () => [], getStealWhitelist: () => [], getWatchlistFriendGids: () => state.priorities,
     getWatchlistResetMeta: () => ({}), getAutoAcceptFriendMinLevel: () => 0,
     getKnownFriendGids: () => state.known, applyConfigSnapshot: patch => { if (patch.knownFriendGids) state.known = patch.knownFriendGids; },
     getFriendBadRetryDate: () => '', readFriendDogInfoCache: () => ({ 81999: {} }),

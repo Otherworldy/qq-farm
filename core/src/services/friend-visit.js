@@ -1,6 +1,6 @@
 const { PlantPhase } = require('../config/config');
 const { getPlantById } = require('../config/gameConfig');
-const { getPlantBlacklist, isAutomationOn, getPauseRemainMs, getStealDelaySeconds } = require('../models/store');
+const { getPlantBlacklist, getStealWhitelist, isAutomationOn, getPauseRemainMs, getStealDelaySeconds } = require('../models/store');
 const { getUserState } = require('../utils/network');
 const { toNum, toTimeSec, log, logWarn, randomDelay, sleep } = require('../utils/utils');
 const {
@@ -141,8 +141,9 @@ async function doFriendOperation(gid, opType) {
     const lands = enterReply.lands || [];
     const userState = getUserState();
     const plantBlacklist = getPlantBlacklist(userState.accountId);
+    const stealWhitelist = getStealWhitelist(userState.accountId);
     inspectFriendLands(numericGid, '', lands);
-    const analysis = analyzeFriendLands(lands, userState.gid, '', { plantBlacklist });
+    const analysis = analyzeFriendLands(lands, userState.gid, '', { plantBlacklist, stealWhitelist });
 
     let okCount = 0;
 
@@ -405,7 +406,8 @@ async function visitFriend(friend, tally, myGid, accountId) {
   const ripeAtMs = Number(inspectResult.ripeAt) || 0;
 
   const plantBlacklist = getPlantBlacklist(accountId);
-  const analysis = analyzeFriendLands(lands, myGid, name, { plantBlacklist });
+  const stealWhitelist = getStealWhitelist(accountId);
+  const analysis = analyzeFriendLands(lands, myGid, name, { plantBlacklist, stealWhitelist });
   const actionLogs = [];
 
   // 面板偷菜延迟同口径：帮/捣乱顺带偷也不在成熟瞬间出手。
@@ -807,7 +809,21 @@ async function fastLaneSteal(gid, lands) {
   const recent = fastLaneRecent.get(id) || new Map();
   const now = Date.now();
   for (const [landId, at] of recent) if (now - at > 3_000) recent.delete(landId);
-  const targets = ripeIds.filter(landId => !recent.has(landId));
+  // 作物规则：快车道按推送地块直接出手，不经 analyzeFriendLands，
+  // 必须在这里用同一套白/黑名单过滤，否则会绕过作物设置。两者都空时保持零开销。
+  const accountId = process.env.FARM_ACCOUNT_ID || '';
+  const whitelist = getStealWhitelist(accountId);
+  const blacklist = getPlantBlacklist(accountId);
+  let allowedLandIds = null;
+  if (whitelist.length > 0 || blacklist.length > 0) {
+    const userState = getUserState() || {};
+    const analysis = analyzeFriendLands(lands, toNum(userState.gid), '', {
+      plantBlacklist: blacklist,
+      stealWhitelist: whitelist,
+    });
+    allowedLandIds = new Set(analysis.stealable);
+  }
+  const targets = ripeIds.filter(landId => !recent.has(landId) && (!allowedLandIds || allowedLandIds.has(landId)));
   if (targets.length === 0) return;
   targets.forEach(landId => recent.set(landId, now));
   fastLaneRecent.set(id, recent);
@@ -913,7 +929,8 @@ async function visitFriendForSteal(friend, tally, myGid, accountId, options = {}
   const ripeAtMs = Number(inspectResult.ripeAt) || 0;
 
   const plantBlacklist = getPlantBlacklist(accountId);
-  const analysis = analyzeFriendLands(lands, myGid, name, { plantBlacklist });
+  const stealWhitelist = getStealWhitelist(accountId);
+  const analysis = analyzeFriendLands(lands, myGid, name, { plantBlacklist, stealWhitelist });
   const actionLogs = [];
   let stealAttemptFailed = false;
   // 面板偷菜延迟在此收口：全量巡查、抢收快路径、巡田、缓存派发都从这里出手。

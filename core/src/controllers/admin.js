@@ -53,6 +53,7 @@ const { registerAdminIllustratedRoutes } = require("./admin-illustrated-routes")
 const { registerAdminLoginLogRoutes } = require("./admin-login-log-routes");
 const {
   registerAdminPlantBlacklistRoutes,
+  registerAdminStealWhitelistRoutes,
 } = require("./admin-plant-blacklist-routes");
 const { registerAdminProxyRoutes } = require("./admin-proxy-routes");
 const { registerAdminPublicInfoRoutes } = require("./admin-public-info-routes");
@@ -447,6 +448,15 @@ function startAdminServer(dataProvider) {
     sendProviderError,
   });
   registerAdminPlantBlacklistRoutes({
+    app,
+    provider,
+    store,
+    requireAdminToken,
+    getAccountIdFromRequest,
+    canAccessAccount,
+    sendProviderError,
+  });
+  registerAdminStealWhitelistRoutes({
     app,
     provider,
     store,

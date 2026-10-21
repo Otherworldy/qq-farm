@@ -112,7 +112,7 @@ function fixture(t, options = {}) {
         handleFriendEnterError: () => ({ handled: true, kind: 'budget' }),
         leaveFriendFarm: async () => { leaves++; if (flags.onLeave) flags.onLeave(); },
         maybeLurkLeave: async () => { leaves++; if (flags.onLeave) flags.onLeave(); },
-        getPlantBlacklist: () => [], analyzeFriendLands: () => ({ stealable: [] }),
+        getPlantBlacklist: () => [], getStealWhitelist: () => [], analyzeFriendLands: () => ({ stealable: [] }),
         // 偷菜延迟闸门（2026-10）：生产里由同模块的 gateStealByMaturity 实现，
         // 本夹具只抽取 visitFriendForSteal，所以注入中性实现。
         // 闸门自身的语义由 steal-timing-settings.test.js 直接覆盖。

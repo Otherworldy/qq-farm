@@ -392,6 +392,8 @@ const DEFAULT_ACCOUNT_CONFIG = {
     watchlistResetMeta: null,
     autoBadFriendGids: [],
     plantBlacklist: DEFAULT_PLANT_BLACKLIST,
+    // 空数组 = 不限制；非空时只偷列表内的作物（seedId）。
+    stealWhitelist: [],
     // 默认 0：与接线前的真实行为一致（偷菜动作前不额外等待），用户主动改才生效。
     stealDelaySeconds: 0,
     plantOrderRandom: true,
@@ -618,6 +620,7 @@ function cloneAccountConfig(config = DEFAULT_ACCOUNT_CONFIG) {
     const autoBadFriendGids = Array.isArray(config.autoBadFriendGids) ? config.autoBadFriendGids : [];
     const knownFriendGids = normalizeKnownFriendGids(config.knownFriendGids);
     const plantBlacklist = Array.isArray(config.plantBlacklist) ? config.plantBlacklist : [];
+    const stealWhitelist = Array.isArray(config.stealWhitelist) ? config.stealWhitelist : [];
 
     return {
         ...config,
@@ -640,6 +643,7 @@ function cloneAccountConfig(config = DEFAULT_ACCOUNT_CONFIG) {
         preferredSeedId: Math.max(0, Number.parseInt(config.preferredSeedId, 10) || 0),
         prioritize2x2Crops: config.prioritize2x2Crops === true,
         plantBlacklist: plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
+        stealWhitelist: stealWhitelist.map(Number).filter(n => Number.isFinite(n) && n > 0),
         stealDelaySeconds: normalizeStealDelaySeconds(config.stealDelaySeconds, 0),
         plantOrderRandom: !!config.plantOrderRandom,
         plantDelaySeconds: Math.max(0, Math.min(60, Number(config.plantDelaySeconds) || 2)),
@@ -812,6 +816,11 @@ function normalizeAccountConfig(raw, fallbackConfig = accountFallbackConfig) {
     // 植物黑名单
     if (Array.isArray(input.plantBlacklist)) {
         cfg.plantBlacklist = input.plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 偷菜白名单（空 = 不限制）
+    if (Array.isArray(input.stealWhitelist)) {
+        cfg.stealWhitelist = input.stealWhitelist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
 
     // 偷菜延迟
@@ -1397,6 +1406,7 @@ function getConfigSnapshot(accountId) {
         watchlistResetMeta: cloneWatchlistResetMeta(cfg.watchlistResetMeta),
         autoBadFriendGids: [...cfg.autoBadFriendGids || []],
         plantBlacklist: [...cfg.plantBlacklist || []],
+        stealWhitelist: [...cfg.stealWhitelist || []],
         stealDelaySeconds: normalizeStealDelaySeconds(cfg.stealDelaySeconds, 0),
         plantOrderRandom: !!cfg.plantOrderRandom,
         plantDelaySeconds: Math.max(0, Math.min(60, Number(cfg.plantDelaySeconds) || 2)),
@@ -1485,6 +1495,9 @@ function applyConfigSnapshot(patch = {}, opts = {}) {
     }
     if (Array.isArray(patch.plantBlacklist)) {
         cfg.plantBlacklist = patch.plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+    if (Array.isArray(patch.stealWhitelist)) {
+        cfg.stealWhitelist = patch.stealWhitelist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
     if (patch.stealDelaySeconds !== undefined && patch.stealDelaySeconds !== null) {
         cfg.stealDelaySeconds = normalizeStealDelaySeconds(patch.stealDelaySeconds, 0);
@@ -1796,6 +1809,19 @@ function setPlantBlacklist(accountId, blacklist) {
         ? blacklist.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
     setAccountConfigSnapshot(accountId, cfg);
     return [...cfg.plantBlacklist];
+}
+
+function getStealWhitelist(accountId) {
+    return [...getAccountConfigSnapshot(accountId).stealWhitelist || []];
+}
+
+function setStealWhitelist(accountId, whitelist) {
+    const base = getAccountConfigSnapshot(accountId);
+    const cfg = normalizeAccountConfig(base, accountFallbackConfig);
+    cfg.stealWhitelist = Array.isArray(whitelist)
+        ? whitelist.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
+    setAccountConfigSnapshot(accountId, cfg);
+    return [...cfg.stealWhitelist];
 }
 
 function getUI() {
@@ -2417,6 +2443,8 @@ module.exports = {
     applyUserDefaultAccountPlan,
     getPlantBlacklist,
     setPlantBlacklist,
+    getStealWhitelist,
+    setStealWhitelist,
     getDefaultAccountConfig,
     getAnnouncement,
     setAnnouncement,
