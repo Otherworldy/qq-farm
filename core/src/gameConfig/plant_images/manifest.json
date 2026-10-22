@@ -1624,5 +1624,54 @@
     "4": "/game-config/plant_images/Crop_523/4.png",
     "5": "/game-config/plant_images/Crop_523/5.png",
     "6": "/game-config/plant_images/Crop_523/6.png"
+  },
+  "Crop_21": {
+    "2": "/game-config/plant_images/Crop_21/2.png",
+    "3": "/game-config/plant_images/Crop_21/3.png",
+    "4": "/game-config/plant_images/Crop_21/4.png",
+    "5": "/game-config/plant_images/Crop_21/5.png",
+    "6": "/game-config/plant_images/Crop_21/6.png"
+  },
+  "Crop_524": {
+    "2": "/game-config/plant_images/Crop_524/2.png",
+    "3": "/game-config/plant_images/Crop_524/3.png",
+    "4": "/game-config/plant_images/Crop_524/4.png",
+    "5": "/game-config/plant_images/Crop_524/5.png",
+    "6": "/game-config/plant_images/Crop_524/6.png"
+  },
+  "Crop_525": {
+    "2": "/game-config/plant_images/Crop_525/2.png",
+    "3": "/game-config/plant_images/Crop_525/3.png",
+    "4": "/game-config/plant_images/Crop_525/4.png",
+    "5": "/game-config/plant_images/Crop_525/5.png",
+    "6": "/game-config/plant_images/Crop_525/6.png"
+  },
+  "Crop_526": {
+    "2": "/game-config/plant_images/Crop_526/2.png",
+    "3": "/game-config/plant_images/Crop_526/3.png",
+    "4": "/game-config/plant_images/Crop_526/4.png",
+    "5": "/game-config/plant_images/Crop_526/5.png",
+    "6": "/game-config/plant_images/Crop_526/6.png"
+  },
+  "Crop_527": {
+    "2": "/game-config/plant_images/Crop_527/2.png",
+    "3": "/game-config/plant_images/Crop_527/3.png",
+    "4": "/game-config/plant_images/Crop_527/4.png",
+    "5": "/game-config/plant_images/Crop_527/5.png",
+    "6": "/game-config/plant_images/Crop_527/6.png"
+  },
+  "Crop_528": {
+    "2": "/game-config/plant_images/Crop_528/2.png",
+    "3": "/game-config/plant_images/Crop_528/3.png",
+    "4": "/game-config/plant_images/Crop_528/4.png",
+    "5": "/game-config/plant_images/Crop_528/5.png",
+    "6": "/game-config/plant_images/Crop_528/6.png"
+  },
+  "Crop_529": {
+    "2": "/game-config/plant_images/Crop_529/2.png",
+    "3": "/game-config/plant_images/Crop_529/3.png",
+    "4": "/game-config/plant_images/Crop_529/4.png",
+    "5": "/game-config/plant_images/Crop_529/5.png",
+    "6": "/game-config/plant_images/Crop_529/6.png"
   }
 }
