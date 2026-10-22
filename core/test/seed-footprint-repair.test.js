@@ -72,7 +72,7 @@ test('unrelated entries and rare/golden meanings are preserved; reviewed default
   // the 2026-10-20 茱萸 (seed 20165) mapping verified against ItemInfo + Crop_165.
   const rewardAdditions = new Set([2163, 202011, 203012, 205011, 206011, 207012, 208012,
     210031, 210032, 210033, 210034, 210035, 210036, 210037]);
-  const goldenFruitAdditions = new Set([1040165, 1040526, 1040527, 1049005]);
+  const goldenFruitAdditions = new Set([1040165, 1040526, 1040527, 1049005, 1040021, 1040528]);
   const originalItems = items.filter(x => !selectedFruits.has(x.id) && !rewardAdditions.has(x.id)
     && !goldenFruitAdditions.has(x.id))
     .map(x => x.id !== 210048 ? x : { ...x, evidence: x.evidence.replace(
@@ -82,7 +82,8 @@ test('unrelated entries and rare/golden meanings are preserved; reviewed default
   assert.equal(hash(originalItems), '4baaa0138392f234b1a06ca7dd2161537b8de7cdf9ce8932e5bd950fb072ebe6');
   // 2026-10-18 golden fruits: registered exactly once as type-17 fruits, never as seeds
   // or Plants — the size-2 source plant behind 1049005 does not turn its fruit into a seed.
-  for (const [id, name] of [[1040165, '黄金·茱萸'], [1040526, '黄金·森野白桃'], [1040527, '黄金·森野甜橙'], [1049005, '黄金·森野黄金芽']]) {
+  for (const [id, name] of [[1040165, '黄金·茱萸'], [1040526, '黄金·森野白桃'], [1040527, '黄金·森野甜橙'],
+    [1049005, '黄金·森野黄金芽'], [1040021, '黄金·森野可可豆'], [1040528, '黄金·森野红柚']]) {
     const rows = items.filter(x => x.id === id);
     assert.equal(rows.length, 1, `${id} must be registered exactly once`);
     assert.equal(rows[0].name, name); assert.equal(rows[0].type, 17);
