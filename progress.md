@@ -182,3 +182,23 @@
   `restartWorker` 被 `worker-manager` 的 `autoLogin===false` 静默拦掉，
   接口仍返回 `ok:true`，面板因此误报“直接登录成功”。现在 `/relogin`
   在刷新前解除该标记，刷新失败则回滚，避免没上号却留下会自动拉号的状态。
+- 2026-10-25 跟进微信小游戏 76 版包（`75` → `76`）：`tsdk.wasm` 从
+  `1a9416db…`(161133B) 换到 `9c8b1ca0…`(161135B)，`acesdk.wasm.br` +4650B，
+  `_subpackages_main_/game.js` +50660B，另有 4 个资源清单 json 改名。
+  对应提交：`089428c` 跟到 `v3.9.0.1792565883`、`8191747` 补七种森野作物阶段
+  贴图（`Crop_21`、`524`~`529`）、`8a2c29b` 登记三个黄金果实
+  （1040527 甜橙、1040528 红柚、1040021 可可豆）、`18c0dbe` 客户端版本
+  `1.13.0.5_20260723` → `1.15.1.4_20261021`。仓库内 wasm 与包内文件
+  逐字节一致，`EventPlants`/`EventItems` 对应条目齐全。
+- 2026-10-25 又发生一次工作区文件丢失：`.git` 只剩 `ORIG_HEAD`/`objects`/
+  `packed-refs`/`refs`，`HEAD`、`config`、`index`、`logs` 缺失，导致 git 报
+  `not a git repository`；同时 `web/`、`docs/`、`scripts/`、`core/docs/`、
+  `core/Dockerfile`、`core/client.js`、`core/capture-server.js`、
+  `core/eslint.config.mjs` 共 192 个文件消失，`core/data/` 与 `node_modules`
+  一并丢失。`objects` 完好（40MB pack），已重建 `HEAD`/`config`/`index`
+  并用 `git restore` 恢复全部文件，`git fsck` 无损坏。`core/data` 与
+  `.git/logs` 不可恢复。与 09:28 那次 `rm -rf core` 不同，本次保留了
+  `objects`，更像选择性删除或安全软件隔离。
+- 2026-10-25 数据目录迁到仓库外：`.env` 的 `FARM_DATA_PATH` 由 `./core/data`
+  改为 `../data`（即 `docker-compose.yml` 默认值），避免仓库被误删时连带
+  丢失账号、日志和配置。改时 `core/data` 已为空，无迁移成本。
