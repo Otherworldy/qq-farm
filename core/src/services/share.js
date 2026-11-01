@@ -95,7 +95,16 @@ async function claimShareReward() {
     types.ClaimShareRewardRequest.create({ claimed: true })
   ).finish();
   const { body } = await sendMsgAsync('gamepb.sharepb.ShareService', 'ClaimShareReward', request);
-  return types.ClaimShareRewardReply.decode(body);
+  try {
+    return types.ClaimShareRewardReply.decode(body);
+  } catch (err) {
+    // 解码越界说明服务端结构调整或 proto 缺字段，留下原始字节才能定位。
+    const hex = Buffer.from(body).toString('hex');
+    log('分享', `ClaimShareReward 解码失败（${body.length} 字节）: ${hex} - ${err.message}`, {
+      module: 'task', event: DAILY_KEY, result: 'decode_error', bytes: body.length
+    });
+    throw err;
+  }
 }
 
 // ---- 主逻辑 ----
