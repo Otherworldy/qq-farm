@@ -89,7 +89,7 @@ function createAutomationSettings() {
       fertilizer: 'none',
       skip_own_weed_bug: false,
       fertilizer_multi_season: false,
-      fertilizer_land_types: ['purple', 'gold', 'black', 'red', 'normal'],
+      fertilizer_land_types: ['purple', 'blue', 'gold', 'black', 'red', 'normal'],
       fertilizer_smart_seconds: 300,
     },
     autoAcceptFriendMinLevel: 0,
