@@ -8,8 +8,8 @@ const { performance } = require('node:perf_hooks');
 
 const { ensureDataDir } = require('../config/runtime-paths');
 
-const OFFICIAL_VERSION = 'v3.9.0.1792565883';
-const OFFICIAL_SHA256 = '9c8b1ca061d8e122dd902ff651755d9d2f2006fdf5483765bffd9b9c10aee6ad';
+const OFFICIAL_VERSION = 'v3.9.0.1793442738';
+const OFFICIAL_SHA256 = '3d564429885ecb2a73f13860c12eb91f17802f49335cbc2aed9cd01c26257a1c';
 const DEFAULT_APP_ID = '1112386029';
 const DEFAULT_GAME_ID = 3167;
 const DEFAULT_APP_KEY = '0';
@@ -83,7 +83,7 @@ class TsdkRuntime {
         this.appId = String(options.appId || DEFAULT_APP_ID);
         this.gameId = Number(options.gameId || process.env.FARM_TSDK_GAME_ID || DEFAULT_GAME_ID);
         this.appKey = String(options.appKey ?? process.env.FARM_TSDK_APP_KEY ?? DEFAULT_APP_KEY);
-        this.wasmPath = options.wasmPath || path.join(__dirname, 'tsdk-v3.9.0.1792565883.wasm');
+        this.wasmPath = options.wasmPath || path.join(__dirname, 'tsdk-v3.9.0.1793442738.wasm');
         this.dataDir = options.dataDir || path.join(ensureDataDir(), 'tsdk', this.accountId);
         this.deviceInfo = options.deviceInfo || {};
         this.logger = typeof options.logger === 'function' ? options.logger : () => {};
