@@ -245,3 +245,27 @@
   `HEAD`/`config`/`index`/`logs` 这类单文件，以及成批的源码目录。仍无法
   定位肇事进程，建议查 Windows Defender 保护历史、云同步客户端冲突记录、
   以及第三方清理工具的定时任务。
+- 2026-11-01 77 版 TSDK 在真机账号上验收通过：扫码后日志输出
+  `ACE 初始化成功：v3.9.0.1793442738，耗时 17ms`、`ACE 用户身份已绑定：初始化
+  凭据长度 112`、`登录成功: others (Lv28)`、`ACE 上报成功：发送 51 字节，回灌
+  0 字节`。说明 `3d564429…` 这份 wasm 的导入导出表和 22 个宿主函数约定都对，
+  可以留在仓库，旧版 `v3.9.0.1792565883` 待下次更新时再清。
+- 2026-11-01 本机账号实测数据（供后续核对）：21 块地（15 已解锁 + 6 未解锁），
+  `level` 全部为 1，`landType` 全部 `normal`，因此**没有高级土地**，
+  6 级“蓝晶”映射无法实测，仍属按客户端表预防性补全。好友 3 位。
+  偷菜白名单继续生效：`载酒生活玩家: 跳过偷菜 1 块（不在偷菜白名单：黄豆）`。
+- 2026-11-01 发现两处待处理数据缺口（都不影响主流程）：
+  1. 背包出现未登记物品 `1042254`（count 10），面板显示“物品1042254”。
+     按黄金果实 `104XXXX → gold/Crop_XXXX` 规律（已登记 1040516→Crop_516、
+     1041625→Crop_1625、1045995→Crop_5995 均吻合）应为
+     `gold/Crop_2254` → 植物 `1022254` / seed `22254` / 普通果实 `402254`；
+     `Crop_2254` 在 plant config 里阶段齐全（Seed + 2~6，且有 gold 版），
+     但 `Plant.json`、`EventPlants.json`、`EventItems.json` 均无该 ID。
+     缺名称与生长数据，未擅自登记。
+  2. `daily_share` 领取报 protobuf 解码越界
+     `index out of range: 39 + 10 > 39`（`services/share.js` 的
+     `ClaimShareRewardReply`），今日分享礼包因此未领到
+    （`/api/daily-gifts` 里 `daily_share` `doneToday=false`）。其余每日
+     礼包均 `doneToday=true`。`corepb.Item` 的 field 5（`Any detail`）和
+     field 100（`ItemShow show`）在 proto 里是注释掉的，需要在复现时抓原始
+     reply 字节再判断是新增字段还是字段类型变化，尚未改动 proto。
