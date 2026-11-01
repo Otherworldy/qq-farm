@@ -3,8 +3,8 @@
 后续版本的发现、提取、差异检查、更新、验收和回退流程见
 [TSDK/WASM 标准更新手册](./tsdk-update-runbook.md)。
 
-适用文件：官方 `tsdk.wasm`，版本 `v3.9.0.1793442738`，SHA-256
-`3d564429885ecb2a73f13860c12eb91f17802f49335cbc2aed9cd01c26257a1c`。
+适用文件：官方 `tsdk.wasm`，版本 `v3.9.0.1793451777`，SHA-256
+`0b7e8717f8c8c0f5c61da0c67e169b3f4df9d07f9d37a95a4af3e392db82900f`。
 
 ## 初始化顺序
 
@@ -30,7 +30,7 @@
 | `a.a` | assertion | 抛出带位置的错误 |
 | `a.b` | write file | 账号独立数据目录 |
 | `a.c` | JS stack | 写入当前调用栈 |
-| `a.d` | TSDK version | `v3.9.0.1793442738` |
+| `a.d` | TSDK version | `v3.9.0.1793451777` |
 | `a.e` | ACEVM/JS integrity | 官方允许的空结果降级并一次告警 |
 | `a.f` | touch/gyroscope setup | 无传感器数据，一次告警 |
 | `a.g` | read file | 账号独立数据目录 |

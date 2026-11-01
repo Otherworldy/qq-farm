@@ -282,3 +282,24 @@
   `show{field:4,wire:2,5字节}`，`bag-item-evidence` 判为
   `show_without_verified_name`。5 字节不足以还原名称，面板仍显示
   “物品1042254”；需在游戏内背包直接读取该物品显示名才能登记。
+- 2026-11-01 微信小游戏包更新到 **78**（目录 mtime 11-01 15:14，
+  `%APPDATA%/Tencent/xwechat/radium/users/76f09fde2b0ad89cff521b204fa72fe9/
+  applet/packages/wx5306c5978fdb76e4/78`），解包产物在 `D:\tmp\wx78`，109 文件。
+  - `tsdk.wasm` 161072 → **161112 B**，SHA-256
+    `0b7e8717f8c8c0f5c61da0c67e169b3f4df9d07f9d37a95a4af3e392db82900f`；
+    `inspect:tsdk` 提取新版本 **`v3.9.0.1793451777`**，imports(22)/exports(61)/
+    dataSegments(17) 与 77 基线完全一致，结构兼容三项全 true。
+  - 客户端版本 `1.16.0.5` → **`1.16.1.6`**，按目录 mtime 记作
+    `1.16.1.6_20261101`（与 77 的 `_20261031` 同口径，日期取包目录 mtime）。
+    proto 常量 `2026101300` 两版相同，未变。
+  - **没有新玩法**：主包与 77 只差 42 字节，且差异段是 ACE 混淆变量名重排
+    （`I,A,B,q,…` → `A,I,q,_,B,…`）与加密常量换值；中文串集合 77/78 均为
+    305 个，新增 0 移除 0。`__APP__/game.js` 同理（+191 B 纯重排）。
+    因此 77 版新登记的藏品/摆件/点赞/蓝晶土地无需再改。
+  - 已更新 `tsdk-runtime.js`（版本/哈希/`wasmPath`）、`config.js`、
+    `AdminSystemPanel.vue`、`useAdminSystemConfig.ts` 与两份 TSDK 文档；
+    `device-protocol.test.js` 的 Referer 断言改为 `1.16.1.6`。
+- 2026-11-01 78 版同样做了一次在线验收：容器重建后日志输出
+  `ACE 初始化成功：v3.9.0.1793451777，耗时 14ms` → `登录成功: others (Lv28)`
+  → `ACE 上报成功：发送 51 字节`。关键回归 64/64、`tsdk-runtime` 5/5 全绿，
+  新 wasm 161112 B 与包内一致。上一个版本 `v3.9.0.1793442738` 按手册保留。
