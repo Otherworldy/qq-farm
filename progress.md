@@ -233,3 +233,15 @@
   阶段时长、果实数、占地大小（`size`）都需要官方 Plant 配置行，资源清单
   推不出来。待账号凭证恢复后通过游戏接口核实再补，补时须同时确认 2x2
   作物的 `size: 2`。
+- 2026-11-01 第三次工作区文件丢失（`.git` 目录 mtime 10-28 09:06）：`.git`
+  再次只剩 `ORIG_HEAD`/`objects`/`packed-refs`/`refs`，`HEAD`/`config`/
+  `index`/`logs` 缺失；`core/`（2263 文件）、`docs/`、`scripts/`、
+  `web/src`、`web/public` 共 2268 个文件消失，`node_modules` 又一次残缺。
+  `objects` 完好（43MB，两个 pack），已按上次同样流程重建 `HEAD`/`config`/
+  `index` 并 `git restore` 全部恢复，`git fsck` 无损坏，HEAD 仍停在
+  `6ce35f9`，没有丢提交。这次**仓库外数据目录（`../data`）保住了**
+  `accounts.json`，上次把 `FARM_DATA_PATH` 迁出仓库的决定验证有效。
+  三次丢失的共同点：`objects`/`refs`/`packed-refs` 都保留，丢的恰好是
+  `HEAD`/`config`/`index`/`logs` 这类单文件，以及成批的源码目录。仍无法
+  定位肇事进程，建议查 Windows Defender 保护历史、云同步客户端冲突记录、
+  以及第三方清理工具的定时任务。
