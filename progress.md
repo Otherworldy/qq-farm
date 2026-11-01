@@ -269,3 +269,16 @@
      礼包均 `doneToday=true`。`corepb.Item` 的 field 5（`Any detail`）和
      field 100（`ItemShow show`）在 proto 里是注释掉的，需要在复现时抓原始
      reply 字节再判断是新增字段还是字段类型变化，尚未改动 proto。
+- 2026-11-01 首次领分享奖励的解码越界已定性：奖励实际发放成功，只是回包解析
+  失败导致 `doneToday` 没置位。重建容器后重试直接命中“今日分享奖励已领取”，
+  六个每日礼包全部 `doneToday=true`。已给 `ClaimShareRewardReply` 加解码失败
+  时的原始字节 hex 日志（`services/share.js`），下次再现能直接比对 proto，
+  在此之前不再猜字段。
+- 2026-11-01 观察到新服务端业务码 `1000020`：好友巡查里
+  `CheckCanOperate` 对除虫(10006)/浇水(10007) 返回该码，2026-09-28 加的
+  诊断记录后兜底放行，实际操作成功（`巡查完成 → 除虫1/浇水1`），属既有兜底
+  逻辑正常工作，非新问题。
+- 2026-11-01 背包物品 `1042254` 的展示字段只有
+  `show{field:4,wire:2,5字节}`，`bag-item-evidence` 判为
+  `show_without_verified_name`。5 字节不足以还原名称，面板仍显示
+  “物品1042254”；需在游戏内背包直接读取该物品显示名才能登记。
