@@ -163,12 +163,14 @@ function replaceOwnMaturitySchedule(analysis) {
   publishOwnMaturitySchedule('all_lands');
 }
 
-/** 收获返回是增量快照：只替换本次目标，保留其他地块的已知成熟墙钟。 */
-function reconcileOwnMaturityAfterHarvest(landIds, harvestReply) {
+/** 收获/种植返回都是增量快照：只替换本次目标，保留其他地块的已知成熟墙钟。
+ *  种植尤其需要：种下后成熟时刻如果迟迟不入日程，下一次空闲会按“无事可做”
+ *  长睡（1~120 分钟），短周期作物会直接被睡过成熟点。 */
+function reconcileOwnMaturityFromLands(landIds, reply, source = 'harvest_reply') {
   const targets = new Set((Array.isArray(landIds) ? landIds : []).map(toNum).filter(Boolean));
   for (const landId of targets) ownMatureSchedule.delete(landId);
 
-  const replyLands = Array.isArray(harvestReply && harvestReply.land) ? harvestReply.land : [];
+  const replyLands = Array.isArray(reply && reply.land) ? reply.land : [];
   if (replyLands.length > 0) {
     const partial = analyzeLands(replyLands, false);
     const serverNowMs = getServerTimeMs();
@@ -181,7 +183,7 @@ function reconcileOwnMaturityAfterHarvest(landIds, harvestReply) {
       }
     }
   }
-  publishOwnMaturitySchedule('harvest_reply');
+  publishOwnMaturitySchedule(source);
 }
 
 /**
@@ -194,7 +196,7 @@ async function performOwnHarvest(landIds, options = {}) {
 
   const task = (async () => {
     const reply = await harvest(ids);
-    reconcileOwnMaturityAfterHarvest(ids, reply);
+    reconcileOwnMaturityFromLands(ids, reply);
     const dueAt = Number(options.dueAt) || 0;
     const latencyMs = dueAt > 0 ? Math.max(0, Date.now() - dueAt) : null;
     log('收获', `${options.priority ? '到点保护收获' : '收获'}完成 ${ids.length} 块土地`, {
@@ -406,6 +408,12 @@ async function runFarmOperation(opType) {
           recordOperation('plant', plantedCount);
           recordEvent(process.env.FARM_ACCOUNT_ID || '', 'info', 'plant',
             `种植 ${plantedCount} 块${removedCount > 0 ? `（铲除 ${removedCount}）` : ''}`);
+        }
+        // 本轮的 AllLands 是种植前的快照，新作物成熟时刻不在里面。
+        // 用种植回包的 LandInfo 补上，否则行程图为空会退回 1~120 分钟随机长睡。
+        const plantedLands = Array.isArray(plantResult && plantResult.lands) ? plantResult.lands : [];
+        if (plantedLands.length > 0) {
+          reconcileOwnMaturityFromLands(plantResult.plantedLands, { land: plantedLands }, 'plant_reply');
         }
       } catch (err) {
         logWarn('种植', err.message);

@@ -376,6 +376,8 @@ async function plant2x2Seed(seedId, group) {
   return {
     masterLandId: group.masterLandId,
     occupiedLandIds: [...group.landIds],
+    // 回包里的 LandInfo 带成熟阶段 begin_time，调用方可据此立刻更新成熟日程。
+    lands: Array.isArray(reply?.land) ? reply.land : [],
   };
 }
 
@@ -432,6 +434,7 @@ async function plantPrioritized2x2Crops(emptyLandIds, lands, accountId) {
   const emptySet = new Set((emptyLandIds || []).map(toNum).filter(Boolean));
   const readyGroups = reservations.filter(group => group.landIds.every(id => emptySet.has(id)));
   const plantedMasterIds = [];
+  const plantedReplyLands = [];
   let occupiedCount = 0;
 
   function release2x2Reservation(group) {
@@ -473,6 +476,7 @@ async function plantPrioritized2x2Crops(emptyLandIds, lands, accountId) {
         seed.count -= 1;
         plantedMasterIds.push(result.masterLandId);
         occupiedCount += result.occupiedLandIds.length;
+        if (result.lands.length) plantedReplyLands.push(...result.lands);
         result.occupiedLandIds.forEach(id => emptySet.delete(id));
         log('种植', `已优先种植 2x2 作物 ${seed.name}，主地块#${result.masterLandId}，占地 ${result.occupiedLandIds.join(',')}`, {
           module: 'farm',
@@ -540,7 +544,8 @@ async function plantPrioritized2x2Crops(emptyLandIds, lands, accountId) {
     reservedLandIds: [...reservedLandIdSet],
     plantedMasterIds,
     plantedCount: plantedMasterIds.length,
-    occupiedCount
+    occupiedCount,
+    lands: plantedReplyLands
   };
 }
 
@@ -556,6 +561,7 @@ async function plantPrioritized2x2Crops(emptyLandIds, lands, accountId) {
 async function plantSeeds(seedId, landIds, options = {}) {
   let planted = 0;
   const plantedLandIds = [];
+  const plantedReplyLands = [];
   const occupiedSet = new Set();
   const maxPlantCount = Math.max(1, toNum(options.maxPlantCount) || 1) || Number.POSITIVE_INFINITY;
   const accountId = getCurrentAccountId();
@@ -572,6 +578,8 @@ async function plantSeeds(seedId, landIds, options = {}) {
       const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Plant', payload);
       const reply = types.PlantReply.decode(body);
       const replyLands = Array.isArray(reply && reply.land) ? reply.land : [];
+      // 回包里的 LandInfo 带成熟阶段 begin_time，调用方可据此立刻更新成熟日程。
+      if (replyLands.length) plantedReplyLands.push(...replyLands);
       const landMap = buildLandMap(replyLands);
       const tempLand = landMap.get(landId) || { id: landId };
       const displayCtx = getDisplayLandContext(tempLand, landMap);
@@ -595,7 +603,8 @@ async function plantSeeds(seedId, landIds, options = {}) {
   return {
     planted,
     plantedLandIds,
-    occupiedLandIds: [...occupiedSet]
+    occupiedLandIds: [...occupiedSet],
+    lands: plantedReplyLands
   };
 }
 
@@ -677,6 +686,7 @@ async function plantFromBagSeeds(emptyLandIds, accountId = getCurrentAccountId()
   const allPlantedIds = [];
   const plantedSeedIds = [];
   const batches = [];
+  const replyLands = [];
 
   for (const seed of availableSeeds) {
     if (remainingIds.length === 0) break;
@@ -688,6 +698,7 @@ async function plantFromBagSeeds(emptyLandIds, accountId = getCurrentAccountId()
     if (maxCount <= 0) continue;
 
     const plantResult = await plantSeeds(seed.seedId, remainingIds, { maxPlantCount: maxCount });
+    if (Array.isArray(plantResult.lands) && plantResult.lands.length) replyLands.push(...plantResult.lands);
     const occupiedIds = (Array.isArray(plantResult.occupiedLandIds) ? plantResult.occupiedLandIds : [])
       .map(Number).filter(id => id > 0);
     const plantedIds = (Array.isArray(plantResult.plantedLandIds) ? plantResult.plantedLandIds : [])
@@ -728,7 +739,8 @@ async function plantFromBagSeeds(emptyLandIds, accountId = getCurrentAccountId()
     fallbackAllowed,
     plantedLandIds: [...new Set(allPlantedIds)],
     totalPlanted,
-    occupiedCount: totalOccupied
+    occupiedCount: totalOccupied,
+    lands: replyLands
   };
 }
 
@@ -988,7 +1000,9 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds, lands = []) {
     plantedCount: 0,
     occupiedCount: 0,
     removedCount: 0,
-    reservedLandIds: []
+    reservedLandIds: [],
+    // 种植回包里的 LandInfo，供调用方立即刷新自熟日程，避免未知成熟时间导致长睡。
+    lands: []
   };
 
   // 铲除枯死作物
@@ -1017,6 +1031,7 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds, lands = []) {
   result.plantedLands.push(...(size2Result.plantedMasterIds || []));
   result.plantedCount += Number(size2Result.plantedCount || 0);
   result.occupiedCount += Number(size2Result.occupiedCount || 0);
+  if (Array.isArray(size2Result.lands) && size2Result.lands.length) result.lands.push(...size2Result.lands);
 
   if (size2Result.plantedMasterIds.length > 0) {
     await runFertilizerByConfig(size2Result.plantedMasterIds);
@@ -1041,6 +1056,7 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds, lands = []) {
     result.plantedLands.push(...plantedLands);
     result.plantedCount += Number(bagResult.totalPlanted || 0);
     result.occupiedCount += Number(bagResult.occupiedCount || 0);
+    if (Array.isArray(bagResult.lands) && bagResult.lands.length) result.lands.push(...bagResult.lands);
 
     // 背包种完后还有空地 → 使用第二优先策略
     if (bagResult.fallbackAllowed && bagResult.remainingLandIds.length > 0) {
@@ -1055,6 +1071,7 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds, lands = []) {
       result.plantedLands.push(...shopPlantedLands);
       result.plantedCount += Number(shopResult.plantedCount || 0);
       result.occupiedCount += Number(shopResult.occupiedCount || 0);
+      if (Array.isArray(shopResult.lands) && shopResult.lands.length) result.lands.push(...shopResult.lands);
     }
 
     // 种植后补肥
@@ -1069,6 +1086,7 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds, lands = []) {
   result.plantedLands.push(...(shopResult.plantedLands || []));
   result.plantedCount += Number(shopResult.plantedCount || 0);
   result.occupiedCount += Number(shopResult.occupiedCount || 0);
+  if (Array.isArray(shopResult.lands) && shopResult.lands.length) result.lands.push(...shopResult.lands);
   if (shopResult.plantedLands && shopResult.plantedLands.length > 0) {
     await runFertilizerByConfig(shopResult.plantedLands);
   }
@@ -1090,7 +1108,7 @@ async function plantFromShop(landIds, userState, overrideStrategy, accountId = g
     return { plantedLands: [], plantedCount: 0, occupiedCount: 0 };
   }
 
-  const result = { plantedLands: [], plantedCount: 0, occupiedCount: 0 };
+  const result = { plantedLands: [], plantedCount: 0, occupiedCount: 0, lands: [] };
   if (!bestSeed) return result;
 
   const plantName = getPlantNameBySeedId(bestSeed.seedId);
@@ -1183,9 +1201,10 @@ async function plantFromShop(landIds, userState, overrideStrategy, accountId = g
   // 执行种植
   let plantedLands = [];
   try {
-    const { planted, plantedLandIds, occupiedLandIds } =
+    const { planted, plantedLandIds, occupiedLandIds, lands } =
       await plantSeeds(finalSeedId, landIds, { maxPlantCount: plantCount });
     const occupiedCount = occupiedLandIds.length > 0 ? occupiedLandIds.length : planted;
+    if (Array.isArray(lands) && lands.length) result.lands = lands;
     if (planted > 0) {
       if (plantSize > 1) {
         log('种植', `已种植 ${planted} 组 ${plantSize}x${plantSize} 作物，占用 ${occupiedCount} 块地 (${occupiedLandIds.join(',')})`, {

@@ -303,3 +303,30 @@
   `ACE 初始化成功：v3.9.0.1793451777，耗时 14ms` → `登录成功: others (Lv28)`
   → `ACE 上报成功：发送 51 字节`。关键回归 64/64、`tsdk-runtime` 5/5 全绿，
   新 wasm 161112 B 与包内一致。上一个版本 `v3.9.0.1793442738` 按手册保留。
+- 2026-11-01 **第四次仓库文件丢失**（约 15:15 之后）：`core/`、`docs/`、
+  `scripts/` 共 **2271 个文件**消失，`node_modules` 内容同时被清空。
+  与前三处不同，这次 `.git` 是**完整**的（`HEAD`/`config`/`index`/`logs`
+  都在，只丢了工作区），`git restore .` 一次全部恢复，`git fsck` 无损坏，
+  HEAD 仍是 `bacfdd7`。`node_modules` 需重新 `pnpm install`（746 包）。
+  四次事件的共同点仍是"成批目录被清空、`.git` 对象库毫发无伤"，
+  没有一次是 git 自身操作，需继续查外部进程。
+- 2026-11-01 收菜延迟核查（用户提问）：自己收获走独立定时器
+  `own_harvest_guard`，成熟时刻取自服务器 AllLands 的 `mature_at`，
+  在 `成熟 + 30~80ms`（`OWN_HARVEST_ACT_DELAY_MS`）直接收缓存地块，
+  不额外请求 AllLands，**延迟 ≈ 30~80ms + 一次 RTT**。免打扰、断线退避
+  （180ms→30s 六档）、请求预算（Harvest 不在白名单，受 60s/80 总量约束）
+  都会叠加延迟，但本机三项免打扰配置全为 false，不受影响。
+- 2026-11-01 **修掉一个真实的收菜延迟边界**：`runFarmOperation` 先取
+  AllLands 再种植，快照里没有新作物的成熟时刻；若这批地是全空，
+  `lastNextMatureDueAtMs` 为 0，`idleNapMs` 走 `horizon<=0` 分支随机睡
+  **1~120 分钟**。牵牛花（3h53m）不受影响，但 `Plant.json` 里有 9 种作物
+  短于 2 小时（白萝卜 1m、胡萝卜 2m、大白菜 5m、大蒜 10m、大葱 20m、
+  水稻 40m、小麦 1h、玉米 1.3h、鲜姜 1.7h），会被睡过成熟点。
+  修复用种植回包自带的 `LandInfo`（`PlantReply.land`，含成熟阶段
+  `begin_time`）立即刷新日程，**零额外请求**：`plantSeeds`/`plant2x2Seed`
+  累积 `lands`，经 `plantFromBagSeeds`/`plantFromShop`/
+  `plantPrioritized2x2Crops`/`autoPlantEmptyLands` 逐层透出，
+  `runFarmOperation` 里的 `reconcileOwnMaturityFromLands`
+  （原 `reconcileOwnMaturityAfterHarvest` 泛化，多一个 `source` 参数）
+  消费后 `publishOwnMaturitySchedule('plant_reply')`。
+  新增 `test/plant-maturity-refresh.test.js`，已验证修复前失败、修复后通过。
