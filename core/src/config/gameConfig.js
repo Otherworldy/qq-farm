@@ -668,9 +668,44 @@ function getItemImageById(itemId) {
     return staticImage || '';
 }
 
+/**
+ * 黄金变异果实（104 段）按 ID 结构推导。
+ * 规律已由 14 条已登记条目验证：1040000+X 对应植物 1020000+X，
+ * 资产名 gold/Crop_X，售价 1005:6（黄金·狗尾草 1040516 → Crop_516 等）。
+ * 植物本身未收录时不猜中文名，只给带编号的占位名；不回写配置文件。
+ */
+const GOLD_MUTATION_ITEM_BASE = 1040000;
+const GOLD_MUTATION_PLANT_BASE = 1020000;
+const goldMutationItemCache = new Map(); // itemId → 推导条目
+
+function deriveGoldMutationItem(itemId) {
+    const id = Number(itemId) || 0;
+    const offset = id - GOLD_MUTATION_ITEM_BASE;
+    if (offset <= 0 || offset > 9999) return null;
+
+    const plant = plantMap.get(GOLD_MUTATION_PLANT_BASE + offset);
+    const name = plant && plant.name ? `黄金·${plant.name}` : `黄金果实${offset}`;
+    const cached = goldMutationItemCache.get(id);
+    // 植物表可能在首次查询之后才加载完，名字变化时重建。
+    if (cached && cached.name === name) return cached;
+
+    const entry = {
+        id,
+        type: 17, // 与 ItemInfo 中其他黄金变异果实一致
+        name,
+        asset_name: `gold/Crop_${offset}`,
+        sells: '1005:6',
+        derived: true
+    };
+    goldMutationItemCache.set(id, entry);
+    return entry;
+}
+
 /** 根据物品ID获取物品信息 */
 function getItemById(itemId) {
-    return itemInfoMap.get(Number(itemId) || 0);
+    const id = Number(itemId) || 0;
+    // 保持未命中时返回 undefined（推导函数用 null 表示“不适用”）。
+    return itemInfoMap.get(id) || deriveGoldMutationItem(id) || undefined;
 }
 
 /**

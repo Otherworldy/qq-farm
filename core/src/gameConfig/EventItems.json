@@ -226,6 +226,14 @@
     "evidence": "Bag field 100 structure + reviewed client ItemInfo/Plant snapshot；104 段黄金变异规律（1045995 黄金·芦苇 同族）+ 当前仓库正在收获狗尾草"
   },
   {
+    "id": 1041435,
+    "name": "黄金·森野柿子",
+    "type": 17,
+    "asset_name": "gold/Crop_1435",
+    "sells": "1005:6",
+    "evidence": "Plant 1021435 森野柿子（EventPlants，seed 21435、fruit 41435、asset Crop_1435）→ 黄金变体 1041435 按 104X=1020000+X 规律命名 + 同族 1040021/1040435/1040516/1041625/1049005 的 type 17、gold/Crop_X、sells 1005:6 一致模式；2026-11-03 背包实际出现 1041435×4（bag_unclassified_item）"
+  },
+  {
     "id": 1041625,
     "name": "黄金·枸杞",
     "type": 17,

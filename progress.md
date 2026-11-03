@@ -352,3 +352,29 @@
   - 已更新 `tsdk-runtime.js`、`config.js`、`AdminSystemPanel.vue`、
     `useAdminSystemConfig.ts`、`device-protocol.test.js` 与两份 TSDK 文档。
     `pnpm build:web` 通过，回归 97/97。
+- 2026-11-03 **背包未登记物品解决**（用户在面板看到
+  `bag contains items missing from local item index: 1041435×4, 1042254×2`）。
+  查证过程与结论：
+  - 图鉴**协议**（`illustratedpb.proto` 的 `GetIllustratedListV2`）只回
+    `seed_id`/`tier`/`unlock`/`reward_score`/`harvest_count`，**没有名字**；
+    项目 `decodeIllustratedReplyRaw` 的手动解码同样只有数字字段。图鉴给不出名称。
+  - 图鉴**面板**的名字来自 `nong.me/data/plants-data.js`（在线，仅 **174 种**）
+    + 本地 `Plant.json`（254 种），两者都没有这两个植物。
+  - 微信 79 包与 `gamecaches` 里也搜不到植物名：包内 443 个中文串全是 UI 文案。
+  - 真正的突破点是 `EventPlants.json`：**`1021435 森野柿子`早已登记**
+    （seed 21435 / fruit 41435 / `Crop_1435`），缺的只是它的黄金变体。
+    `1041435` 因此按现有 14 条同族规律正式登记为 `黄金·森野柿子`。
+  - `1042254` 的植物 `1022254` 在所有配置（Plant/EventPlants/ItemInfo/
+    EventItems/79 包/gamecaches/nong.me）中都**不存在**，没有官方 Plant 行，
+    按约定不猜中文名。
+- 2026-11-03 新增**黄金变异果实推导规则**（`gameConfig.js` `deriveGoldMutationItem`）：
+  `1040000+X` ↔ 植物 `1020000+X`，名称取该植物名拼「黄金·」，资产
+  `gold/Crop_X`，`type 17`、`sells 1005:6`。规律由 14 条已登记条目验证
+  （1040021→森野可可豆、1040435→山丹丹、1040516→狗尾草、1045995→芦苇、
+  1049004→泡泡棉花糖…）。植物未收录时只给「黄金果实{X}」占位名，
+  **不编造中文名、不回写配置文件**；段外（<1040001、>1049999）不误判，
+  未命中仍返回 `undefined` 以保持原语义。
+  实测：背包喂入 1041435×4 + 1042254×2，未识别日志消失，
+  真正未知的 `999999` 仍照常上报（检测未被削弱）。
+  新增 `test/gold-mutation-item.test.js`（6 条）；`seed-footprint-repair`
+  的变更守卫白名单按设计补入 `1041435`。回归 126/126。
