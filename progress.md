@@ -330,3 +330,25 @@
   （原 `reconcileOwnMaturityAfterHarvest` 泛化，多一个 `source` 参数）
   消费后 `publishOwnMaturitySchedule('plant_reply')`。
   新增 `test/plant-maturity-refresh.test.js`，已验证修复前失败、修复后通过。
+- 2026-11-03 **第五次仓库文件丢失**：`core/`、`web/`、`docs/`、`scripts/`
+  再次成批消失（2272 文件），`node_modules`（含 `core/node_modules` 符号链接层
+  与 `.pnpm` 内容）同时被破坏。这次连 `.git/HEAD`/`config`/`index` 也丢了，
+  回到第一~三次的形态；`objects`/`refs`/`packed-refs` 完好。
+  恢复按 runbook：写 `HEAD` → 重建 `core.*`/`remote.*`/`branch.*` 配置 →
+  `git reset` → `git restore .`，随后 `rm -rf node_modules` 重装 746 包。
+  `git fsck` 只有既有 dangling commit。
+- 2026-11-03 微信小游戏包更新到 **79**（目录 mtime 11-03 20:27），
+  解包产物 `D:\tmp\wx79`，109 文件。
+  - `tsdk.wasm` 161112 → **160942 B**，SHA-256
+    `f556ab0bae274d3e600b6505934394fcf5f4d9edc9fd3db3a42764785fc17cfd`；
+    `inspect:tsdk` 提取 **`v3.9.0.1793626351`**，imports(22)/exports(61)/
+    dataSegments(17) 与 78 基线完全一致，结构兼容三项全 true。
+  - 客户端版本 `1.16.1.6` → **`1.16.2.7`**（`assets/resources/import/27/
+    270bcfa0-….d8110.json` 的 `version` 字段，两版仅此一处不同），
+    按目录 mtime 记作 `1.16.2.7_20261103`。
+  - **没有新玩法**：中文字符串集合（2~8 字，js/json 全扫）78/79 均为
+    **443 个，新增 0 移除 0**，与 77→78 时的 305 个口径不同但结论相同。
+    77 登记的藏品/摆件/点赞/蓝晶土地无需再改。
+  - 已更新 `tsdk-runtime.js`、`config.js`、`AdminSystemPanel.vue`、
+    `useAdminSystemConfig.ts`、`device-protocol.test.js` 与两份 TSDK 文档。
+    `pnpm build:web` 通过，回归 97/97。
