@@ -77,5 +77,5 @@ test('an empty custom user agent is preserved and omitted from the QQ handshake'
     assert.equal(protocol.userAgent, '');
     assert.equal(headers['User-Agent'], undefined);
     assert.equal(headers.Origin, 'https://gate-obt.nqf.qq.com');
-    assert.equal(headers.Referer, 'https://appservice.qq.com/1112386029/1.16.2.7/page-frame.html');
+    assert.equal(headers.Referer, 'https://appservice.qq.com/1112386029/1.16.3.8/page-frame.html');
 });

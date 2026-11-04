@@ -378,3 +378,17 @@
   真正未知的 `999999` 仍照常上报（检测未被削弱）。
   新增 `test/gold-mutation-item.test.js`（6 条）；`seed-footprint-repair`
   的变更守卫白名单按设计补入 `1041435`。回归 126/126。
+- 2026-11-04 微信小游戏包更新到 **80**（目录 mtime 11-04 16:46），
+  解包产物 `D:\tmp\wx80`，109 文件。
+  - `tsdk.wasm` 160942 → **161040 B**，SHA-256
+    `41e5e9c01e8168e2caeaefcbff346252edfbed4e693b88fcae041f2eb3bffc87`；
+    `inspect:tsdk` 提取 **`v3.9.0.1793763796`**，imports(22)/exports(61)/
+    dataSegments(17) 与 79 基线一致，结构兼容三项全 true。
+  - 客户端版本 `1.16.2.7` → **`1.16.3.8`**（`assets/resources/import/27/
+    270bcfa0-….d8110.json`，两版仅此一处不同），按目录 mtime 记作
+    `1.16.3.8_20261104`。
+  - **仍然没有新玩法**：中文字符串集合 79/80 均为 **443 个，新增 0 移除 0**。
+    77 登记的藏品/摆件/点赞/蓝晶土地无需改动。
+  - 已更新 `tsdk-runtime.js`、`config.js`、`AdminSystemPanel.vue`、
+    `useAdminSystemConfig.ts`、`device-protocol.test.js` 与两份 TSDK 文档。
+    `pnpm build:web` exit=0，回归 126/126，lint 无 error。
