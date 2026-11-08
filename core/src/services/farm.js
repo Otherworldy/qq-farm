@@ -15,6 +15,7 @@ const {
   harvestOwnAtMaturity,
   getNextMatureInMs,
   getNextMatureDueAtMs,
+  getOwnMaturityGapCount,
 } = require('./farming-orchestrator');
 
 module.exports = {
@@ -27,6 +28,7 @@ module.exports = {
   harvestOwnAtMaturity,
   getNextMatureInMs,
   getNextMatureDueAtMs,
+  getOwnMaturityGapCount,
 
   // 土地分析
   getCurrentPhase,

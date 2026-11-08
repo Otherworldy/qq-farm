@@ -81,6 +81,8 @@ require.cache[networkPath] = mockModule(networkPath, {
   getUserState: () => ({ accountId: 'fixture-account', level: 200, gold: 1_000_000 }),
   getWsErrorState: () => null,
   isConnected: () => true,
+  // 成熟日程变化会通过事件重排收获闹钟；测试里只需要一个可用的空实现。
+  networkEvents: { emit: () => {}, on: () => {}, off: () => {}, removeListener: () => {} },
 });
 
 require.cache[warehousePath] = mockModule(warehousePath, {
@@ -145,4 +147,49 @@ test('种植回包里的成熟时刻立刻进入日程，不必等下一次 AllL
     `成熟墙钟应约为 20 分钟后，实际 ${Math.round(remainMs / 1000)}s`
   );
   assert.ok(farm.getNextMatureInMs() > 0, '成熟倒计时应为正数');
+});
+
+test('在长但没有成熟时刻的地块记成缺口，补齐后缺口清零', async () => {
+  const farm = await loadOrchestrator();
+  farm.replaceOwnMaturityScheduleForTests({ matureSchedule: [], harvestable: [], growing: [] });
+  assert.equal(farm.getOwnMaturityGapCount(), 0, '初始不应有缺口');
+
+  // 协议偶尔不给成熟阶段 begin_time：这块地在长，却没有可武装的收获闹钟。
+  farm.replaceOwnMaturityScheduleForTests({ matureSchedule: [], harvestable: [], growing: [4] });
+  assert.equal(farm.getOwnMaturityGapCount(), 1, '缺成熟时刻的在长地块应记缺口');
+
+  // 下一轮快照读出了它的成熟时刻，缺口随之清零，日程也确实发布了
+  // （replace 必须走 publish，否则收获闹钟永远拿不到墙钟）。
+  farm.replaceOwnMaturityScheduleForTests({
+    matureSchedule: [{ landId: 4, matureAtSec: MATURE_AT }],
+    harvestable: [],
+    growing: [4],
+  });
+  assert.equal(farm.getOwnMaturityGapCount(), 0, '补齐后不该再有缺口');
+  assert.ok(farm.getNextMatureDueAtMs() > 0, '完整快照必须把成熟墙钟发布出去');
+});
+
+test('收获回包里正在长却没有成熟时刻的地块也记缺口', async () => {
+  const farm = await loadOrchestrator();
+  farm.replaceOwnMaturityScheduleForTests({ matureSchedule: [], harvestable: [], growing: [] });
+  farm.reconcileOwnMaturityFromLandsForTests([5], {
+    land: [{
+      id: 5,
+      unlocked: true,
+      plant: { id: 1020050, season: 1, phases: [{ phase: 1, begin_time: fakeNowSec }] },
+      seed_id: 20002,
+    }],
+  });
+  assert.equal(farm.getOwnMaturityGapCount(), 1, '回包在长但无成熟时刻应记缺口');
+});
+
+test('成熟时刻始终读不出来的缺口会在 30 分钟后失效，不变成永久高频巡田', async () => {
+  const farm = await loadOrchestrator();
+  farm.replaceOwnMaturityScheduleForTests({ matureSchedule: [], harvestable: [], growing: [6] });
+  const now = Date.now();
+  assert.equal(farm.getOwnMaturityGapCount(now), 1, '缺口刚出现时应促发高频复查');
+  assert.equal(
+    farm.getOwnMaturityGapCount(now + 31 * 60_000), 0,
+    '超过 30 分钟仍未补上，应放弃高频复查并回到正常节奏'
+  );
 });

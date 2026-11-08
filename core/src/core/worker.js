@@ -46,7 +46,8 @@ const {
     removePlant,
     harvestOwnAtMaturity,
     getNextMatureInMs,
-    getNextMatureDueAtMs
+    getNextMatureDueAtMs,
+    getOwnMaturityGapCount
 } = require('../services/farm');
 const {
     checkFriends,
@@ -128,6 +129,7 @@ const {
     stopNetwork,
     getWs,
     getUserState,
+    isConnected,
     networkEvents,
     pauseAceReports,
     resumeAceReports,
@@ -428,18 +430,27 @@ async function runFarmTick(autoConfig) {
         );
         const matureMs = getNextMatureInMs();
         const horizon = nextIdleHorizonMs();
-        const nap = idleNapMs(horizon, patrol, {
-            maxSleepMs: idleMaxSleepMs(),
-            minSleepMs: idleMinSleepMs(),
-            activeMs: effectiveWakeBeforeMs(),
-        });
+        // 地里还有作物成熟时刻未知（刚种下未收到回包、或整片日程为空）时，
+        // 没有任何可武装的收获闹钟，只能靠下一轮巡田重建。此时长睡会把
+        // 整茬短周期作物睡过成熟点，所以固定按正常巡田间隔复查。
+        const maturityGap = Number(getOwnMaturityGapCount()) || 0;
+        const nap = maturityGap > 0
+            ? patrol
+            : idleNapMs(horizon, patrol, {
+                maxSleepMs: idleMaxSleepMs(),
+                minSleepMs: idleMinSleepMs(),
+                activeMs: effectiveWakeBeforeMs(),
+            });
         const nextDelay = capDelayByMatureInMs(nap, matureMs);
         const normalDelay = nextDelay >= 60_000 || (matureMs > 0 && matureMs < nextDelay)
             ? nextDelay
             : maybeStretchDelay(nextDelay);
         const delay = Math.max(normalDelay, ordinarySlowdownFloorMs('farm'));
         nextFarmRunAt = Date.now() + delay;
-        logIdleSleep(delay, horizon, { activeMs: effectiveWakeBeforeMs() });
+        logIdleSleep(delay, horizon, {
+            activeMs: effectiveWakeBeforeMs(),
+            maturityGapCount: maturityGap,
+        });
         armStealWake();
         farmTaskRunning = false;
     }
@@ -560,6 +571,7 @@ function logIdleSleep(delayMs, horizonMs, options = {}) {
     const delay = Math.max(0, Number(delayMs) || 0);
     const horizon = Math.max(0, Number(horizonMs) || 0);
     const active = Math.max(0, Number(options.activeMs) || idleWakeBeforeMs());
+    const maturityGap = Math.max(0, Number(options.maturityGapCount) || 0);
     const now = Date.now();
     if (delay >= 60_000) {
         if (now - lastIdleSleepLogAt < 15_000) return;
@@ -578,7 +590,11 @@ function logIdleSleep(delayMs, horizonMs, options = {}) {
     }
     let key = 'short';
     let reason = `本次只要 ${formatIdleRemain(delay)}`;
-    if (horizon <= 0) {
+    if (maturityGap > 0) {
+        key = 'maturity-gap';
+        reason = `自家有 ${maturityGap} 块在长但成熟时刻未知，按正常巡田复查`;
+    }
+    else if (horizon <= 0) {
         key = 'none';
         reason = '没有可等的成熟/可偷时刻';
     }
@@ -1495,6 +1511,15 @@ async function startBot(config) {
         startFriendCheckLoop({ externalScheduler: true });
         // 重点巡田读到新成熟时刻时立即重排偷菜唤醒
         setArmStealWakeCallback(armStealWake);
+        // 自家成熟日程是进程内存，重启后必空（自动刷新 Code 也会重启账号）。
+        // 空日程没有可武装的收获闹钟，只能等下一轮巡田重建，所以登录就绪
+        // 后立即拉一次，不等 8-12 秒的自然间隔——那就是进程重启期的丢菜窗口。
+        workerScheduler.setTimeoutTask('own_maturity_prime', 300, async () => {
+            try {
+                if (!isConnected()) return;
+                await runFarmOperation('harvest');
+            } catch { /* 失败交给常规巡田兜底 */ }
+        });
         armOwnHarvestGuard();
 
         // 启动统一调度器

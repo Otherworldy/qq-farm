@@ -31,6 +31,19 @@ let shouldRefresh2x2Plan = true;
 let lastNextMatureDueAtMs = 0;
 let lastNextMatureLandIds = [];
 let ownMatureSchedule = new Map();
+// 有作物在长、但拿不到成熟时刻的地块。这期间没有可武装的收获闹钟，
+// 巡田不能长睡，否则连播种回包也没补上的新茬会被睡过成熟点。
+let ownMaturityUnknownLandIds = new Set();
+let ownMaturityGapCount = 0;
+// 缺口只在前 30 分钟内促发高频复查：多数情况（种植回包没带时刻、进程刚重启）
+// 一到两轮巡田就能补上；协议始终不给 begin_time 时不能变成永久 8-12 秒轮询。
+const OWN_MATURITY_GAP_ACTIVE_MS = 30 * 60_000;
+let ownMaturityGapSinceAt = 0;
+// 自家成熟时刻的变化日志按“目标地块/整秒时刻/缺口”去重，避免校时抖动刷屏；
+// 另外每 10 分钟至少记一条，让定时巡查期间用户能从日志确认自家成熟时刻仍在追踪。
+const OWN_MATURITY_LOG_REFRESH_MS = 10 * 60_000;
+let lastOwnMaturityLogKey = '';
+let lastOwnMaturityLogAt = 0;
 let ownHarvestInFlight = null;
 // 自己农场催熟/化肥检测的上一轮地块基线：landId -> {plantId, matureAtSec, fertLeft, nudged}
 const ownNudgeLandSnapshots = new Map();
@@ -127,6 +140,30 @@ function publishOwnMaturitySchedule(source = 'snapshot') {
   const dueAt = serverMatureSecToLocalMs(nextSec);
   const changed = Math.abs(dueAt - lastNextMatureDueAtMs) > 5
     || nextIds.join(',') !== lastNextMatureLandIds.join(',');
+  const logKey = `${nextSec}|${nextIds.join(',')}|${ownMaturityGapCount}`;
+  const logNow = Date.now();
+  if (logKey !== lastOwnMaturityLogKey || logNow - lastOwnMaturityLogAt >= OWN_MATURITY_LOG_REFRESH_MS) {
+    lastOwnMaturityLogKey = logKey;
+    lastOwnMaturityLogAt = logNow;
+    const remainSec = nextSec > 0 ? nextSec - Math.floor(getServerTimeMs() / 1000) : 0;
+    const summary = nextIds.length > 0
+      ? (remainSec <= 0
+        ? `#${nextIds.join(',#')} 已到成熟时刻，待收获`
+        : `#${nextIds.join(',#')} 约 ${formatRemain(remainSec)}后成熟`)
+      : '暂无下茬成熟时刻';
+    const gapNote = ownMaturityGapCount > 0
+      ? `；另有 ${ownMaturityGapCount} 块在长但成熟时刻未知`
+      : '';
+    log('农场', `自家成熟时刻：${summary}${gapNote}`, {
+      module: 'farm',
+      event: '自家成熟时刻',
+      result: 'ok',
+      source,
+      landIds: [...nextIds],
+      matureAt: nextSec,
+      gap: ownMaturityGapCount,
+    });
+  }
   lastNextMatureDueAtMs = dueAt;
   lastNextMatureLandIds = nextIds;
   markOwnHarvestDueAt(
@@ -160,6 +197,14 @@ function replaceOwnMaturitySchedule(analysis) {
     if (landId && !schedule.has(landId)) schedule.set(landId, serverNowSec);
   }
   ownMatureSchedule = schedule;
+  // 日程里没有的地块就是“在长但成熟时刻未知”。它们不会武装收获闹钟，
+  // 巡田遇到它们必须按正常间隔复查，不能长睡。
+  ownMaturityUnknownLandIds = new Set(
+    (Array.isArray(analysis && analysis.growing) ? analysis.growing : [])
+      .map(toNum)
+      .filter(landId => landId && !schedule.has(landId))
+  );
+  updateOwnMaturityGap();
   publishOwnMaturitySchedule('all_lands');
 }
 
@@ -168,7 +213,10 @@ function replaceOwnMaturitySchedule(analysis) {
  *  长睡（1~120 分钟），短周期作物会直接被睡过成熟点。 */
 function reconcileOwnMaturityFromLands(landIds, reply, source = 'harvest_reply') {
   const targets = new Set((Array.isArray(landIds) ? landIds : []).map(toNum).filter(Boolean));
-  for (const landId of targets) ownMatureSchedule.delete(landId);
+  for (const landId of targets) {
+    ownMatureSchedule.delete(landId);
+    ownMaturityUnknownLandIds.delete(landId);
+  }
 
   const replyLands = Array.isArray(reply && reply.land) ? reply.land : [];
   if (replyLands.length > 0) {
@@ -180,9 +228,17 @@ function reconcileOwnMaturityFromLands(landIds, reply, source = 'harvest_reply')
       // 本次已接受的成熟收获不再重挂；只接续多季作物的新一季未来墙钟。
       if (landId && matureAtSec * 1000 > serverNowMs + 100) {
         ownMatureSchedule.set(landId, matureAtSec);
+        ownMaturityUnknownLandIds.delete(landId);
       }
     }
+    // 回包里正在长却没有成熟时刻的地块（协议偶尔不给成熟阶段 begin_time）：
+    // 记成缺口，巡田保持正常间隔直到下一轮快照把时刻读出来。
+    for (const landId of partial.growing) {
+      const id = toNum(landId);
+      if (id && !ownMatureSchedule.has(id)) ownMaturityUnknownLandIds.add(id);
+    }
   }
+  updateOwnMaturityGap();
   publishOwnMaturitySchedule(source);
 }
 
@@ -534,6 +590,24 @@ function getNextMatureDueAtMs() {
   return lastNextMatureDueAtMs;
 }
 
+/** 缺口计数与起始时刻：空→非空时记起点，清空后重置。 */
+function updateOwnMaturityGap() {
+  ownMaturityGapCount = ownMaturityUnknownLandIds.size;
+  if (ownMaturityGapCount === 0) ownMaturityGapSinceAt = 0;
+  else if (!ownMaturityGapSinceAt) ownMaturityGapSinceAt = Date.now();
+}
+
+/**
+ * 有作物在长、但成熟时刻未知的地块数。
+ * 超过 OWN_MATURITY_GAP_ACTIVE_MS 后返回 0，让巡田回到正常节奏：
+ * 协议不给 begin_time 的地块只能等下一轮快照，不能靠高频轮询硬等。
+ */
+function getOwnMaturityGapCount(now = Date.now()) {
+  if (ownMaturityGapCount === 0) return 0;
+  if (ownMaturityGapSinceAt && now - ownMaturityGapSinceAt > OWN_MATURITY_GAP_ACTIVE_MS) return 0;
+  return ownMaturityGapCount;
+}
+
 // ── 定时巡田循环 ──
 
 function scheduleNextFarmCheck(intervalMs = CONFIG.farmCheckInterval) {
@@ -602,11 +676,14 @@ module.exports = {
   harvestOwnAtMaturity,
   getNextMatureInMs,
   getNextMatureDueAtMs,
+  getOwnMaturityGapCount,
   serverMatureSecToLocalMs,
   startFarmCheckLoop,
   stopFarmCheckLoop,
   refreshFarmCheckLoop,
   noteOwnFarmNudgeForTests: noteOwnFarmNudge,
+  replaceOwnMaturityScheduleForTests: replaceOwnMaturitySchedule,
+  reconcileOwnMaturityFromLandsForTests: reconcileOwnMaturityFromLands,
   resetOwnNudgeBaselineForTests() {
     ownNudgeLandSnapshots.clear();
     isFirstFarmCheck = false;
