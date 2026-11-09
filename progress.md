@@ -423,3 +423,54 @@
   未上线内容，因此本项目不登记、只给占位名是正确行为，不是数据缺口。
   `1042254`（果实 42254、tier 3、`unlocked: true`）同样在此列 ——
   图鉴能查到该条目但名字也是 `果实42254`，游戏内同样看不到中文名。
+
+- 2026-11-09 **偷菜预检查用错操作号（10004=放虫）导致连续误报 `steal_blocked`**：
+  线上日志中「银谷签文纸片人」24 块枇杷被连续十余次记「跳过偷菜 24 块
+  （服务器预检查不允许操作）」，其间夹一次 `friend_precheck_failure
+  category=transport operationId=10004`，紧接着 `偷24(枇杷)` 全部到手，
+  之后才出现 `steal_failed` 并回到 blocked——证明服务端从未禁止偷该作物。
+  成因：三条偷菜路径（巡查 `visitFriendForSteal`、帮忙顺带偷
+  `visitFriendFor`、手动偷 `doFriendOperation`）的 `CheckCanOperate` 都传
+  `0x2714`=10004，而 10004 在本仓库早已实证是**放虫**（`friend-operation-limits.js`
+  与 `friend-operation-id-contract.test.js`）；放虫只在未成熟地块可行
+  （`analyzeFriendLands` 的 `phase !== MATURE`），成熟恰是可偷时刻，于是
+  「能不能放虫」几乎必然 false。另 `friend-orchestrator` 的偷菜循环限流
+  也读同一个键，导致偷菜与放虫额度互相干扰。
+  - 修复：新增 `STEAL_OPERATION_ID = 10008`（`OP_NAMES` 同步标为「偷菜」），
+    三处预检查与四处 `canOperate` 全部改用该常量；`plantpb.proto` 的旧注释
+    不再作为依据。
+  - 同时修掉「偷过还反复进门」：`visitFriendForSteal` 里的 `hasStealSlot`
+    读 `plant.steal_player` / `plant.steal_num`，proto 的 `PlantInfo` 没有
+    这两个字段（只有 `stealable`、`stealers`、`stole_num`、`left_fruit_num`、
+    `steal_intimacy_level`），解码后恒为 `undefined`，过滤从未生效。改为在
+    `analyzeFriendLands` 用真实字段 `stealers` 剔除本人已偷地块
+    （`stealSkipped.reason = 'already_stolen'`，日志写「本人已偷过」），
+    三条偷菜路径一次性覆盖；字段缺省或 `myGid` 未知时一律放行，绝不凭空
+    否认可偷。
+  - 验证：`test/steal-whitelist.test.js` 新增 3 条已偷过滤断言，
+    `test/friend-operation-id-contract.test.js` 新增操作号契约断言
+    （禁止 `0x2714` 出现在偷菜预检查/限流里）。定向 115/115 通过；
+    全量 1265 项仅 13 条既有 Windows 环境性失败（权限位与长耗时），
+    与改动前基线完全一致。
+
+- 2026-11-09 **预检查失败计数：日志去重不再连次数一起藏掉**。原实现
+  `recordPrecheckFailure` 用进程级签名 Set 去重，同一签名只落一条明细，线上
+  因此只看得见一条 `friend_precheck_failure`，实际兜底放行了十余次却不可见。
+  - 计数在去重/上限之外照常累加：`precheckFailureTotal`（总数）、
+    `precheckFailureCounts`（按签名计数）、`precheckFailureSinceSummary`
+    （距上次汇总的增量）。明细的签名表上限 16 与日志总量上限 32 只限制
+    “写多少行”，不再限制“数了多久”。
+  - 新增 `friend_precheck_failure_summary` 汇总行：只在确有重复且距上次汇总
+    ≥ 5 分钟时写，单次偶发失败不产生额外日志；带上 total / sinceSummary /
+    distinctSignatures / intervalSec。
+  - 新增 `getPrecheckFailureStats()`（`friend-api.js` 导出）给出不受日志
+    节流影响的精确累计：`total`、`distinctSignatures`、`logLines`、
+    `summaryLines`、`sinceSummary`、`lastSummaryAt`、`bySignature`。
+    `stats.js` 的 `getStats` 把它作为 `precheckFailures` 字段挂进状态上报
+    （惰性 require + try/catch，诊断故障不影响状态输出）。
+  - 排查口径：**不要用日志行数估失败次数**，读 `getStats().precheckFailures.total`。
+    脱敏要求不变：统计与汇总行均不含错误原文、好友 GID、账号身份。
+  - 验证：`test/friend-api-precheck-diagnostic.test.js` 6 → 12 条，新增
+    精确计数、单次不落汇总、封顶后仍计数、汇总按时间封顶、统计字段白名单、
+    总数大于日志行数等断言；定向 96/96 通过，全量 1271 项仍是既有 13 条
+    Windows 环境性失败。
