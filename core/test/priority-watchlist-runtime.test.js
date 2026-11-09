@@ -113,6 +113,9 @@ function fixture(t, options = {}) {
         leaveFriendFarm: async () => { leaves++; if (flags.onLeave) flags.onLeave(); },
         maybeLurkLeave: async () => { leaves++; if (flags.onLeave) flags.onLeave(); },
         getPlantBlacklist: () => [], getStealWhitelist: () => [], analyzeFriendLands: () => ({ stealable: [] }),
+        // 偷菜操作号（2026-11-09）：生产里由 friend-operation-limits 导出，
+        // 本夹具只抽取函数体，因此把常量显式注入 VM 上下文。
+        STEAL_OPERATION_ID: 10008,
         // 偷菜延迟闸门（2026-10）：生产里由同模块的 gateStealByMaturity 实现，
         // 本夹具只抽取 visitFriendForSteal，所以注入中性实现。
         // 闸门自身的语义由 steal-timing-settings.test.js 直接覆盖。

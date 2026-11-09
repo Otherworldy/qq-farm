@@ -87,6 +87,35 @@ test('whitelist takes precedence over the blacklist', () => {
   assert.deepEqual(analysis.stealable, [1]);
 });
 
+// 2026-11-09 线上事故：偷完 24 块后服务端仍报可偷（stealable=true、摘要继续
+// 报 steal_plant_num），而旧过滤读的是不存在的 steal_player/steal_num，因此
+// 同一批地每轮都白进一次门。现在用真实字段 stealers 剔除已偷地块。
+test('本人已偷过的地块不再算可偷（stealers 含自己）', () => {
+  const withStealers = [
+    { id: 1, plant: { id: SEED_A, seed_id: SEED_A, stealable: true, stealers: [100], phases: [{ phase: 6, begin_time: 1 }] } },
+    { id: 2, plant: { id: SEED_B, seed_id: SEED_B, stealable: true, stealers: [200], phases: [{ phase: 6, begin_time: 1 }] } },
+    { id: 3, plant: { id: SEED_C, seed_id: SEED_C, stealable: true, phases: [{ phase: 6, begin_time: 1 }] } },
+  ];
+  const analysis = analyzeFriendLands(withStealers, 100, 'test', {});
+  assert.deepEqual([...analysis.stealable].sort((a, b) => a - b), [2, 3]);
+  assert.deepEqual(analysis.stealableInfo.map(info => info.landId).sort((a, b) => a - b), [2, 3]);
+  assert.deepEqual(analysis.stealSkipped.map(item => item.landId), [1]);
+  assert.equal(analysis.stealSkipped[0].reason, 'already_stolen');
+});
+
+test('stealers 缺省或为空时绝不凭空否认可偷', () => {
+  assert.deepEqual(analyzeFriendLands(lands, 100, 'test', {}).stealable.sort((a, b) => a - b), [1, 2, 3]);
+  const emptyStealers = [
+    { id: 1, plant: { id: SEED_A, seed_id: SEED_A, stealable: true, stealers: [], phases: [{ phase: 6, begin_time: 1 }] } },
+  ];
+  assert.deepEqual(analyzeFriendLands(emptyStealers, 100, 'test', {}).stealable, [1]);
+  // myGid 未知时不能用 0 去匹配，也不应过滤任何地块
+  const noSelf = [
+    { id: 1, plant: { id: SEED_A, seed_id: SEED_A, stealable: true, stealers: [0], phases: [{ phase: 6, begin_time: 1 }] } },
+  ];
+  assert.deepEqual(analyzeFriendLands(noSelf, 0, 'test', {}).stealable, [1]);
+});
+
 test('getUserState picks up the worker account id from the environment', () => {
   process.env.FARM_ACCOUNT_ID = 'acc-from-env';
   const { getUserState } = require('../src/utils/network');

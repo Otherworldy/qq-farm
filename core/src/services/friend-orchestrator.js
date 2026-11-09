@@ -74,6 +74,7 @@ const {
   getCanGetHelpExp,
   getHelpAutoDisabledByLimit,
   updateOperationLimits,
+  STEAL_OPERATION_ID,
 } = require('./friend-operation-limits');
 const {
   visitFriend,
@@ -259,10 +260,10 @@ async function dispatchDueCacheStealTargets(targets, { myGid, preEnter = null, s
   const accountId = process.env.FARM_ACCOUNT_ID || '';
   const dispatched = new Set();
   const tally = { steal: 0, water: 0, weed: 0, bug: 0, putBug: 0, putWeed: 0 };
-  if (targets.length > 0 && canOperate(0x2714)) {
+  if (targets.length > 0 && canOperate(STEAL_OPERATION_ID)) {
     require('./request-governor').setContentionMode(true, Date.now() + 60_000);
     for (const target of targets) {
-      if (seq !== friendReadLifecycleSeq || !canOperate(0x2714) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
+      if (seq !== friendReadLifecycleSeq || !canOperate(STEAL_OPERATION_ID) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
       // 预算已满：继续派发只会被治理器逐条拦下（实测单段 325 次），
       // 未进门又清不掉缓存，下一轮重复同一批目标。留到窗口恢复后再试。
       if (!hasBudget()) break;
@@ -946,11 +947,11 @@ async function checkFriends(options = {}) {
       const dueWatches = getDueWatchFriends().filter((w) =>
         w.gid && w.gid !== userState.gid && !fastBlacklist.has(w.gid)
       );
-      if (dueWatches.length > 0 && canOperate(0x2714)) {
+      if (dueWatches.length > 0 && canOperate(STEAL_OPERATION_ID)) {
         placeholderOwner.phase = 'visit';
         const tally = { steal: 0, water: 0, weed: 0, bug: 0, putBug: 0, putWeed: 0 };
         for (const target of dueWatches) {
-          if (roundSeq !== friendReadLifecycleSeq || !canOperate(0x2714) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
+          if (roundSeq !== friendReadLifecycleSeq || !canOperate(STEAL_OPERATION_ID) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
           if (!hasBudget()) break;
           const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid)
             ? preEnter
@@ -1156,7 +1157,7 @@ async function checkFriends(options = {}) {
       // 避免这些预期失败累计进异常降速阈值；请求预算和进门预算保持不变。
       require('./request-governor').setContentionMode(true, Date.now() + 60_000);
       for (const target of stealTargets) {
-        if (roundSeq !== friendReadLifecycleSeq || !canOperate(0x2714) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break; // 10004 = steal
+        if (roundSeq !== friendReadLifecycleSeq || !canOperate(STEAL_OPERATION_ID) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break; // 10008 = steal
         const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid) ? preEnter : null;
         let result = null;
         try {

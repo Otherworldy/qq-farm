@@ -54,6 +54,7 @@ const GOLDEN_BUG_SOCIAL_TYPE = 2;
  */
 function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
   const { plantBlacklist = null, stealWhitelist = null } = options;
+  const selfGid = toNum(myGid);
   const result = {
     stealable: [],
     stealableInfo: [],
@@ -121,6 +122,16 @@ function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
           }
         } else if (plantBlacklist && seedId > 0 && plantBlacklist.includes(seedId)) {
           result.stealSkipped.push({ landId, seedId, name: plantName, reason: 'blacklist' });
+          continue;
+        }
+
+        // 已偷过的地块不再算可偷（2026-11-09）：偷菜成功后服务端仍把
+        // stealable 置 true、摘要继续报 steal_plant_num，同一批地会被每轮
+        // 重新选中，白进一次门再被 Harvest 拒。证据只用真实字段 `stealers`
+        // （与 friend-self-echo 的 Harvest 回声同口径）；字段缺省时一律放行。
+        const stealers = plant.stealers;
+        if (Array.isArray(stealers) && selfGid > 0 && stealers.some(gid => toNum(gid) === selfGid)) {
+          result.stealSkipped.push({ landId, seedId, name: plantName, reason: 'already_stolen' });
           continue;
         }
 

@@ -7,7 +7,8 @@ const path = require('node:path');
 // 放虫/放草 operation ID 契约（2026-09-26 修正）：
 // 10003 = 放草/放虫共用 shared 每日额度（PutWeeds/PutInsects 均消耗）；
 // 10004 = 放虫单项计数（不并入总额，避免双算）；
-// 10005/10006/10007 = 帮好友除草/除虫/浇水（帮助计数，不进捣乱预算）。
+// 10005/10006/10007 = 帮好友除草/除虫/浇水（帮助计数，不进捣乱预算）；
+// 10008 = 偷菜（2026-11-09 修正：偷菜预检查不得再用放虫的 10004）。
 // 协议证据存 ignored tmp/mischief-operation-id-proof.json，不入库。本测试
 // 只锁定生产行为，全内存替身，无网络。
 process.env.FARM_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'opid-contract-'));
@@ -66,13 +67,35 @@ test('无 shared 记录时保持 bot cap fallback=100；服务端无限额度仍
   assert.equal(fresh.getBadRemainingTimes(), 40);
 });
 
-test('getOperationLimits 展示真实捣乱操作与已核验名称，未知项中性', () => {
+test('getOperationLimits 展示真实捣乱操作与已核验名称', () => {
   feed([[10003, 5, 100], [10004, 6, 100], [10005, 54, 0], [10008, 25, 0]]);
   const all = limits.getOperationLimits();
   assert.equal(all['10003'].name, '捣乱共享额度（放虫/放草）');
   assert.equal(all['10004'].name, '给好友放虫');
   assert.equal(all['10005'].name, '帮好友除草');
-  assert.equal(all['10008'].name, '操作 #10008');
+  assert.equal(all['10008'].name, '偷菜');
+});
+
+test('偷菜预检查用偷菜自己的操作号 10008，不是放虫的 10004', () => {
+  // 2026-11-09 线上事故：放虫只在未成熟地块可行，用 10004 做偷菜预检查
+  // 会在有菜可偷时几乎必然拿到 can_operate=false，每轮刷 steal_blocked。
+  assert.equal(limits.STEAL_OPERATION_ID, 10008);
+  assert.notEqual(limits.STEAL_OPERATION_ID, limits.PUT_BUG_OPERATION_ID);
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/services/friend-visit.js'), 'utf8'
+  );
+  assert.ok(!/checkCanOperateRemote\([^,]+,\s*0x2714\b/.test(source),
+    'friend-visit 不得再用 0x2714 做偷菜预检查');
+  assert.equal(
+    (source.match(/checkCanOperateRemote\([^,]+,\s*STEAL_OPERATION_ID\)/g) || []).length,
+    3,
+    '三条偷菜路径（巡查/帮忙顺带/手动）都走偷菜操作号'
+  );
+  const orchestrator = fs.readFileSync(
+    path.join(__dirname, '../src/services/friend-orchestrator.js'), 'utf8'
+  );
+  assert.ok(!/canOperate\(0x2714\)/.test(orchestrator), '偷菜限流不得读放虫操作号');
+  assert.ok(/canOperate\(STEAL_OPERATION_ID\)/.test(orchestrator));
 });
 
 test('placeAutoBadItems 按正确 opId 发 CheckCanOperate（虫 10004、草 10003）', async () => {

@@ -21,6 +21,12 @@ const BAD_SHARED_OPERATION_ID = 10003;
 const PUT_BUG_OPERATION_ID = 10004;
 const PUT_WEED_OPERATION_ID = 10003;
 const GOLDEN_BUG_OPERATION_ID = 10015;
+// 偷菜（2026-11-09 修正）：CheckCanOperate 曾错用 10004（放虫）做偷菜预检查。
+// 放虫只在未成熟地块可行（friend-land-analyzer 的 phase !== MATURE 条件），
+// 而成熟正是可偷时刻——有菜可偷时问“能不能放虫”几乎必然 false，于是每次
+// 巡查都记一条 steal_blocked。改回偷菜自己的编号（10008，与既有参考实现同）：
+// 偷完后摘要的 steal_plant_num 仍报可偷时，预检查不会再凭空否决。
+const STEAL_OPERATION_ID = 10008;
 const BAD_DAILY_LIMIT = 100;
 
 // ===== Operation type names =====
@@ -32,7 +38,7 @@ const OP_NAMES = {
   '10005': '帮好友除草',
   '10006': '帮好友除虫',
   '10007': '帮好友浇水',
-  '10008': '操作 #10008',
+  '10008': '偷菜',
   '10015': '给好友放黄金虫',
 };
 
@@ -544,6 +550,7 @@ module.exports = {
   PUT_BUG_OPERATION_ID,
   PUT_WEED_OPERATION_ID,
   GOLDEN_BUG_OPERATION_ID,
+  STEAL_OPERATION_ID,
   BAD_DAILY_LIMIT,
   checkDailyReset,
   autoDisableHelpByExpLimit,

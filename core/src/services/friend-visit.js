@@ -1,4 +1,3 @@
-const { PlantPhase } = require('../config/config');
 const { getPlantById } = require('../config/gameConfig');
 const { getPlantBlacklist, getStealWhitelist, isAutomationOn, getPauseRemainMs, getStealDelaySeconds } = require('../models/store');
 const { getUserState } = require('../utils/network');
@@ -20,13 +19,13 @@ const {
 } = require('./friend-api');
 const { inspectFriendLands, unwatchFriend, isPriorityGid, watchFriend } = require('./fertilizer-watch');
 const friendActivity = require('./friend-activity');
-const { getCurrentPhase } = require('./farm-land-analyzer');
 const { analyzeFriendLands } = require('./friend-land-analyzer');
 const {
   getRemainingTimes,
   getBadRemainingTimes,
   PUT_BUG_OPERATION_ID,
   PUT_WEED_OPERATION_ID,
+  STEAL_OPERATION_ID,
   BAD_DAILY_LIMIT,
   canGetExpByCandidates,
   getCanGetHelpExp,
@@ -153,7 +152,7 @@ async function doFriendOperation(gid, opType) {
         return { ok: true, opType, count: 0, message: '没有可偷取土地' };
       }
 
-      const canOp = await checkCanOperateRemote(numericGid, 0x2714); // 10004
+      const canOp = await checkCanOperateRemote(numericGid, STEAL_OPERATION_ID);
       if (!canOp.canOperate) {
         return { ok: true, opType, count: 0, message: 'Ta已经被偷的精光了QAQ' };
       }
@@ -416,7 +415,7 @@ async function visitFriend(friend, tally, myGid, accountId) {
   // ---- Steal first (highest priority vs water/weed/bug) ----
   if (isAutomationOn('friend_steal')) logSkippedByCropRule(gid, name, analysis);
   if (isAutomationOn('friend_steal') && analysis.stealable.length > 0) {
-    const canOp = await checkCanOperateRemote(gid, 0x2714); // 10004
+    const canOp = await checkCanOperateRemote(gid, STEAL_OPERATION_ID);
     if (canOp.canOperate) {
       const stealCount = canOp.canStealNum > 0
         ? canOp.canStealNum
@@ -762,7 +761,11 @@ function logSkippedByCropRule(gid, friendName, analysis, mode) {
   const names = [...new Set(skipped.map(item => item.name).filter(Boolean))];
   const allWhitelist = skipped.every(item => item.reason === 'whitelist');
   const allBlacklist = skipped.every(item => item.reason === 'blacklist');
-  const reasonText = allWhitelist ? '不在偷菜白名单' : allBlacklist ? '在偷菜黑名单' : '被作物规则';
+  const allStolen = skipped.every(item => item.reason === 'already_stolen');
+  const reasonText = allWhitelist ? '不在偷菜白名单'
+    : allBlacklist ? '在偷菜黑名单'
+      : allStolen ? '本人已偷过'
+        : '被作物规则';
   const label = names.slice(0, 4).join('/') + (names.length > 4 ? ` 等 ${names.length} 种` : '');
   log('好友', `${friendName}: 跳过偷菜 ${skipped.length} 块（${reasonText}：${label || '未知作物'}）`, {
     module: 'friend', event: 'steal_skipped', friendGid: gid, result: 'skipped',
@@ -1008,24 +1011,11 @@ async function visitFriendForSteal(friend, tally, myGid, accountId, options = {}
   // 面板偷菜延迟在此收口：全量巡查、抢收快路径、巡田、缓存派发都从这里出手。
   gateStealByMaturity(gid, name, analysis, lands);
 
-  // Check if any stealable land still has remaining steal slots for us
-  const hasStealSlot = lands.some(land => {
-    const plant = land.plant;
-    if (!plant || !plant.phases || plant.phases.length === 0) return false;
-    const phase = getCurrentPhase(plant.phases, false, '', plant.id);
-    if (!phase || phase.phase !== PlantPhase.MATURE) return false;
-    if (!plant.stealable) return false;
-
-    const stealPlayers = plant.steal_player;
-    if (!stealPlayers || stealPlayers.length === 0) return true;
-
-    const mySteal = stealPlayers.find(s => toNum(s.gid) === myGid);
-    const myStealCount = mySteal ? toNum(mySteal.num) : 0;
-    const maxSteal = toNum(plant.steal_num, 0);
-    return myStealCount < maxSteal;
-  });
-
-  if (!hasStealSlot && analysis.stealable.length === 0) {
+  // 已偷过的地块由 analyzeFriendLands 归入 stealSkipped（reason=already_stolen），
+  // 三条偷菜路径一次性覆盖，不再分头写重复过滤。
+  // 没有可偷地块就早退（原 hasStealSlot 读的是本协议不存在的
+  // steal_player/steal_num，恒为真，实际只有“一块成熟可偷都没有”才走到这里）。
+  if (analysis.stealable.length === 0) {
     await maybeLurkLeave(gid);
     return { acted: false, entered: true, ripeAtMs, enterOutcome, enterEpoch };
   }
@@ -1033,7 +1023,7 @@ async function visitFriendForSteal(friend, tally, myGid, accountId, options = {}
   // Steal
   logSkippedByCropRule(gid, name, analysis);
   if (analysis.stealable.length > 0) {
-    const canOp = await checkCanOperateRemote(gid, 0x2714); // 10004
+    const canOp = await checkCanOperateRemote(gid, STEAL_OPERATION_ID);
     if (canOp.canOperate) {
       const stealCount = canOp.canStealNum > 0
         ? canOp.canStealNum
