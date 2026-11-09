@@ -91,6 +91,10 @@ function diagnosticEntries(state) {
   return state.logs.filter(args => args[2] && args[2].event === 'friend_precheck_failure');
 }
 
+function summaryEntries(state) {
+  return state.logs.filter(args => args[2] && args[2].event === 'friend_precheck_failure_summary');
+}
+
 test('成功/业务错误/传输错误各只发一次预检查请求，返回语义不变', async () => {
   const { api, state } = loadFriendApiWithMocks();
   try {
@@ -256,6 +260,113 @@ test('业务码只记录严格十进制整数；非严格整数输入一律记 u
     const strict = diagnosticEntries(state).slice(-2);
     assert.deepEqual(strict.map(e => e[2].serverCode), [1002003, 1002004],
       '严格整数码保留数值形态正常记录');
+  } finally {
+    state.restore();
+  }
+});
+
+// 2026-11-09 追加：签名去重会把“实际失败了多少次”一并藏掉（线上只看见一条
+// transport 明细，实际兜底放行了十余次）。精确计数以 getPrecheckFailureStats()
+// 为准，日志只做有界提示——不要把日志行数当失败次数。
+test('同签名重复失败仍精确计数：明细一条，统计给出真实次数', async () => {
+  const { api, state } = loadFriendApiWithMocks();
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      state.behaviors.push({ reject: transportError() });
+      assert.deepEqual(await api.checkCanOperateRemote(SYNTHETIC_GID, 10004),
+        { canOperate: true, canStealNum: 0 }, '每次失败的返回语义不变');
+    }
+    assert.equal(state.calls.length, 5, '每次失败仍只发一次请求，不重试');
+    assert.equal(diagnosticEntries(state).length, 1, '同一签名仍然只落一条明细');
+
+    const stats = api.getPrecheckFailureStats();
+    assert.equal(stats.total, 5, '总数反映真实失败次数，而不是去重后的 1');
+    assert.equal(stats.distinctSignatures, 1);
+    assert.equal(stats.logLines, 1);
+    assert.deepEqual(stats.bySignature, { 'transport|unknown|10004': 5 });
+  } finally {
+    state.restore();
+  }
+});
+
+test('单次失败只落明细不落汇总，避免偶发情况日志翻倍', async () => {
+  const { api, state } = loadFriendApiWithMocks();
+  try {
+    state.behaviors.push({ reject: transportError() });
+    await api.checkCanOperateRemote(SYNTHETIC_GID, 10004);
+    assert.equal(diagnosticEntries(state).length, 1);
+    assert.deepEqual(summaryEntries(state), [], '单次失败不需要额外汇总行');
+    assert.equal(api.getPrecheckFailureStats().total, 1);
+  } finally {
+    state.restore();
+  }
+});
+
+test('明细与签名表封顶后仍继续计数，统计不会丢掉超限部分', async () => {
+  const { api, state } = loadFriendApiWithMocks();
+  try {
+    for (let i = 0; i < 40; i += 1) {
+      state.behaviors.push({ reject: transportError() });
+      await api.checkCanOperateRemote(SYNTHETIC_GID, 20000 + i);
+    }
+    assert.equal(diagnosticEntries(state).length, 16, '明细仍严守签名表上限 16');
+    const stats = api.getPrecheckFailureStats();
+    assert.equal(stats.total, 40, '总数覆盖全部 40 次，不受明细上限影响');
+    assert.equal(stats.distinctSignatures, 40, '签名计数不受明细上限影响');
+  } finally {
+    state.restore();
+  }
+});
+
+test('汇总行按真实时间间隔封顶，不随失败次数线性增长', async () => {
+  const { api, state } = loadFriendApiWithMocks();
+  try {
+    // 首次重复就会写一条（此时只累计了当次的 2 次），随后按 5 分钟窗口节流
+    for (let i = 0; i < 30; i += 1) {
+      state.behaviors.push({ reject: transportError() });
+      await api.checkCanOperateRemote(SYNTHETIC_GID, 10004);
+    }
+    assert.equal(diagnosticEntries(state).length, 1);
+    assert.equal(summaryEntries(state).length, 1, '同一窗口内只写一条汇总');
+    assert.equal(api.getPrecheckFailureStats().total, 30);
+  } finally {
+    state.restore();
+  }
+});
+
+test('统计接口只暴露聚合数字与签名键，不含错误原文与身份', async () => {
+  const { api, state } = loadFriendApiWithMocks();
+  try {
+    state.behaviors.push({ reject: businessError(1002003, '合成业务繁忙') });
+    state.behaviors.push({ reject: transportError() });
+    await api.checkCanOperateRemote(SYNTHETIC_GID, 10004);
+    await api.checkCanOperateRemote(SYNTHETIC_GID, 10004);
+
+    const stats = api.getPrecheckFailureStats();
+    assert.deepEqual(Object.keys(stats).sort(), [
+      'bySignature', 'distinctSignatures', 'lastSummaryAt', 'logLines',
+      'sinceSummary', 'summaryLines', 'total',
+    ], '统计字段固定');
+    const rendered = JSON.stringify(stats);
+    assert.doesNotMatch(rendered, new RegExp(String(SYNTHETIC_GID)), '不得含好友 GID');
+    assert.doesNotMatch(rendered, /合成业务繁忙|请求超时/, '不得含错误原文');
+  } finally {
+    state.restore();
+  }
+});
+
+test('状态上报暴露精确计数：日志行数不等于失败次数', async () => {
+  const { api, state } = loadFriendApiWithMocks();
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      state.behaviors.push({ reject: transportError() });
+      await api.checkCanOperateRemote(SYNTHETIC_GID, 10004);
+    }
+    // stats 的 getStats 走真实 friend-api 单例，这里只验证同一统计对象能被取到
+    const stats = api.getPrecheckFailureStats();
+    assert.equal(stats.total, 4);
+    assert.equal(stats.logLines, 1);
+    assert.ok(stats.total > stats.logLines, '真实次数必须大于日志行数');
   } finally {
     state.restore();
   }

@@ -953,10 +953,20 @@ async function leaveFriendFarm(gid) {
 // 请求回包内容一律不落。诊断记录器自身抛错也只静默吞掉——绝不把原本的
 // 兜底返回变成 Promise 拒绝。
 const PRECHECK_FAILURE_EVENT = 'friend_precheck_failure';
+// 明细行按签名去重（同一签名永远只一条）；真正发生了多少次由独立的汇总行
+// 给出。汇总按时间封顶（每 PRECHECK_SUMMARY_INTERVAL_MS 至多一条），且不占
+// 明细的签名表/日志上限——风暴下日志量仍然是时间有界的。
+const PRECHECK_FAILURE_SUMMARY_EVENT = 'friend_precheck_failure_summary';
+const PRECHECK_SUMMARY_INTERVAL_MS = 5 * 60_000;
 const MAX_PRECHECK_FAILURE_SIGNATURES = 16;
 const MAX_PRECHECK_FAILURE_LOGS = 32;
 const precheckFailureSignatures = new Set();
 let precheckFailureLogCount = 0;
+// 按签名累计次数与全进程总数：去重只会隐藏重复，不能连次数一起隐藏。
+const precheckFailureCounts = new Map();
+let precheckFailureTotal = 0;
+let precheckFailureSinceSummary = 0;
+let precheckFailureLastSummaryAt = 0;
 
 /** 服务端业务错误带 isServerBusinessError 标记（见 network.js），其余归传输类。 */
 function classifyPrecheckFailure(err) {
@@ -975,29 +985,84 @@ function classifyPrecheckFailure(err) {
   return { category: 'transport', code: 'unknown' };
 }
 
-/** 同一签名只记一次；签名表与日志总量各有固定上限，防未知错误码风暴。
- *  自身绝不抛错：诊断故障不得把 checkCanOperateRemote 的兜底返回变成拒绝。 */
+/** 同一签名只记一次明细；签名表与日志总量各有固定上限，防未知错误码风暴。
+ *  自身绝不抛错：诊断故障不得把 checkCanOperateRemote 的兜底返回变成拒绝。
+ *  计数在封顶之外照常累加——上限只限制“写多少行”，不限制“数了多久”。 */
 function recordPrecheckFailure(operationId, err) {
   try {
     const info = classifyPrecheckFailure(err);
     const signature = `${info.category}|${info.code}|${toNum(operationId)}`;
-    if (precheckFailureSignatures.has(signature)) return;
-    if (precheckFailureSignatures.size >= MAX_PRECHECK_FAILURE_SIGNATURES) return;
-    if (precheckFailureLogCount >= MAX_PRECHECK_FAILURE_LOGS) return;
-    precheckFailureSignatures.add(signature);
-    precheckFailureLogCount += 1;
-    log('好友',
-      `CheckCanOperate 预检查失败已兜底放行: category=${info.category} code=${info.code} operationId=${toNum(operationId)}`,
-      {
-        module: 'friend',
-        event: PRECHECK_FAILURE_EVENT,
-        category: info.category,
-        serverCode: info.code,
-        operationId: toNum(operationId),
-      });
+    precheckFailureTotal += 1;
+    precheckFailureSinceSummary += 1;
+    precheckFailureCounts.set(signature, (precheckFailureCounts.get(signature) || 0) + 1);
+    logPrecheckFailureDetail(signature, info, operationId);
+    logPrecheckFailureSummary(Date.now());
   } catch {
     // 诊断写入失败：静默吞掉，保持原有兜底语义。
   }
+}
+
+/** 同一签名只落一条明细；上限之外的签名只累加计数，不再落行。 */
+function logPrecheckFailureDetail(signature, info, operationId) {
+  if (precheckFailureSignatures.has(signature)) return;
+  if (precheckFailureSignatures.size >= MAX_PRECHECK_FAILURE_SIGNATURES) return;
+  if (precheckFailureLogCount >= MAX_PRECHECK_FAILURE_LOGS) return;
+  precheckFailureSignatures.add(signature);
+  precheckFailureLogCount += 1;
+  log('好友',
+    `CheckCanOperate 预检查失败已兜底放行: category=${info.category} code=${info.code} operationId=${toNum(operationId)}`,
+    {
+      module: 'friend',
+      event: PRECHECK_FAILURE_EVENT,
+      category: info.category,
+      serverCode: info.code,
+      operationId: toNum(operationId),
+    });
+}
+
+/**
+ * 累计汇总：被去重吞掉的重复次数在这里以有时间上限的汇总行给出。
+ * 单次失败已经有明细行，只有“确有多余重复且距上次汇总够了间隔”才写。
+ * 注意：这是有界日志，汇总行反映的是“写那一刻”的累计；任何时刻的精确
+ * 计数以 getPrecheckFailureStats() 为准（面板/诊断用，不受日志节流影响）。
+ */
+function logPrecheckFailureSummary(now) {
+  if (precheckFailureSinceSummary < 2) return;
+  if (precheckFailureLastSummaryAt > 0
+      && now - precheckFailureLastSummaryAt < PRECHECK_SUMMARY_INTERVAL_MS) return;
+  const sinceSummary = precheckFailureSinceSummary;
+  precheckFailureLastSummaryAt = now;
+  precheckFailureSinceSummary = 0;
+  log('好友',
+    `CheckCanOperate 预检兜底放行累计 ${precheckFailureTotal} 次（本轮新增 ${sinceSummary} 次，${precheckFailureCounts.size} 种签名）`,
+    {
+      module: 'friend',
+      event: PRECHECK_FAILURE_SUMMARY_EVENT,
+      total: precheckFailureTotal,
+      sinceSummary,
+      distinctSignatures: precheckFailureCounts.size,
+      intervalSec: PRECHECK_SUMMARY_INTERVAL_MS / 1000,
+    });
+}
+
+/**
+ * 当前预检查失败的精确累计（不受日志去重/节流影响）。
+ * 面板、诊断页与“到底失败了多少次”的追问一律读这里，不要数日志行。
+ */
+function getPrecheckFailureStats() {
+  const bySignature = {};
+  for (const [signature, count] of precheckFailureCounts.entries()) {
+    bySignature[signature] = count;
+  }
+  return {
+    total: precheckFailureTotal,
+    distinctSignatures: precheckFailureCounts.size,
+    logLines: precheckFailureLogCount,
+    summaryLines: precheckFailureLastSummaryAt > 0 ? 1 : 0,
+    sinceSummary: precheckFailureSinceSummary,
+    lastSummaryAt: precheckFailureLastSummaryAt,
+    bySignature,
+  };
 }
 
 /** Check whether we can perform a remote operation on a friend's farm. */
@@ -1098,6 +1163,7 @@ module.exports = {
   leaveFriendFarm,
   checkCanOperateRemote,
   classifyPrecheckFailure,
+  getPrecheckFailureStats,
   parseBriefDogInfoBytes,
   extractVisitEnterBriefDogInfo,
   clearAllInvalidKnownFriendGidCooldown,

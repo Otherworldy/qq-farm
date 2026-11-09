@@ -314,6 +314,14 @@ function getStats(farmUser, userState, connected, limits) {
 
   const ops = { ...operations, tongQiGift: tongQiGiftCount };
 
+  // 预检查失败精确计数（2026-11-09）：CheckCanOperate 的诊断明细按签名去重，
+  // 日志行数不等于失败次数，所以面板要读这里的真实累计。惰性 require 避免
+  // stats 与 friend-api 的初始化循环；取不到就当没有（诊断不得影响状态上报）。
+  let precheckFailures = null;
+  try {
+    precheckFailures = require('./friend-api').getPrecheckFailureStats();
+  } catch { /* 诊断缺失不影响统计输出 */ }
+
   return {
     connection: { connected },
     status: {
@@ -338,7 +346,8 @@ function getStats(farmUser, userState, connected, limits) {
     sessionCouponGained: session.couponGained,
     lastExpGain: session.lastExpGain,
     lastGoldGain: session.lastGoldGain,
-    limits
+    limits,
+    ...(precheckFailures ? { precheckFailures } : {})
   };
 }
 
