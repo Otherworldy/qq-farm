@@ -474,3 +474,33 @@
     精确计数、单次不落汇总、封顶后仍计数、汇总按时间封顶、统计字段白名单、
     总数大于日志行数等断言；定向 96/96 通过，全量 1271 项仍是既有 13 条
     Windows 环境性失败。
+
+- 2026-11-11 **通信预算拦截：先诊断再收口，修 `hasBudget` 与 `checkRequest` 判定不一致**。
+  线上日志里 `请求被治理器拦截(budget_total/budget_method)` 刷屏，并连带
+  `常规施肥：获取土地信息失败`、`系统检查失败: …AllLands`、`任务检查失败: …TaskInfo`。
+  - **诊断出口**：`request-governor.js` 新增 `buildBudgetSnapshot()` 与
+    `noteBudgetDrop()`，预算拦截时 60s 节流输出一条 `governor_budget_drop`，
+    带 `windowCount/totalLimit`、近段拦截次数和窗口占用 Top N 方法。
+    此前 `getRequestProfile().top` 虽然算好了占用明细，但全仓没有任何出口，
+    只能看到"哪个请求被拦"，看不到"额度被谁用掉"。聚合告警
+    （`governed_warn_aggregated`）回答的是入口维度，这条回答的是方法维度。
+  - **真实缺陷**：`hasBudget()` 原来只查总量。Enter 已打满 `PER_METHOD_LIMIT`
+    而总量只用了 30/80 时它仍返回 true，偷菜循环继续按 40-120ms 间隔派发，
+    每次都被 `budget_method` 逐条拦下——这就是 `enter_steal 本段31次` 的机制。
+    现在传 `serviceName/methodName` 时同时检查单接口限值。
+  - **判定顺序必须与 `checkRequest` 完全一致**：豁免（白名单/`/Harvest|Steal/`/
+    成熟抢收 urgent 窗口）先于总量。顺序写反会让抢收紧急窗口里总量已满时
+    守卫误报"没预算"，把治理器本来放行的到点抢收链静默丢掉；
+    `test/request-governor.test.js` 有专门用例锁这一条。
+  - **按目标实际首发请求守卫**：`preEnter` 复用分支不发 `Enter`，真实瓶颈是
+    `CheckCanOperate`。三处派发守卫统一用 `guardReusesPreEnter` 选择
+    `PlantService.CheckCanOperate` 或 `VisitService.Enter`，并有源码级断言
+    防止服务名/方法写反（本版开发中曾写反过一次）。
+  - 守卫覆盖 `dispatchDueCacheStealTargets`、抢收快路径、摘要后主派发循环
+    三处；巡田轮询（`watchlist_poll`）未加，因为会打穿
+    `priority-watchlist-runtime.test.js` 的 vm 依赖面断言，另轮处理。
+  - `resetForTest()` 补 `urgentModeUntil` 复位（原来会跨用例泄漏紧急窗口）；
+    `governed-warn-aggregation{,-baseline}.test.js` 的 governor 桩补 `hasBudget`。
+  - 验证：`test/request-governor.test.js` 14 → 25 条；定向 137/137 通过，
+    全量 1149 项仍是既有 28 条环境性失败（缺 `@babel/parser`、
+    `getStealWhitelist`、无 git 仓库的 `git ls-files`），与改动前一致。

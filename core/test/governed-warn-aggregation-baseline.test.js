@@ -143,7 +143,7 @@ function makeHarness(t, options = {}) {
       setIntervalTask: (key, delay, fn) => tasks.set(key, { delay, fn }), clear: key => tasks.delete(key),
       clearAll: () => tasks.clear(), has: key => tasks.has(key) };
   } };
-  const governor = { getBreakerState: () => ({ active: false }), setContentionMode: () => {}, setUrgentMode: () => {}, setWatchMode: () => {} };
+  const governor = { getBreakerState: () => ({ active: false }), hasBudget: () => true, setContentionMode: () => {}, setUrgentMode: () => {}, setWatchMode: () => {} };
   const activity = new Proxy({ noteEnterPresence: () => ({ onlineEdge: false }), resolveFriendDisplayName: (_gid, name) => name },
     { get: (obj, key) => obj[key] || (() => false) });
   const limits = {

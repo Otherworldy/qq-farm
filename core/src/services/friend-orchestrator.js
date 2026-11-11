@@ -264,12 +264,17 @@ async function dispatchDueCacheStealTargets(targets, { myGid, preEnter = null, s
     require('./request-governor').setContentionMode(true, Date.now() + 60_000);
     for (const target of targets) {
       if (seq !== friendReadLifecycleSeq || !canOperate(STEAL_OPERATION_ID) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
-      // 预算已满：继续派发只会被治理器逐条拦下（实测单段 325 次），
-      // 未进门又清不掉缓存，下一轮重复同一批目标。留到窗口恢复后再试。
-      if (!hasBudget()) break;
       const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid)
         ? preEnter
         : null;
+      // 预算已满：继续派发只会被治理器逐条拦下（实测单段 325 次），
+      // 未进门又清不掉缓存，下一轮重复同一批目标。留到窗口恢复后再试。
+      // 同时检查本目标真正首发的那条请求的单接口限值：复用哨兵预进门时不发
+      // Enter，真实瓶颈变成 CheckCanOperate；新发 Enter 时才是 Enter 自身。
+      const guardReusesPreEnter = !!(targetPreEnter && targetPreEnter.enterReply);
+      if (!hasBudget(Date.now(), 0,
+        guardReusesPreEnter ? 'gamepb.plantpb.PlantService' : 'gamepb.visitpb.VisitService',
+        guardReusesPreEnter ? 'CheckCanOperate' : 'Enter')) break;
       if (checkingPlaceholder === owner) owner.phase = 'visit';
       const result = await visitFriendForSteal(target, tally, myGid, accountId, { preEnter: targetPreEnter });
       applyStealVisitResult(target.gid, result, Date.now(), { lifecycleSeq: seq });
@@ -952,10 +957,14 @@ async function checkFriends(options = {}) {
         const tally = { steal: 0, water: 0, weed: 0, bug: 0, putBug: 0, putWeed: 0 };
         for (const target of dueWatches) {
           if (roundSeq !== friendReadLifecycleSeq || !canOperate(STEAL_OPERATION_ID) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
-          if (!hasBudget()) break;
           const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid)
             ? preEnter
             : null;
+          // 同上：按本目标真正首发的请求检查单接口限值（复用预进门时不发 Enter）。
+          const guardReusesPreEnter = !!(targetPreEnter && targetPreEnter.enterReply);
+          if (!hasBudget(Date.now(), 0,
+            guardReusesPreEnter ? 'gamepb.plantpb.PlantService' : 'gamepb.visitpb.VisitService',
+            guardReusesPreEnter ? 'CheckCanOperate' : 'Enter')) break;
           let result = null;
           try {
             result = await visitFriendForSteal(target, tally, userState.gid, accountId, { preEnter: targetPreEnter });
@@ -1159,6 +1168,13 @@ async function checkFriends(options = {}) {
       for (const target of stealTargets) {
         if (roundSeq !== friendReadLifecycleSeq || !canOperate(STEAL_OPERATION_ID) || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break; // 10008 = steal
         const targetPreEnter = preEnter && Number(preEnter.gid) === Number(target.gid) ? preEnter : null;
+        // 预算/单接口已满时，紧随的 Enter 必被治理器拦下：继续派发只会
+        // 把整轮偷菜刷成 budget_method 拦截日志（实测本段 31 次）。提前退出，
+        // 结果集合不变，只少了废弃往返。按目标实际首发的请求选守卫对象。
+        const guardReusesPreEnter = !!(targetPreEnter && targetPreEnter.enterReply);
+        if (!hasBudget(Date.now(), 0,
+          guardReusesPreEnter ? 'gamepb.plantpb.PlantService' : 'gamepb.visitpb.VisitService',
+          guardReusesPreEnter ? 'CheckCanOperate' : 'Enter')) break;
         let result = null;
         try {
           result = await visitFriendForSteal(target, tally, userState.gid, userState.accountId, { preEnter: targetPreEnter });

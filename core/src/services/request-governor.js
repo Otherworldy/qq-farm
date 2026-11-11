@@ -91,6 +91,12 @@ let slowdownUntil = 0;
 let slowdownCount = 0;
 let droppedTotal = 0;
 
+// 预算拦截诊断：拦截本身只带被拒的方法名，看不出窗口里真正是谁占满了额度。
+// 每 60s 最多输出一条窗口占用快照，才能定位是巡田/任务/施肥/面板哪条链路在挤压预算。
+const DROP_SNAPSHOT_INTERVAL_MS = 60 * 1000;
+let lastDropSnapshotAt = 0;
+let dropsSinceSnapshot = 0;
+
 function pruneWindow(now) {
     while (windowEvents.length && now - windowEvents[0].at > WINDOW_MS) windowEvents.shift();
     while (errEvents.length && now - errEvents[0].at > BREAKER_WINDOW_MS) errEvents.shift();
@@ -123,6 +129,7 @@ function checkRequest(serviceName, methodName, now = Date.now()) {
     const totalLimit = watchModeActive(now) ? Math.floor(TOTAL_LIMIT * 1.5) : TOTAL_LIMIT;
     if (windowEvents.length >= totalLimit) {
         droppedTotal++;
+        noteBudgetDrop('budget_total', key, now);
         return { allowed: false, reason: 'budget_total' };
     }
     // 施肥 HOT 内的进门/读地块放宽单接口限值。
@@ -132,22 +139,108 @@ function checkRequest(serviceName, methodName, now = Date.now()) {
     const methodCount = windowEvents.filter(e => e.key === key).length;
     if (methodCount >= methodLimit) {
         droppedTotal++;
+        noteBudgetDrop('budget_method', key, now);
         return { allowed: false, reason: 'budget_method' };
     }
     return { allowed: true, reason: 'ok' };
 }
 
 /**
- * 当前 60s 窗口是否还有总预算。
+ * 当前 60s 窗口是否还有预算。
  * 供批量派发循环在预算耗尽时提前退出：被拦的请求不会成功，继续按
  * 毫秒级间隔重试只会把整轮的 Enter 刷成拦截日志（实测单轮 325 次），
  * 并把 CheckCanOperate 预检查等关键请求一起挤掉。
+ *
+ * 传了 serviceName/methodName 时同时检查单接口限值：总窗口还没满、但
+ * 该接口已达 PER_METHOD_LIMIT 时，循环继续派发同样是被 budget_method 逐条拦下，
+ * 必须一并提前退出。
+ *
+ * 判定顺序必须与 checkRequest 完全一致：豁免（白名单/紧急窗口）先于总量。
+ * 否则成熟抢收紧急窗口里总量已满时，这里会误报“没预算”而提前 break，
+ * 把 checkRequest 本来会放行的到点抢收链静默丢掉。
  */
-function hasBudget(now = Date.now(), headroom = 0) {
+function hasBudget(now = Date.now(), headroom = 0, serviceName = '', methodName = '') {
     pruneWindow(now);
+    // 两个参数必须同时给出：只给一个会构造出永不命中的 key，
+    // 使单接口限值和白名单/紧急豁免全部静默失效，比不传更危险。
+    const key = (serviceName && methodName) ? methodKey(serviceName, methodName) : '';
+    if (key) {
+        if (WHITELIST.has(key) || STEAL_WHITELIST_RE.test(key)) return true;
+        if (urgentModeActive(now) && URGENT_METHODS.has(key)) return true;
+    }
     const totalLimit = watchModeActive(now) ? Math.floor(TOTAL_LIMIT * 1.5) : TOTAL_LIMIT;
     const reserve = Math.max(0, Number(headroom) || 0);
-    return windowEvents.length < Math.max(1, totalLimit - reserve);
+    if (windowEvents.length >= Math.max(1, totalLimit - reserve)) return false;
+    if (!key) return true;
+    const methodLimit = WATCHMODE_METHODS.has(key) && watchModeActive(now)
+        ? PER_METHOD_LIMIT * WATCHMODE_BOOST
+        : PER_METHOD_LIMIT;
+    return windowEvents.filter(e => e.key === key).length < methodLimit;
+}
+
+/** 短名：去掉 gamepb.<domain> 前缀，保留 Service.Method。 */
+function shortMethodName(key) {
+    return String(key || '').replace(/^gamepb\.[a-z]+\./i, '');
+}
+
+/**
+ * 窗口占用快照：谁占满了 60s 预算。
+ * 不承诺无副作用（会 prune 过期事件、读取近段计数），但不会改变任何治理决策。
+ */
+function buildBudgetSnapshot(reason, now = Date.now(), limit = 3) {
+    pruneWindow(now);
+    const byMethod = new Map();
+    for (const e of windowEvents) byMethod.set(e.key, (byMethod.get(e.key) || 0) + 1);
+    const top = [...byMethod.entries()]
+        .map(([method, count]) => ({ method: shortMethodName(method), count }))
+        .sort((left, right) => right.count - left.count)
+        .slice(0, Math.max(1, Number(limit) || 3));
+    return {
+        reason,
+        windowCount: windowEvents.length,
+        totalLimit: watchModeActive(now) ? Math.floor(TOTAL_LIMIT * 1.5) : TOTAL_LIMIT,
+        perMethodLimit: PER_METHOD_LIMIT,
+        drops: dropsSinceSnapshot,
+        top,
+    };
+}
+
+/**
+ * 预算拦截落一条诊断（60s 节流）。节流窗口与聚合告警独立：
+ * 聚合告警回答“哪个入口被拦了多少”，这里回答“窗口额度被谁用掉了”。
+ */
+function noteBudgetDrop(reason, key, now = Date.now()) {
+    dropsSinceSnapshot++;
+    if (now - lastDropSnapshotAt < DROP_SNAPSHOT_INTERVAL_MS) return null;
+    const snapshot = buildBudgetSnapshot(reason, now);
+    // 输出失败时不消耗节流也不清计数：下一条拦截会带完整计数重试，
+    // 不能让首条诊断被静默吞掉后整整 60s 没有任何窗口占用线索。
+    if (!process.env.NODE_TEST_CONTEXT) {
+        try {
+            const { logWarn } = require('../utils/utils');
+            const top = snapshot.top.map(item => `${item.method}×${item.count}`).join(', ');
+            logWarn('系统',
+                `预算拦截(${reason})：60s 窗口 ${snapshot.windowCount}/${snapshot.totalLimit}，近段拦截 ${snapshot.drops} 次，占用 Top ${top}`,
+                {
+                    module: 'system',
+                    event: 'governor_budget_drop',
+                    result: 'warn',
+                    reason,
+                    deniedMethod: shortMethodName(key),
+                    windowCount: snapshot.windowCount,
+                    totalLimit: snapshot.totalLimit,
+                    perMethodLimit: snapshot.perMethodLimit,
+                    drops: snapshot.drops,
+                    top: snapshot.top,
+                    at: now,
+                });
+        } catch {
+            return snapshot;
+        }
+    }
+    lastDropSnapshotAt = now;
+    dropsSinceSnapshot = 0;
+    return snapshot;
 }
 
 /** 发送已放行/白名单请求后登记（ok=是否成功） */
@@ -252,14 +345,18 @@ function resetForTest() {
     slowdownUntil = 0;
     slowdownCount = 0;
     droppedTotal = 0;
+    lastDropSnapshotAt = 0;
+    dropsSinceSnapshot = 0;
     watchModeUntil = 0;
     contentionModeUntil = 0;
+    urgentModeUntil = 0;
 }
 
 module.exports = {
     checkRequest,
     recordSent,
     hasBudget,
+    buildBudgetSnapshot,
     getRequestProfile,
     getBreakerState,
     clearBreaker,

@@ -261,3 +261,182 @@ test('urgent mode bypasses hard budget only for strike-chain methods', () => {
     const expired = governor.checkRequest('gamepb.visitpb.VisitService', 'Enter', T0 + 20_000);
     assert.equal(expired.allowed, false);
 });
+
+// 预算拦截诊断：拦截只报被拒方法，必须能看出 60s 窗口被谁占满。
+test('budget drop snapshot names the methods that filled the window', () => {
+    governor.resetForTest();
+    for (let i = 0; i < 30; i++) {
+        governor.recordSent('gamepb.plantpb.PlantService', 'AllLands', true, T0);
+    }
+    for (let i = 0; i < 20; i++) {
+        governor.recordSent('gamepb.taskpb.TaskService', 'TaskInfo', true, T0);
+    }
+    const gate = governor.checkRequest('gamepb.visitpb.VisitService', 'Enter', T0 + 1000);
+    assert.equal(gate.allowed, true);
+
+    const snapshot = governor.buildBudgetSnapshot('budget_method', T0 + 1000);
+    assert.equal(snapshot.windowCount, 50);
+    assert.equal(snapshot.totalLimit, governor.TOTAL_LIMIT);
+    assert.equal(snapshot.perMethodLimit, governor.PER_METHOD_LIMIT);
+    assert.deepEqual(snapshot.top[0], { method: 'PlantService.AllLands', count: 30 });
+    assert.deepEqual(snapshot.top[1], { method: 'TaskService.TaskInfo', count: 20 });
+});
+
+test('budget snapshot reads only the live 60s window', () => {
+    governor.resetForTest();
+    governor.recordSent('svc.Old', 'Stale', true, T0);
+    governor.recordSent('svc.New', 'Fresh', true, T0 + 61_000);
+    const snapshot = governor.buildBudgetSnapshot('budget_total', T0 + 61_500);
+    assert.equal(snapshot.windowCount, 1);
+    assert.deepEqual(snapshot.top, [{ method: 'svc.New.Fresh', count: 1 }]);
+});
+
+test('budget drop diagnostics never change the governance decision', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.TOTAL_LIMIT; i++) {
+        governor.recordSent('svc.Farm', 'Fill', true, T0);
+    }
+    const over = governor.checkRequest('svc.Farm', 'Extra', T0 + 1000);
+    assert.equal(over.allowed, false);
+    assert.equal(over.reason, 'budget_total');
+    assert.equal(governor.getRequestProfile(T0 + 1000).droppedTotal, 1);
+});
+
+// 2026-11-11 实测：Enter 单接口打满 30/min、总量只有 30/80 时，hasBudget()
+// 仍返回 true，偷菜循环继续按毫秒间隔派发，整轮全部得到 budget_method。
+test('hasBudget with a target method reports per-method exhaustion', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+        governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
+    }
+    assert.equal(governor.getRequestProfile(T0).windowCount, governor.PER_METHOD_LIMIT);
+    assert.equal(governor.hasBudget(T0), true, '总预算仍有余额，旧行为无法发现单接口已满');
+    assert.equal(governor.hasBudget(T0, 0, 'gamepb.visitpb.VisitService', 'Enter'), false);
+    // 未打满的接口照常可以继续派发
+    assert.equal(governor.hasBudget(T0, 0, 'gamepb.taskpb.TaskService', 'TaskInfo'), true);
+});
+
+test('hasBudget keeps whitelist, urgent and watch-mode semantics', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.PER_METHOD_LIMIT + 5; i++) {
+        governor.recordSent('gamepb.plantpb.PlantService', 'Harvest', true, T0);
+    }
+    assert.equal(governor.hasBudget(T0, 0, 'gamepb.plantpb.PlantService', 'Harvest'), true, '偷菜白名单不受单接口限值');
+
+    governor.resetForTest();
+    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+        governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
+    }
+    governor.setUrgentMode(true, T0 + 15_000);
+    assert.equal(governor.hasBudget(T0 + 1000, 0, 'gamepb.visitpb.VisitService', 'Enter'), true, '紧急窗口内放行');
+    governor.setUrgentMode(false);
+
+    governor.resetForTest();
+    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+        governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
+    }
+    governor.setWatchMode(true, T0 + 600_000);
+    assert.equal(governor.hasBudget(T0 + 1000, 0, 'gamepb.visitpb.VisitService', 'Enter'), true, '施肥 HOT 放宽 ×3');
+});
+
+test('hasBudget headroom reserves total budget without touching method check', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.TOTAL_LIMIT - 2; i++) {
+        governor.recordSent('svc.Farm', 'Fill', true, T0);
+    }
+    assert.equal(governor.hasBudget(T0), true);
+    assert.equal(governor.hasBudget(T0, 5), false, 'headroom 预留后总量不足');
+    assert.equal(governor.hasBudget(T0, 5, 'svc.Farm', 'Other'), false);
+});
+
+// 回归：hasBudget 的判定顺序必须与 checkRequest 一致，否则成熟抢收紧急窗口
+// 里总量已满时守卫会误报"没预算"，把治理器本来放行的到点抢收链静默丢掉。
+test('hasBudget never vetoes what the urgent window would allow', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.TOTAL_LIMIT; i++) {
+        governor.recordSent('svc.Other', 'Fill', true, T0);
+    }
+    governor.setUrgentMode(true, T0 + 15_000);
+    const gate = governor.checkRequest('gamepb.visitpb.VisitService', 'Enter', T0 + 1000);
+    assert.equal(gate.allowed, true);
+    assert.equal(gate.reason, 'urgent');
+    assert.equal(
+        governor.hasBudget(T0 + 1000, 0, 'gamepb.visitpb.VisitService', 'Enter'),
+        true,
+        '守卫必须与 checkRequest 同样放行抢收链'
+    );
+    // 紧急窗口不覆盖的方法仍然被总量拦住，循环该提前退出。
+    assert.equal(governor.hasBudget(T0 + 1000, 0, 'gamepb.taskpb.TaskService', 'TaskInfo'), false);
+});
+
+// 回归：全量偷菜循环的守卫不能因 preEnter 复用分支而过度退出。
+test('hasBudget checks the request the target actually sends first', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+        governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
+    }
+    // 预进门复用分支不发 Enter，真实瓶颈是 CheckCanOperate，仍有额度。
+    assert.equal(
+        governor.hasBudget(T0, 0, 'gamepb.plantpb.PlantService', 'CheckCanOperate'),
+        true,
+        '复用预进门时不应按 Enter 的额度判断'
+    );
+    // 新发 Enter 的分支则必须拦住（Enter 的计数键是 VisitService.Enter）。
+    assert.equal(governor.hasBudget(T0, 0, 'gamepb.visitpb.VisitService', 'Enter'), false);
+});
+
+test('budget drop diagnostics are throttled and reset for tests', () => {
+    governor.resetForTest();
+    for (let i = 0; i < governor.TOTAL_LIMIT; i++) {
+        governor.recordSent('svc.Farm', 'Fill', true, T0);
+    }
+    // 测试进程不输出日志，但节流戳与计数必须照常推进。
+    const first = governor.checkRequest('svc.Farm', 'Extra', T0 + 1000);
+    assert.equal(first.reason, 'budget_total');
+    const snapshot = governor.buildBudgetSnapshot('budget_total', T0 + 1000);
+    assert.ok(snapshot.top.length >= 1);
+    assert.equal(snapshot.drops, 0, '快照本身不消耗诊断计数');
+    governor.resetForTest();
+    assert.equal(governor.buildBudgetSnapshot('budget_total', T0 + 1000).windowCount, 0);
+});
+
+test('budget drop diagnostics emit once per window and accumulate between emits', () => {
+    const previous = process.env.NODE_TEST_CONTEXT;
+    process.env.NODE_TEST_CONTEXT = '1';
+    try {
+        governor.resetForTest();
+        const fill = base => {
+            for (let i = 0; i < governor.TOTAL_LIMIT; i++) governor.recordSent('svc.Other', 'Fill', true, base + i * 10);
+        };
+        fill(T0);
+        governor.checkRequest('svc.Farm', 'Extra', T0 + 1000);
+        assert.equal(governor.buildBudgetSnapshot('budget_total', T0 + 1000).drops, 0, '首条立即输出后清零');
+
+        fill(T0 + 20_000);
+        governor.checkRequest('svc.Farm', 'Extra', T0 + 31_000);
+        assert.equal(governor.buildBudgetSnapshot('budget_total', T0 + 31_000).drops, 1, '节流窗口内只累积不输出');
+
+        fill(T0 + 50_000);
+        governor.checkRequest('svc.Farm', 'Extra', T0 + 61_000);
+        assert.equal(governor.buildBudgetSnapshot('budget_total', T0 + 61_000).drops, 0, '满 60s 后再次输出并清零');
+    } finally {
+        if (previous === undefined) delete process.env.NODE_TEST_CONTEXT;
+        else process.env.NODE_TEST_CONTEXT = previous;
+    }
+});
+
+// 回归：三处派发守卫必须按目标实际首发的请求配对检查。
+// Enter 属 visitpb.VisitService，CheckCanOperate 属 plantpb.PlantService——
+// 写反会静默退化成"检查一个永不发送的方法"（上一版曾写错）。
+test('dispatch guards pair each method with its real service', () => {
+    const src = fs.readFileSync(
+        path.join(__dirname, '..', 'src', 'services', 'friend-orchestrator.js'), 'utf8');
+    const guards = [...src.matchAll(/hasBudget\(Date\.now\(\), 0,\s*\n?\s*(guardReusesPreEnter \? '([^']+)' : '([^']+)'),\s*\n?\s*(guardReusesPreEnter \? '([^']+)' : '([^']+)')\)/g)];
+    assert.equal(guards.length, 3, '两处偷菜派发 + 抢收快路径 + 摘要后主循环，共 3 处');
+    for (const guard of guards) {
+        assert.equal(guard[2], 'gamepb.plantpb.PlantService', 'CheckCanOperate 的服务名');
+        assert.equal(guard[3], 'gamepb.visitpb.VisitService', 'Enter 的服务名');
+        assert.equal(guard[5], 'CheckCanOperate', '复用预进门分支的首发请求');
+        assert.equal(guard[6], 'Enter', '真实进门分支的首发请求');
+    }
+});
