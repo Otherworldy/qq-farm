@@ -17,6 +17,7 @@ import { useAccountStore } from '@/stores/account'
 
 const props = defineProps<{
   settings: {
+    pastureBuyStrategy: string
     pasturePreferredAnimal: number
     pastureStealWhitelist: number[]
   }
@@ -33,6 +34,29 @@ interface Animal {
 
 const animals = ref<Animal[]>([])
 const loading = ref(false)
+
+/** 已采集到的动物档案（真实养殖数据反推出来的每小时指标） */
+interface AnimalStat {
+  animalId: number
+  totalExp: number
+  totalGold: number
+  cycleSamples: number
+  expPerHour: number
+  goldPerHour: number
+}
+const animalStats = ref<AnimalStat[]>([])
+
+const BUY_STRATEGIES = [
+  { value: 'cheapest', label: '最便宜', hint: '按商店价格升序，最稳。' },
+  { value: 'max_exp', label: '经验每小时最高', hint: '按真实养殖数据算经验/时；没养过的动物按价格降序垫后。' },
+  { value: 'max_profit', label: '收入每小时最高', hint: '扣除买入价后的净收入/时；同上，无档案时按价格降序。' },
+  { value: 'preferred', label: '优先指定动物', hint: '先买下面指定的动物，买不起再按价格挑。' },
+]
+
+const strategyHint = computed(() => {
+  const found = BUY_STRATEGIES.find(x => x.value === props.settings.pastureBuyStrategy)
+  return found ? found.hint : ''
+})
 
 const nest = computed(() => animals.value.filter(a => a.id >= 60000 && a.id < 70000))
 const barn = computed(() => animals.value.filter(a => a.id >= 70000))
@@ -54,6 +78,24 @@ async function loadAnimals() {
   }
 }
 
+async function loadStats() {
+  if (!currentAccountId.value)
+    return
+  try {
+    const { data } = await api.get('/api/pasture/animal-stats', {
+      headers: { 'x-account-id': currentAccountId.value },
+    })
+    if (data && data.ok && Array.isArray(data.data))
+      animalStats.value = data.data
+  }
+  catch { /* 档案只是参考，取不到不影响策略保存 */ }
+}
+
+function statName(id: number) {
+  const found = animals.value.find(a => a.id === id)
+  return found ? found.name : `动物 #${id}`
+}
+
 function toggleWhitelist(id: number) {
   const list = props.settings.pastureStealWhitelist || []
   props.settings.pastureStealWhitelist = list.includes(id)
@@ -65,7 +107,10 @@ function isWhite(id: number) {
   return (props.settings.pastureStealWhitelist || []).includes(id)
 }
 
-onMounted(loadAnimals)
+onMounted(() => {
+  void loadAnimals()
+  void loadStats()
+})
 </script>
 
 <template>
@@ -78,10 +123,74 @@ onMounted(loadAnimals)
       补栏永远先用背包里的动物；只有背包没有、且开了「自动买动物」时才会花钱。
     </p>
 
+    <!-- 购买策略 -->
+    <div class="mb-4">
+      <label class="mb-1 block text-xs text-gray-600 dark:text-gray-300">
+        购买策略
+      </label>
+      <select
+        v-model="settings.pastureBuyStrategy"
+        class="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+      >
+        <option v-for="opt in BUY_STRATEGIES" :key="opt.value" :value="opt.value">
+          {{ opt.label }}
+        </option>
+      </select>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        {{ strategyHint }}
+        「经验/时」「收入/时」用牧场里真实养殖出来的数据算；没养过的动物查不到档案，
+        会退回按价格挑，绝不编造数值。
+      </p>
+    </div>
+
+    <!-- 已采集的动物档案 -->
+    <div v-if="animalStats.length" class="mb-4 rounded border border-gray-100 dark:border-gray-700">
+      <div class="border-b border-gray-100 px-2 py-1 text-xs text-gray-500 dark:border-gray-700">
+        动物档案（{{ animalStats.length }} 种，来自真实养殖）
+      </div>
+      <table class="w-full text-xs">
+        <thead class="text-gray-400">
+          <tr>
+            <th class="px-2 py-1 text-left font-normal">
+              动物
+            </th>
+            <th class="px-2 py-1 text-right font-normal">
+              经验/时
+            </th>
+            <th class="px-2 py-1 text-right font-normal">
+              收入/时
+            </th>
+            <th class="px-2 py-1 text-right font-normal">
+              样本
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="st in animalStats" :key="st.animalId" class="border-t border-gray-50 dark:border-gray-700/60">
+            <td class="px-2 py-1">
+              {{ statName(st.animalId) }}
+            </td>
+            <td class="px-2 py-1 text-right tabular-nums">
+              {{ st.cycleSamples ? st.expPerHour.toFixed(1) : '—' }}
+            </td>
+            <td class="px-2 py-1 text-right tabular-nums">
+              {{ st.cycleSamples ? st.goldPerHour.toFixed(1) : '—' }}
+            </td>
+            <td class="px-2 py-1 text-right text-gray-400 tabular-nums">
+              {{ st.cycleSamples }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- 优先补栏动物 -->
     <div class="mb-4">
       <label class="mb-1 block text-xs text-gray-600 dark:text-gray-300">
         优先补栏动物
+        <span v-if="settings.pastureBuyStrategy !== 'preferred'" class="text-gray-400">
+          （仅「优先指定动物」策略生效）
+        </span>
       </label>
       <select
         v-model.number="settings.pasturePreferredAnimal"

@@ -14,7 +14,7 @@
 
 const { getUserState, isConnected } = require('../utils/network');
 const { toNum, log, logWarn } = require('../utils/utils');
-const { isAutomationOn, getAutomation, getPasturePreferredAnimal } = require('../models/store');
+const { isAutomationOn, getAutomation, getPasturePreferredAnimal, getPastureBuyStrategy } = require('../models/store');
 const { recordEvent } = require('./daily-events');
 const {
     getRanchDetail,
@@ -34,6 +34,12 @@ const {
 } = require('./pasture-api');
 const { getBag } = require('./warehouse');
 const { recordOperation } = require('./stats');
+const {
+    recordPlacement,
+    observeAnimals,
+    recordHarvest,
+    rankAnimalGoods,
+} = require('./pasture-animal-stats');
 const { analyzeRanches, msUntilNextProduce, GRASS_LOW_THRESHOLD } = require('./pasture-analyzer');
 
 // ─── 模块状态 ───
@@ -102,6 +108,8 @@ async function performHarvest(analysis) {
     });
     noteEvent('info', `牧场收获 ${analysis.harvestable.length} 只动物产物，约 +${gainedExp} 经验`);
     recordOperation('pastureHarvest', analysis.harvestable.length);
+    // 结算本轮养殖周期，给「经验/时、收入/时」攒样本
+    recordHarvest(analysis.harvestable.map(a => a.animalInstId));
     // 收获回包带最新 RanchInfo，后续判断用它而不是再拉一次
     return { reply, count: analysis.harvestable.length };
 }
@@ -235,7 +243,14 @@ async function performRefillSlots(analysis) {
         if (!animals.length) break;
         const animal = animals[0];
         try {
-            await placeAnimal(slot.ranchInstId, animal.id);
+            const res = await placeAnimal(slot.ranchInstId, animal.id);
+            try {
+                const fresh = ((res && res.ranches) || [])
+                    .flatMap(r => r.animals || [])
+                    .filter(a => toNum(a.animal_id) === animal.id)
+                    .pop();
+                if (fresh) recordPlacement(toNum(fresh.animal_inst_id), animal.id, Date.now());
+            } catch { /* 同上 */ }
             placed += 1;
             animal.count -= 1;
             if (animal.count <= 0) animals.shift();
@@ -267,19 +282,16 @@ async function performRefillSlots(analysis) {
 
     try {
         const shop = await getAnimalShop();
-        // 优先动物：用户指定了就一直买它（买得起才买），否则挑最便宜且买得起的。
-        // 背包里有货时上面那一步已经用掉了，不会走到这里花钱。
+        // 购买策略：cheapest / max_exp / max_profit / preferred。
+        // max_exp 与 max_profit 依赖牧场动物档案（真实养殖数据），
+        // 没养过的动物查不到档案，会自动退回按价格挑 —— 不编造经验值。
         const preferred = Math.max(0, Number(getPasturePreferredAnimal()) || 0);
-        const affordable = shop.goods
-            .filter(g => g.unlocked && g.price > 0 && g.price <= balance)
-            .sort((a, b) => {
-                if (preferred) {
-                    const ap = a.animalId === preferred ? 0 : 1;
-                    const bp = b.animalId === preferred ? 0 : 1;
-                    if (ap !== bp) return ap - bp;
-                }
-                return a.price - b.price;
-            });
+        const strategy = String(getPastureBuyStrategy() || 'cheapest');
+        const affordable = rankAnimalGoods(
+            shop.goods.filter(g => g.unlocked && g.price > 0 && g.price <= balance),
+            strategy,
+            preferred
+        );
         if (!affordable.length) {
             lastBuyAnimalFailAtMs = now;
             logPasture(`余额 ${balance} 买不到可用动物（商店 ${shop.goods.length} 种）`);
@@ -287,7 +299,15 @@ async function performRefillSlots(analysis) {
         }
         const pick = affordable[0];
         await buyGoods(pick.goodsId, 1, pick.price);
-        await placeAnimal(empty[0].ranchInstId, pick.animalId);
+        const placed = await placeAnimal(empty[0].ranchInstId, pick.animalId);
+        // 从回包里找出刚放进去的那只，记下放栏时刻
+        try {
+            const fresh = ((placed && placed.ranches) || [])
+                .flatMap(r => r.animals || [])
+                .filter(a => toNum(a.animal_id) === pick.animalId)
+                .pop();
+            if (fresh) recordPlacement(toNum(fresh.animal_inst_id), pick.animalId, Date.now());
+        } catch { /* 记不到就等下一次 observeAnimals 补 */ }
         lastBuyAnimalAtMs = now;
         logPasture(`买入并补栏 1 只动物（goods ${pick.goodsId}，花费 ${pick.price}）`, {
             event: '牧场买动物',
@@ -408,6 +428,8 @@ async function runPastureOperation(opType = 'all') {
 
     const analysis = analyzeRanches(ranches);
     lastNextReadyAtMs = analysis.nextProduceReadyAtMs;
+    // 每轮把 expected_* 采进动物档案，供购买策略排序
+    observeAnimals(analysis.allAnimals || []);
 
     const actions = [];
     const auto = getAutomation();

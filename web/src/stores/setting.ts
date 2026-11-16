@@ -110,6 +110,7 @@ export interface AutoCodeRefreshConfig {
 export interface SettingsState {
   plantingStrategy: string
   preferredSeedId: number
+  pastureBuyStrategy?: string
   pasturePreferredAnimal?: number
   pastureStealWhitelist?: number[]
   prioritize2x2Crops: boolean
@@ -180,6 +181,7 @@ export const useSettingStore = defineStore('setting', () => {
   const settings = ref<SettingsState>({
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
+    pastureBuyStrategy: 'cheapest',
     pasturePreferredAnimal: 0,
     pastureStealWhitelist: [],
     prioritize2x2Crops: false,

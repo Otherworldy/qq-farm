@@ -932,3 +932,20 @@
   - 临时实验端点（`/api/pasture/probe`）用完即删，不留调试入口在生产代码里。
   - 测试：牧场全套 **98 项全绿**（含「触发生产会发请求 / 开关关掉不发 / 已在产不重复触发」
     三条按新结论重写的断言）。
+- 2026-11-16 **牧场购买策略（经验/时、收入/时）**。
+  - **为什么不能静态算**：动物商店只有 `goods_id/animal_id/price`，成长周期、
+    经验、收益全在加密的 `MCAnimalConfig`（FSpk，已确认不可静态解）；
+    `AnimalInst.expected_*` 只有「这一轮能拿多少」，不含周期。
+  - **改成运行时反推**：新增 `core/src/services/pasture-animal-stats.js` ——
+    `placeAnimal` 回包记放栏时刻、每轮拉详情采集 `expected_*`、
+    收获时用「收获时刻 − 放栏时刻」得到一个完整周期样本；周期取中位数（留 9 个），
+    <1 分钟或 >30 天的样本丢弃防时钟跳变；落盘 `data/pasture-animal-stats.json`。
+  - **四种策略**：`cheapest`（默认，价格升序）/ `max_exp`（每小时经验）/
+    `max_profit`（每小时收入减买入价，即净收益）/ `preferred`（优先指定动物）。
+    **没档案就退回按价格挑，绝不编造经验值** —— 这是硬约定，测试里锁死了。
+  - **行为变更**：`pasturePreferredAnimal` 只在 `preferred` 策略下生效
+    （之前是「有值就优先」，会和「最便宜」打架），面板已标注。
+  - 新增 `GET /api/pasture/animal-stats` 与面板里的档案表
+    （动物 / 经验/时 / 收入/时 / 样本数），哪些真算出来、哪些还是 `—` 一眼可见。
+  - 测试：`pasture-animal-stats.test.js` 9 项 + orchestrator 追加 4 项，
+    牧场全套 **111 项全绿**。

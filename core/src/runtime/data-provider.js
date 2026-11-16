@@ -162,6 +162,7 @@ function createDataProvider(deps) {
         getPasture: (ref) => callWorkerApi(resolveAccountId(ref), 'getPasture'),
         getPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'getPastureTasks'),
         listPastureAnimals: (ref) => callWorkerApi(resolveAccountId(ref), 'listPastureAnimals'),
+        getPastureAnimalStats: (ref) => callWorkerApi(resolveAccountId(ref), 'getPastureAnimalStats'),
         claimPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'claimPastureTasks'),
         doPastureOp: (ref, opType) => callWorkerApi(resolveAccountId(ref), 'doPastureOp', opType),
 
@@ -250,6 +251,7 @@ function createDataProvider(deps) {
                 bagSeedPriority: s.bagSeedPriority,
                 bagSeedKnownIds: s.bagSeedKnownIds,
                 bagSeedFallbackStrategy: s.bagSeedFallbackStrategy,
+                pastureBuyStrategy: s.pastureBuyStrategy,
                 pasturePreferredAnimal: s.pasturePreferredAnimal,
                 pastureStealWhitelist: s.pastureStealWhitelist,
             };
@@ -280,6 +282,7 @@ function createDataProvider(deps) {
                 autoAcceptFriendMinLevel: store.getAutoAcceptFriendMinLevel(id),
                 bagSeedPriority: store.getBagSeedPriority(id),
                 bagSeedFallbackStrategy: store.getBagSeedFallbackStrategy(id),
+                pastureBuyStrategy: store.getPastureBuyStrategy(id),
                 pasturePreferredAnimal: store.getPasturePreferredAnimal(id),
                 pastureStealWhitelist: store.getPastureStealWhitelist(id),
                 configRevision: rev

@@ -1913,6 +1913,9 @@ async function handleApiCall(msg) {
             case 'doPastureOp':
                 result = await require('../services/pasture').runPastureOperation(args[0] || 'all');
                 break;
+            case 'getPastureAnimalStats':
+                result = require('../services/pasture-animal-stats').listAnimalStats();
+                break;
             case 'listPastureAnimals':
                 result = require('../config/gameConfig').listPastureAnimals();
                 break;

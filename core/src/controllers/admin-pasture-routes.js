@@ -6,6 +6,7 @@
  *
  * GET  /api/pasture          牧场状态（动物/货架/灾害/草量/空栏）
  * GET  /api/pasture/animals  牧场动物清单（补栏优先动物下拉用）
+ * GET  /api/pasture/animal-stats  动物档案（经验/时、收入/时）
  * GET  /api/pasture/tasks    牧场任务（taskpb scene_id=2，task_type 4/5/6）
  * POST /api/pasture/operate  手动触发一轮操作（all / harvest / feed / clean / refill / grass）
  * POST /api/pasture/tasks/claim  立即领取所有可领的牧场任务
@@ -62,6 +63,19 @@ function registerAdminPastureRoutes({
 
     try {
       res.json({ ok: true, data: await provider.listPastureAnimals(accountId) });
+    }
+    catch (error) {
+      sendProviderError(res, error);
+    }
+  });
+
+  // 动物档案：真实养殖数据反推出的经验/时、收入/时
+  app.get("/api/pasture/animal-stats", async (req, res) => {
+    const accountId = requireAccessibleAccount(req, res, getAccountIdFromRequest, canAccessAccount);
+    if (!accountId)
+      return;
+    try {
+      res.json({ ok: true, data: await provider.getPastureAnimalStats(accountId) });
     }
     catch (error) {
       sendProviderError(res, error);

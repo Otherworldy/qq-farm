@@ -48,6 +48,7 @@ export function useStrategySettings({
   const localStrategySettings = ref({
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
+    pastureBuyStrategy: 'cheapest',
     pasturePreferredAnimal: 0,
     pastureStealWhitelist: [],
     prioritize2x2Crops: false,
@@ -395,6 +396,7 @@ export function useStrategySettings({
       localStrategySettings.value = JSON.parse(JSON.stringify({
         plantingStrategy: settings.value.plantingStrategy,
         preferredSeedId: settings.value.preferredSeedId,
+        pastureBuyStrategy: settings.value.pastureBuyStrategy,
         pasturePreferredAnimal: settings.value.pasturePreferredAnimal,
         pastureStealWhitelist: settings.value.pastureStealWhitelist,
         prioritize2x2Crops: settings.value.prioritize2x2Crops === true,

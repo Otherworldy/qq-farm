@@ -86,6 +86,10 @@ function buildSettingsPayload(store, accountId, currentUser) {
     intervals: accountId ? store.getIntervals(accountId) : {},
     plantingStrategy: accountId ? store.getPlantingStrategy(accountId) : null,
     preferredSeedId: accountId ? store.getPreferredSeed(accountId) : null,
+    pastureBuyStrategy:
+      accountId && typeof store.getPastureBuyStrategy === "function"
+        ? store.getPastureBuyStrategy(accountId)
+        : "cheapest",
     pasturePreferredAnimal:
       accountId && typeof store.getPasturePreferredAnimal === "function"
         ? store.getPasturePreferredAnimal(accountId)

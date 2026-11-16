@@ -79,6 +79,7 @@ function setupMocks(options = {}) {
         isAutomationOn: key => (key === 'pasture' ? auto.pasture : !!auto[key]),
         getAutomation: () => auto,
         getPasturePreferredAnimal: () => options.preferredAnimal || 0,
+        getPastureBuyStrategy: () => options.buyStrategy || 'cheapest',
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
 
@@ -444,6 +445,7 @@ test('补栏：指定优先动物时买它，而不是最便宜的那只', async
         reply: ranchReply(),
         bagItems: [{ id: 1007, count: 50000 }],
         auto: { pasture_buy_animal: true },
+        buyStrategy: 'preferred',
         preferredAnimal: 60003,
         animalGoods: [
             { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
@@ -479,6 +481,7 @@ test('补栏：指定的优先动物买不起时退到买得起的', async () =>
         reply: ranchReply(),
         bagItems: [{ id: 1007, count: 10 }],
         auto: { pasture_buy_animal: true },
+        buyStrategy: 'preferred',
         preferredAnimal: 60003,
         animalGoods: [
             { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
@@ -545,4 +548,100 @@ test('触发生产：已经在产的动物不重复触发', async () => {
 
     await orchestrator.runPastureOperation('all');
     assert.equal(calls.includes('triggerProduce'), false, '没有待开工的就不该发');
+});
+
+// ── 购买策略：cheapest / max_exp / max_profit / preferred ──
+
+const animalStatsMod = require('../src/services/pasture-animal-stats');
+
+function seedStat(animalId, { exp = 0, gold = 0, cycleMs = 3600_000 } = {}) {
+    const now = Date.now();
+    const inst = animalId * 10 + 1;
+    animalStatsMod.recordPlacement(inst, animalId, now - cycleMs);
+    animalStatsMod.observeAnimals([{
+        animalId, animalInstId: inst,
+        expectedHarvestExp: exp,
+        expectedHarvestSells: gold ? [{ count: gold }] : [],
+    }]);
+    animalStatsMod.recordHarvest([inst], now);
+}
+
+test('购买策略 max_exp：按每小时经验挑，而不是最便宜', async () => {
+    animalStatsMod.resetAnimalStatsForTests();
+    seedStat(60001, { exp: 10 });    // 10 经验/时
+    seedStat(60009, { exp: 500 });   // 500 经验/时
+
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true },
+        buyStrategy: 'max_exp',
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10010, animalId: 60009, price: 10560, unlocked: true },
+        ],
+    });
+
+    await orchestrator.runPastureOperation('refill');
+    const buy = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buy && buy.includes(':10010:'), `应买经验最高的 60009（实际 ${buy}）`);
+});
+
+test('购买策略 max_profit：扣掉买入价后比净收入', async () => {
+    animalStatsMod.resetAnimalStatsForTests();
+    seedStat(60001, { gold: 100 });      // 价 2 → 净 98/时
+    seedStat(60009, { gold: 120 });      // 价 10560 → 净负
+
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true },
+        buyStrategy: 'max_profit',
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10010, animalId: 60009, price: 10560, unlocked: true },
+        ],
+    });
+
+    await orchestrator.runPastureOperation('refill');
+    const buy = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buy && buy.includes(':10002:'), `应买净收入更高的鸡（实际 ${buy}）`);
+});
+
+test('购买策略 max_exp：完全没档案时退回按价格挑', async () => {
+    animalStatsMod.resetAnimalStatsForTests();
+
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true },
+        buyStrategy: 'max_exp',
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10010, animalId: 60009, price: 10560, unlocked: true },
+        ],
+    });
+
+    await orchestrator.runPastureOperation('refill');
+    const buy = calls.find(c => String(c).startsWith('buy:'));
+    // 无档案时按价格降序，贵的先
+    assert.ok(buy, '仍然要买一只');
+});
+
+test('购买策略 preferred：优先指定动物', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true },
+        buyStrategy: 'preferred',
+        preferredAnimal: 60009,
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10010, animalId: 60009, price: 10560, unlocked: true },
+        ],
+    });
+
+    await orchestrator.runPastureOperation('refill');
+    const buy = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buy && buy.includes(':10010:'), `应买指定的 60009（实际 ${buy}）`);
 });
