@@ -6,7 +6,44 @@
 
 ## 一句话结论
 
-**牧场是纯客户端 Mock 玩法，服务端没有任何协议。本项目当前不需要（也无法）做自动化适配。**
+**牧场是当前微信小游戏 `wx5306c5978fdb76e4` 的一个分包（不是独立小程序），
+数据全部是客户端 Mock、服务端没有任何协议，且入口尚未接入主流程。
+本项目当前不需要（也无法）做自动化适配。**
+
+## 一、它是分包，不是新小程序
+
+`__APP__/app-config.json`（微信小程序的 `game.json` 等价物）里明确登记：
+
+```json
+"subPackages":[
+  {"name":"internal","root":"/subpackages/internal/"},
+  {"name":"main","root":"/subpackages/main/"},
+  {"name":"mcboot","root":"/subpackages/mcboot/"},        // ← 牧场
+  {"name":"__ccWasmAssetSubpkg__","root":"/cocos-js/assets/"},
+  {"name":"__ccWasmChunkSubpkg__","root":"/cocos-js/chunks/"}
+],
+"parallelPreloadSubpackages":[...,{"name":"mcboot"},...]
+```
+
+- 同一个 AppID `wx5306c5978fdb76e4`、同一份 app-config.json、同一套 TSDK
+- 还进了 `parallelPreloadSubpackages`（启动时并行预下载），说明官方把它当重头戏
+- 包体：`_subpackages_mcboot_.wxapkg` 2.3M / 15 个文件
+
+## 二、入口尚未接入（玩家现在进不去）
+
+| 检查项 | 结果 |
+|---|---|
+| 主包 `__APP__/game.js` 里 `mcboot` / `Pasture` / `Ranch` | **0 次** |
+| `main` 子包 `subpackages/main/game.js` 里同上 | **0 次** |
+| `loadSubpackage` / `loadBundle` 调用 | 0 次 |
+| `mcboot.scene` 内容 | **空场景**：字符串表只有 `node`、`scene`，类型只有 `cc.Scene` + `cc.SceneGlobals`，无节点/相机/Canvas |
+
+`config.eded6.json`（Cocos AssetBundle 清单）里 `paths` 只有 12 项：
+1 个场景 `scene/mcboot` + 11 篇 `docs/*.md`，`packs` 为空、`native` 为空
+→ 分包本身不含任何美术资源。
+
+结论：客户端把牧场**预埋**好了（分包 + 空场景 + 完整业务脚本 + 文档 + 远程配置），
+但主流程没有任何地方去加载它。这是标准的「提前铺路、入口后开」。
 
 ## 证据
 
@@ -88,6 +125,130 @@ PastureWorld (script/world/PastureWorld.ts)
 「直接改数据」改为「发协议 → 回包后改数据 + 派发 `*_COMPLETED`」。事件驱动已解耦，
 **视图层无需改动**。
 
+## 三、远程资源（mcRes）—— 配置表与 UI 预制体都在这儿
+
+分包只有代码，真数据在微信缓存：
+
+```
+%APPDATA%/Tencent/xwechat/radium/users/<hash>/applet/local/wx5306c5978fdb76e4/
+  usr/gamecaches/mcRes/          ← 144 个 JSON，6.5MB
+```
+
+- **57 个明文 Prefab/Scene**（CCON 格式，`d[2]` 是共享字符串表，节点名在此）
+- **35 个加密配置表**（`FSpk…` 前缀的 base64 串，疑似 XXTEA；资源名明文，内容不可读）
+
+### 35 个配置表（功能地图）
+
+| 配置 | 大小 | 说明 |
+|---|---|---|
+| `MCItemInfo` | 984K | 物品全表（最大） |
+| `MCTask` | 105K | 任务 |
+| `MCIllustrated` | 53K | 图鉴 |
+| `MCGoods` | 45K | 商品 |
+| `MCFacilityConfig` | 20K | 设施 |
+| `MCGuidePasture` | 18K | 牧场引导 |
+| `MCAnimalConfig` | 13K | 动物 |
+| `MCAnimalMutation` | 8K | **动物变异** |
+| `MCRanchLevelBonus` | 3.9K | 牧场等级奖励 |
+| `MCRotationShopGoods` | 3.1K | 轮换商店商品 |
+| `MCEmployeeCfg` | 2K | **雇员** |
+| `MCMainCityLvConfig` | 1.8K | **主城等级** |
+| `MCShop` | 1.4K | 商店 |
+| `MCEmployeeSkillCfg` | 1.4K | **雇员技能** |
+| `MCEnv` | 1.2K | 环境 |
+| `MCNpcConfig` | 1.2K | NPC |
+| `MCActive` | 1.1K | 活动 |
+| `MCRanchOperation` | 1K | 牧场操作 |
+| `MCCanConfig` | 754 | 未定 |
+| `MCItemTab` | 508 | 物品页签 |
+| `MCSalaryCfg` | 502 | **工资** |
+| `MCRanchLabLvConfig` | 429 | **实验室等级** |
+| `MCMutantInfo` | 423 | 变异信息 |
+| `MCFacilityCategory` | 381 | 设施分类 |
+| `MCRotationShopShelf` | 366 | 轮换商店货架 |
+| `MCFacilityShopConfig` | 359 | 设施商店 |
+| `MCRanchWeightTier` | 336 | **体重分档**（匀称/超重/极重） |
+| `MCNpcSpawnPoint` | 294 | NPC 刷新点 |
+| `MCRanchFacilityConfig` | 260 | 牧场设施 |
+| `MCGuidePastureConfig` | 235 | 引导配置 |
+| `MCItemSort` | 229 | 物品排序 |
+| `MCItemTrait` | 226 | **物品特性** |
+| `MCCellUnlockCondition` | 208 | **地块解锁条件** |
+| `MCRotationShopParams` | 171 | 轮换商店参数 |
+
+带 ★ 的说明还有 **雇佣雇员 / 实验室 / 主城等级 / 轮换商店 / 物品特性** 等未在文档展开的系统。
+
+### UI 预制体（14 个含字符串表的）
+
+| 文件尾号 | 判定 | 关键节点 |
+|---|---|---|
+| `0327184` | **主界面** | `nodeHeadFrame` `headImg` `imgLevel` `expBar` `txtName` `txtDiamond` `txtGold` `btnExit` |
+| `0332493` | **好友操作面板** | `operateIcon_steal/help/wife` `newPao*` `redNode` `imgNew` |
+| `0332490` | 好友/社群切换 | `groupBtn` `friendBtn` `switchGroupNode` |
+| `3507110` | **回访/求助列表** | `nudgeBtn`（戳一下）`visitBtn`（回访）`nameplateBg/Decoration` `scrollViewEx` |
+| `0331788` | 商品格 | `txtPrice` `txtLock` `txtType` `imgHei`（已拥有） |
+| `4114215` | 特效预制体 | `buttonShakeAnimation` `headShakeAnimation` |
+| `0322481` | TileMap | `_tmxFile` `tileMap` |
+| 其余 7 个 | 通用组件/地块 | — |
+
+主界面明文文案：**商城 / 仓库 / 商店 / 图鉴 / 回家**；
+回访列表文案：**当前暂无满足条件的好友 / 回访 / 打招呼 / 在你家 / 帮你照顾了农场4次 / 一分钟前**。
+
+## 四、玩法清单（10 篇官方文档 + 配置表交叉）
+
+### 核心循环
+进牧场 → 自动铺 80% 地块 → 点地块开种植面板 → 选/拖种子 → 逐阶段生长
+→ 成熟出可摘特效 → 点击收获 → 枯萎 → 铲除清空。
+
+作物从文案可见：**牧草、小麦、番茄**（阶段：种子→发芽→幼苗→小叶→抽穗/开花→成熟）。
+
+### 八大模块
+
+1. **栏舍动物交互** —— 点窝/棚镜头推近；点动物描边选中 + 头顶详情气泡；
+   底部操作条每页 5 条（罐头桶 / 出售 / 放蚊子 / 幼崽入栏）；从操作条拖出图标
+   划过栏舍连续触发（400ms 节流）；一键收获 / 生产 / 偷取 / 清理；
+   副产物架最多 5 槽 + more；牧草机 HUD；收获篮子；栏舍升级。
+2. **牧场仓库** —— 页签结构由服务端下发；容量 `curNum/maxNum`；单选查看详情/单价；
+   产物页签批量出售；单件出售弹窗；使用道具；锁定/解锁；新道具红点；空态跳商店。
+3. **牧场商店** —— 幼崽商店 / 饲料商店；货架显示窝棚类型、品阶、限购、售罄；
+   `auto_add`（幼崽→窝/棚、饲料→牧草机）；住满仍可买 1 只进仓库；金币不足跳仓库出售。
+4. **牧草机** —— 自家投草 / 访客赠送（无草时用金币）；容量进度条；
+   剩余可用时间（`-1` 充足、`0` 永不耗尽、`>0` 倒计时）；升级；建筑气泡告警。
+5. **建筑升级 / 地块解锁 / 加速** —— 三段式：发起 → 可选加速 → 完成确认；
+   场景倒计时条 + 竣工气泡 + `btn_speedup`。
+6. **建筑与动物气泡** —— 8 种建筑状态：竣工✓（最高优先级）/ 订单可交 / 牧草耗尽 /
+   牧草偏低 / 可收获 / 可偷取（客态）/ 可交付 / 可清理；
+   2 种动物状态：可收获 / 交付中（带倒计时）。
+7. **任务系统** —— 只用 `task_type` 4=家园成长 / 5=家园日常 / 6=家园支线，
+   1-3（农场成长/日常/支线）被 RPC 过滤；主界面任务条 + 面板；前往/领取；
+   分享翻倍；完成飘字；日常活跃点（无活跃宝箱）。
+8. **建筑编辑与收纳** —— 编辑模式 → 建筑背包（生产/装饰 Tab）→ 取出放置 →
+   拖拽调整 → 保存；移动；收纳回背包；取消还原；编辑时全显网格 + 绿/红占位预览。
+
+### 动物
+- 品种：**考拉、豪猪、水牛、骆驼、蜜薯**（另有狗，可改名）
+- 阶段：**幼崽 → 成长 → 成年**；状态：缺草、生产、产出
+- **体重分档**：匀称 / 超重 / 极重（对应主界面体重排行图 `bg_item_mc_weight_rank.png`）
+- 产物：鸡蛋等；支持放生、赠送
+- **变异体系**：`MCAnimalMutation` + `MCMutantInfo`，延续农场变异玩法
+
+## 五、代码里没有 RPC（文档写的是「接服设计方案」）
+
+文档详细写了 `GetBag` / `GetBagTab` / `Sell` / `Use` / `LockItems` / `CannelNew` /
+`BuyGoods` / `ShopProfiles` / `AddFeed` 等 RPC，**但 mcboot/game.js 里这些字符串一个都没有**：
+
+```
+GetBag 0 | GetBagTab 0 | BuyGoods 0 | AddFeed 0 | LockItems 0
+CannelNew 0 | ShopProfiles 0 | TaskGetReward 0 | OpGetGroup 0
+sendMsgAsync 0 | callServer 0 | WebSocket 0 | socket 0
+```
+
+文档第 9 节自己也承认：「当前所有数据均为客户端 Mock」，并列出 6 处待接服项
+（地块、种子背包、作物时长、种植/收获/铲除）。
+
+**含义**：文档描述的是目标架构，代码是 Mock 实现。将来真接服时，
+这些 RPC 名就是现成的适配清单。
+
 ## 其他 81 包变化（与牧场无关）
 
 - 新增子包 `_subpackages_mcboot_.wxapkg`（2.3M，15 文件）
@@ -103,14 +264,41 @@ PastureWorld (script/world/PastureWorld.ts)
 # 解包
 node core/scripts/unpack-wxapkg.js --package "<微信包目录>/<版本>" --out D:/tmp/wxNN
 
-# 是否有牧场网络代码（有输出就要重新评估适配）
-grep -cE "rpc|sendMsg|SendMsg|Sync" /d/tmp/wxNN/_subpackages_mcboot_/subpackages/mcboot/game.js
+# 1. 分包声明是否还在
+cat /d/tmp/wxNN/__APP__/app-config.json | tr ',' '
+' | grep -i mcboot
 
-# 官方文档是否更新
-ls /d/tmp/wxNN/_subpackages_mcboot_/subpackages/mcboot/import/
+# 2. 入口是否接了（关键！出现非 0 就要重新评估）
+grep -c mcboot /d/tmp/wxNN/__APP__/game.js
+grep -c mcboot /d/tmp/wxNN/_subpackages_main_/subpackages/main/game.js
 
-# 项目 proto 里有没有牧场 service
+# 3. 是否有牧场网络代码
+grep -cE "rpc|sendMsg|SendMsg|WebSocket|socket|GetBag|BuyGoods|AddFeed"   /d/tmp/wxNN/_subpackages_mcboot_/subpackages/mcboot/game.js
+
+# 4. 官方文档是否更新（数量变了说明加了模块）
+ls /d/tmp/wxNN/_subpackages_mcboot_/subpackages/mcboot/import*/
+
+# 5. 远程配置表是否更新
+ls "$APPDATA/Tencent/xwechat/radium/users/<hash>/applet/local/wx5306c5978fdb76e4/usr/gamecaches/mcRes" | wc -l
+
+# 6. 项目 proto 里有没有牧场 service
 grep -ohE 'service [A-Za-z]+' core/src/proto/*.proto
+```
+
+### 提取配置表资源名（内容加密但名字明文）
+
+```js
+const d = JSON.parse(fs.readFileSync(file, 'utf8'))
+for (const inst of (d[5] || []))
+  for (const v of inst)
+    if (typeof v === 'string' && /^MC[A-Z]/.test(v)) console.log(v)
+```
+
+### 提取 Prefab 节点名（`d[2]` 是共享字符串表）
+
+```js
+const d = JSON.parse(fs.readFileSync(file, 'utf8'))
+console.log((d[2] || []).filter(x => typeof x === 'string').join(' | '))
 ```
 
 一旦 mcboot 内出现真实 RPC，或项目 proto 新增牧场 service，才需要做自动化适配。

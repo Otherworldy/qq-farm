@@ -596,3 +596,39 @@
   - 奶茶 5 个节点（2026110100/101/102/103/104）仍在下发，`endTime` 11-16
     23:59:59，属正常收尾 —— 明日之后 `ActivityService.List` 不再下发根节点，
     代码侧已无入口可触发。
+- 2026-11-16 **牧场（MC）源码深挖**（用户问：是新小程序还是功能模块）。
+  - **是当前小程序 `wx5306c5978fdb76e4` 的分包，不是独立小程序**：
+    `__APP__/app-config.json` 的 `subPackages` 明确登记
+    `{"name":"mcboot","root":"/subpackages/mcboot/"}`，并列入
+    `parallelPreloadSubpackages`（启动并行预下载）。包体
+    `_subpackages_mcboot_.wxapkg` 2.3M / 15 文件。
+  - **入口尚未接入**：主包与 main 子包的 `game.js` 里 `mcboot`/`Pasture`/`Ranch`
+    全部 0 次，无 `loadSubpackage`/`loadBundle`；`mcboot.scene` 是**空场景**
+    （字符串表只有 `node`、`scene`，无节点/相机/Canvas）；`config.eded6.json`
+    的 `paths` 只有 1 个场景 + 11 篇文档，`packs`/`native` 全空。
+    → 客户端把牧场预埋好了，玩家现在还进不去。
+  - **真数据在远程缓存** `gamecaches/mcRes/`：144 个 JSON、6.5MB =
+    57 个明文 Prefab/Scene + **35 个加密配置表**（`FSpk…` 前缀 base64，
+    疑似 XXTEA，暂时不破解）。
+    配置表名字暴露了远超文档的功能面：`MCAnimalMutation`（动物变异）、
+    `MCEmployeeCfg`/`MCEmployeeSkillCfg`/`MCSalaryCfg`（雇员+技能+工资）、
+    `MCRanchLabLvConfig`（实验室等级）、`MCMainCityLvConfig`（主城等级）、
+    `MCRotationShop*`（轮换商店）、`MCItemTrait`、`MCCellUnlockCondition`、
+    `MCRanchWeightTier`（体重分档）、`MCItemInfo` 984KB。
+  - **Prefab 节点名**（`d[2]` 共享字符串表）还原出 UI：主界面
+    `nodeHeadFrame/imgLevel/expBar/txtDiamond/txtGold/btnExit` + 文案
+    「商城/仓库/商店/图鉴/回家」；好友操作面板
+    `operateIcon_steal/help/wife`；回访列表 `nudgeBtn/visitBtn/nameplateBg`
+    + 文案「当前暂无满足条件的好友/回访/打招呼/在你家/帮你照顾了农场4次」。
+  - **重要修正**：文档里写的 `GetBag`/`GetBagTab`/`Sell`/`BuyGoods`/`AddFeed`/
+    `LockItems` 等 RPC，在 `mcboot/game.js` 里**一个字符串都没有**
+    （`sendMsgAsync`/`WebSocket`/`socket` 也全 0）。文档描述的是**接服设计方案**，
+    代码是纯 Mock。将来真接服时这份 RPC 清单就是现成的适配表。
+  - 玩法清单按 10 篇文档整理：种植闭环（牧草/小麦/番茄，种子→发芽→幼苗→小叶→
+    抽穗/开花→成熟）、栏舍动物交互（拖拽 400ms 节流、一键收获/生产/偷取/清理、
+    副产物 5 槽）、仓库（批量出售/锁定/红点）、商店（幼崽/饲料 + auto_add）、
+    牧草机（自家投草/访客赠送/剩余可用时间）、建筑升级与地块解锁三段式、8 种建筑
+    气泡 + 2 种动物气泡、任务（只用 task_type 4/5/6）、建筑编辑收纳。
+    动物：考拉/豪猪/水牛/骆驼/蜜薯，幼崽→成长→成年，体重匀称/超重/极重。
+  - 结论写进 `core/docs/pasture-mc-analysis.md`（含 35 表清单、Prefab 判定表、
+    提取脚本、下次复查的 6 条命令）。
