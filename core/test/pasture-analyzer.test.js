@@ -210,7 +210,9 @@ test('buildPanelView：汇总数字与 animals 拍平', () => {
 
     // 三只动物进了面板（可收获 + 需投喂 + 生产中），缺草那只不进
     assert.equal(view.animals.length, 3);
-    assert.ok(view.animals.every(x => x.name.startsWith('动物 #')));
+    // 填了映射的显示真名，没填的显示 `动物 #<id>` 占位
+    assert.ok(view.animals.every(x => x.name && !x.name.includes('undefined')));
+    assert.ok(view.animals.some(x => x.name === '鸭'), '60002 应显示「鸭」');
     assert.ok(view.animals.every(x => typeof x.stageName === 'string'));
     // 按槽位升序
     assert.deepEqual(view.animals.map(x => x.slotIndex), [1, 2, 3]);
@@ -242,4 +244,57 @@ test('buildPanelView：货架与灾害带出去重后的条目', () => {
     assert.equal(view.hazards.length, 1);
     assert.equal(view.hazards[0].hazardId, 501);
     assert.equal(view.shelves[0].lots, 1);
+});
+
+// ─── 中文名映射（PastureNames.json）───
+
+const gameConfig = require('../src/config/gameConfig');
+
+test('中文名映射：已填的动物返回真名', () => {
+    // 这些来自商店截图 + 抓包 goods.price 交叉验证（60001=2、60002=1080 ... 60008=12672）
+    assert.equal(gameConfig.getPastureAnimalName(60001), '鸡');
+    assert.equal(gameConfig.getPastureAnimalName(60002), '鸭');
+    assert.equal(gameConfig.getPastureAnimalName(60005), '火鸡');
+    assert.equal(gameConfig.getPastureAnimalName(60008), '松鼠');
+});
+
+test('中文名映射：28 个动物全部有名字，不留占位', () => {
+    // 窝类 60001-60016 + 棚类 70001-70012，价格与抓包逐项对齐
+    const nest = [60001, 60002, 60003, 60004, 60005, 60006, 60007, 60008,
+        60009, 60010, 60011, 60012, 60013, 60014, 60015, 60016];
+    const barn = [70001, 70002, 70003, 70004, 70005, 70006,
+        70007, 70008, 70009, 70010, 70011, 70012];
+    for (const id of [...nest, ...barn]) {
+        const name = gameConfig.getPastureAnimalName(id);
+        assert.ok(!name.startsWith('动物 #'), `id ${id} 应该有真名，实际 ${name}`);
+    }
+    assert.equal(gameConfig.getPastureAnimalName(70001), '羊');
+    assert.equal(gameConfig.getPastureAnimalName(70012), '羊驼');
+});
+
+test('中文名映射：棚类 70001 与设施 7001001 不混淆', () => {
+    assert.equal(gameConfig.getPastureAnimalName(70001), '羊');
+    assert.equal(gameConfig.getPastureFacilityName(7001001), '牧草机');
+});
+
+test('中文名映射：未登记的返回占位，不编造', () => {
+    assert.equal(gameConfig.getPastureAnimalName(6010001), '动物 #6010001');
+    assert.equal(gameConfig.getPastureAnimalName(99999), '动物 #99999');
+});
+
+test('中文名映射：设施已知，未知给占位', () => {
+    assert.equal(gameConfig.getPastureFacilityName(7001001), '牧草机');
+    assert.equal(gameConfig.getPastureFacilityName(12345), '设施 #12345');
+});
+
+test('中文名映射：id 传 Long/字符串 也能查到', () => {
+    const Long = require('long');
+    assert.equal(gameConfig.getPastureAnimalName(Long.fromNumber(60001)), '鸡');
+    assert.equal(gameConfig.getPastureAnimalName('60002'), '鸭');
+});
+
+test('面板视图用的是真名而不是 id', () => {
+    const view = buildPanelView(analyzeRanches([realRanch()]));
+    const first = view.animals.find(a => a.animalId === 60002);
+    assert.equal(first.name, '鸭', 'animal_id 60002 应显示为「鸭」');
 });
