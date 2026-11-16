@@ -277,3 +277,43 @@ test('getAnimalShop：没有动物商品时返回空结果', async () => {
     sendHandler = null;
     api.resetAnimalShopCacheForTests();
 });
+
+// ─── 解码错位回归（2026-11-16 真机踩到）───
+
+/**
+ * 这几个响应里带有「本次操作明细」字段（HarvestRanch 的 field 5、
+ * TriggerProduce 的 field 3 等），内部结构比 OpResult 复杂得多。
+ * 最初把它们定义成 `repeated OpResult`，protobufjs 按 message 去解就错位，
+ * 实测报 `invalid wire type 6 at offset 357` / `index out of range: 462 + 10 > 462`，
+ * 结果 animals 全丢、面板显示 0 栏位。
+ *
+ * 现在这些字段不定义，交给 protobufjs 按未知字段跳过。下面的字节是当时的真实响应。
+ */
+const HARVEST_FAIL_HEX = '0a8b0208914e10041803224e08914e1002180820e2d4032803300150ca94ec999e3458fedea39d9e3470d9cde1989e347801900101980101a00101a801e802b2010608ef0710f010b801b401c2010608ef0710d40cf201024001225c08914e1003180c20e3d4032803300150ca94ec999e3458fe98dba09e3470fdf6eb999e347801900101980101a00101a801c806b2010608f00710eb01b801a403c2010508f007105af201110801100118f50420cf7e38ca94ec999e34224e08914e1004180b20e3d4032803300150ca94ec999e3458fe98dba09e347096efe0989e347801900101980101a00101a801c806b2010608ef0710b02ab801a403c2010608ef0710d21ff2010240012a02086230012a2508914e10011807521108e2dd7d1001a20608220608ef0710f010520908ce0810e802a206002a2408914e10021801521008a2d940101ea20607220508ef071036520908ce0810b401a206002a2408914e10021802521008a2d940101ea20607220508ef071036520908ce0810b401a206002a2408914e10021803521008ab8041101ea20607220508f0071003520908ce0810a403a206002a2508914e10021804521108a3d940101ea20608220608ef07108701520908ce0810a403a20600';
+
+test('HarvestRanch 响应含「收获明细」字段时不再解码错位', () => {
+    const bytes = Buffer.from(HARVEST_FAIL_HEX, 'hex');
+    const Reply = types.HarvestRanchReply;
+    let decoded;
+    assert.doesNotThrow(() => { decoded = Reply.decode(bytes); },
+        '带 field 5 明细的响应必须能解，不能报 invalid wire type');
+
+    const obj = toPlain(decoded);
+    assert.equal(obj.ranches.length, 1, 'ranches 必须解出来');
+    assert.equal(obj.ranches[0].ranch_inst_id, 10001);
+    assert.equal(obj.ranches[0].capacity, 4);
+    assert.equal(obj.ranches[0].animals.length, 3, '3 只动物必须都在，不能因为明细字段错位而丢');
+    assert.equal(obj.ranches[0].animals[0].animal_inst_id, 8);
+    assert.equal(obj.ranches[0].animals[0].animal_id, 60002);
+    assert.equal(obj.ranches[0].grass.amount, 98);
+});
+
+test('三个 Reply 都不再把明细字段当成 op_results', () => {
+    // 定义层面：这些 Reply 只保留 ranches，其余交给未知字段跳过
+    for (const name of ['HarvestRanchReply', 'TriggerProduceReply', 'CleanRanchReply',
+        'CleanAllRanchReply', 'FeedAnimalReply', 'PlaceAnimalReply', 'StealProduceReply',
+        'StrokeAnimalReply', 'GetRanchDetailReply']) {
+        const fields = Object.keys(types[name].fields || {});
+        assert.deepEqual(fields, ['ranches'], `${name} 应只定义 ranches，实际 ${fields.join(',')}`);
+    }
+});

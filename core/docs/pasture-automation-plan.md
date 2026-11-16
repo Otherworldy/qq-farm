@@ -734,3 +734,83 @@ cd core && node --test test/pasture-*.test.js
 用户的猜测部分正确：未解锁的动物**骨骼资源**确实没下载（`spine/` 只有
 60001-60018 + 6010001），但**商店列表始终完整**，所以名字和价格一直在本地
 可读的接口里。
+
+---
+
+# 真机测试发现的两个 bug（2026-11-16 夜）
+
+第一次在真机上跑，暴露了两个静态分析看不出来的问题。
+
+## bug 1：proto 字段定义错位，动物全丢
+
+**现象**：面板显示 `0/3 栏位`，日志 `检查失败: invalid wire type 7 at offset 33`。
+但同一个接口手动切过去能看到 3 只鸡。
+
+**根因**：`HarvestRanchReply` 的 field 5 我定义成了 `repeated OpResult`。
+实际它是「本次收获明细」，结构是这样的：
+
+```
+field 5 (repeated):
+  1: 10001          ← ranch_inst_id
+  2: 1              ← ?
+  3: 7              ← animal_inst_id
+  10: {len=17}      ← 收获产物（内含 field 4/100 等）
+```
+
+protobufjs 按 `OpResult`（op_id / error_code / error_message）去解，
+读到 field 10 时当成 string，长度对不上就错位，后面全部崩，`animals` 全丢。
+
+`CleanRanchReply`（field 2）和 `TriggerProduceReply`（field 3）是同一个毛病。
+
+**修法**：这些 Reply **只保留 `ranches`**，其余字段不定义 ——
+protobufjs 会按未知字段跳过，不会错位。反正代码里也没用到它们。
+
+**验证**：用抓包里全部 45 条响应重新解码，
+`HarvestRanch` 从 4 失败变 0，`CleanRanch`/`TriggerProduce` 各从 1 变 0，总失败 0。
+
+回归测试直接把当时失败的 462 字节响应内联成 fixture。
+
+## bug 2：空闲防护把牧场饿死
+
+**现象**：首次 tick 打过 `牧场就绪` 之后就再也没动静。
+
+**根因**：`planIdleProtection()` 只用 `farmAt` / `helpAt` 算「空闲期间整体暂停」：
+
+```js
+let until = Math.min(Number(farmAt) || now, Number(helpAt) || now);
+```
+
+牧场 20–30 秒就要跑一轮，但农场/帮助要等 7 分钟，
+于是 `until - now = 7分钟 >= 60秒` → 整轮暂停 7 分钟，牧场永远等不到。
+
+**修法**：`planIdleProtection` 接受 `pastureAt` 并参与 `Math.min`。
+只在传了有效值时才参与，保持不传时的旧行为不变。
+
+**验证**（真机）：
+
+```
+08:56:23  农场：没事做，先歇 18分
+08:56:46  [pasture] 牧场就绪        ← 25 秒后牧场照样跑
+「重点防护」出现次数：0             ← 修复前必现
+```
+
+## 另一个顺手修的
+
+`isAnimalItemId()` 用 `Number(itemId)`，而 protobufjs 解 int64 给的是 Long，
+`Number(Long)` 是 NaN → 动物商店永远匹配不到。改用 `toNum()`。
+
+## 当前测试
+
+```
+core: 牧场 76 项全绿（api 19 / analyzer 19 / orchestrator 22 / visit 8 / routes 9）
+全量：1228 项 / 1216 通过 / 12 失败（既有 Windows 限制）
+前端：pnpm build:web 通过（vue-tsc + vite）
+```
+
+## 测试时要注意
+
+跑起来后面板能读到牧场状态，但**牧场当前是空的（0/3 栏位）**，
+所以看不到收获动作。想验证完整闭环，需要先有动物：
+
+- 进游戏放一只，或
+- 打开 `pasture_buy_animal` 让 bot 自己买（最便宜的是鸡，2 牧场币）

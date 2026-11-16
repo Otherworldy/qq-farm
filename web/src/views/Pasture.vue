@@ -128,7 +128,7 @@ async function refresh(showError = true) {
   }
   await pastureStore.fetchPasture(currentAccountId.value)
   if (showError && error.value)
-    toast.add({ type: 'error', message: error.value })
+    toast.add(error.value, 'error')
 }
 
 async function runOp(op: string) {
@@ -137,13 +137,13 @@ async function runOp(op: string) {
   const result = await pastureStore.operate(currentAccountId.value, op)
   if (!result) {
     if (error.value)
-      toast.add({ type: 'error', message: error.value })
+      toast.add(error.value, 'error')
     return
   }
   if (result.actions && result.actions.length > 0)
-    toast.add({ type: 'success', message: `牧场执行：${result.actions.join(' → ')}` })
+    toast.add(`牧场执行：${result.actions.join(' → ')}`, 'success')
   else
-    toast.add({ type: 'info', message: '牧场当前没有需要做的操作' })
+    toast.add('牧场当前没有需要做的操作', 'info')
 }
 
 const { pause, resume } = useIntervalFn(() => refresh(false), POLL_MS, { immediate: false })

@@ -1211,6 +1211,7 @@ function scheduleUnifiedNextTick() {
         const until = planIdleProtection({
             enabled: getFriendQuietHours().idleProtectionEnabled,
             now, farmAt: nextFarmRunAt, helpAt: nextHelpRunAt,
+            pastureAt: nextPastureRunAt,
             ownDueAt: ownHarvestDueAt(), stealDueAt: resolveStealDueAt(now),
             horizonMs: nextIdleHorizonMs(now), activeMs: effectiveWakeBeforeMs(now),
         });

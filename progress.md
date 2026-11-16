@@ -834,3 +834,24 @@
     但已不影响功能。
   - 测试 74 项全绿（analyzer 19），新增断言：28 个 id 全部返回真名不留占位、
     棚类 70001 与设施 7001001 不混淆。全量 1225 / 1213 通过 / 12 失败（基线）。
+- 2026-11-16 **真机测试，抓出并修掉两个静态分析看不到的 bug**。
+  - **bug1 proto 错位**：`HarvestRanchReply.field5` / `CleanRanchReply.field2` /
+    `TriggerProduceReply.field3` 被我定义成 `repeated OpResult`，实际是「操作明细」
+    （`{1:ranch_inst_id, 2:?, 3:animal_inst_id, 10:{...}}` 这种嵌套）。
+    protobufjs 按 OpResult 解会错位，实测 `invalid wire type 7 at offset 33`，
+    结果 `animals` 全丢、面板显示 0 栏位。**修法：这些 Reply 只保留 `ranches`**，
+    其余交给 protobufjs 按未知字段跳过（代码里本来也没用到）。
+    抓包 45 条响应复测：HarvestRanch 4→0、CleanRanch 1→0、TriggerProduce 1→0，总失败 0。
+    回归测试把当时失败的 462 字节响应内联成 fixture。
+  - **bug2 空闲防护饿死牧场**：`planIdleProtection()` 只用 `farmAt`/`helpAt`，
+    牧场 20-30 秒一轮但农场要等 7 分钟 → 整轮暂停 7 分钟，牧场永远等不到。
+    修法：加 `pastureAt` 参与 `Math.min`（只在有值时参与，保持向后兼容）。
+    真机验证：`08:56:23 农场歇 18分` → `08:56:46 牧场就绪`，「重点防护」0 次。
+  - 顺手修：`isAnimalItemId` 用 `Number(Long)` = NaN，改 `toNum()`。
+  - 顺手修前端：`toast.add({type,message})` 签名错误（应为 `add(msg, type)`），
+    `pnpm build:web` 报 4 个 TS 错误，已修。
+  - 测试：牧场 76 项全绿；全量 1228 / 1216 通过 / 12 失败（基线）。
+  - 环境：已 `pnpm build:web` + `docker compose build` + `up -d`，
+    容器 healthy，`GET /api/pasture` 返回正常（中文名「鸡」显示正确）。
+  - **待用户确认**：牧场当前 0/3 栏位（动物空），需放一只动物或开
+    `pasture_buy_animal` 才能看到收获闭环。

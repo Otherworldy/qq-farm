@@ -104,13 +104,6 @@ message RanchInfo {
     repeated Hazard hazards = 8;
 }
 
-// 操作结果（响应里普遍带 op_results）
-message OpResult {
-    int64 op_id = 1;
-    int32 error_code = 2;
-    string error_message = 3;
-}
-
 // 操作次数配额
 message OpQuota {
     int64 op_id = 1;          // 11003 / 11008 / 11009
@@ -129,7 +122,6 @@ message GetRanchDetailRequest {
 }
 message GetRanchDetailReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 3;
 }
 
 // FeedAnimal —— 请求 1:{ranch_inst_id, animal_inst_id} 2:<type>
@@ -143,7 +135,6 @@ message FeedAnimalRequest {
 }
 message FeedAnimalReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 3;
 }
 
 // HarvestRanch —— 请求 2:<empty> 3:1
@@ -151,16 +142,17 @@ message HarvestRanchRequest {
     repeated int64 ranch_inst_ids = 2;
     int32 harvest_type = 3;   // 抓到的取值 1
 }
+// field 5 实测是「本次收获明细」的重复消息（{1:ranch_inst_id, 2:?, 3:animal_inst_id, 10:{...}}），
+// 内部结构未完全确认。这里不定义，交给 protobufjs 按未知字段跳过，
+// 否则会被误当成 op_results 而错位（实测 invalid wire type 6）。
 message HarvestRanchReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 5;
 }
 
 // TriggerProduce —— 请求空，响应 RanchInfo
 message TriggerProduceRequest {}
 message TriggerProduceReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 3;
 }
 
 // 动物引用（多个方法共用的 {ranch_inst_id, animal_inst_id} 二元组）
@@ -177,7 +169,6 @@ message StealProduceRequest {
 }
 message StealProduceReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 2;
 }
 
 // PlaceAnimal —— 把背包里的动物放进栏舍
@@ -192,7 +183,6 @@ message PlaceAnimalRequest {
 }
 message PlaceAnimalReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 3;
 }
 
 // StrokeAnimal —— 抚摸动物（重量/变异交互）
@@ -203,7 +193,6 @@ message StrokeAnimalRequest {
 }
 message StrokeAnimalReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 2;
 }
 
 // ─────────────────────────── RanchService ───────────────────────────
@@ -215,7 +204,6 @@ message CleanAllRanchRequest {
 }
 message CleanAllRanchReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 2;
 }
 
 // CleanRanch —— 定点清理指定灾害
@@ -227,7 +215,6 @@ message CleanRanchRequest {
 }
 message CleanRanchReply {
     repeated RanchInfo ranches = 1;
-    repeated OpResult op_results = 2;
 }
 
 // GetRanchOpTimes —— 请求 1:<empty>，响应 OpQuota 列表

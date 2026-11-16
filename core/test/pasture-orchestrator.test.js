@@ -394,3 +394,44 @@ test('抚摸：单轮最多摸 STROKE_MAX_PER_ROUND 只', async () => {
         orchestrator.STROKE_MAX_PER_ROUND,
     );
 });
+
+// ─── 空闲防护不能吞掉牧场（真机踩到）───
+
+test('planIdleProtection：牧场临近时不能进入长时防护', () => {
+    const { planIdleProtection } = require('../src/utils/idle-protection');
+    const now = 1794810000000;
+    const base = {
+        enabled: true,
+        now,
+        ownDueAt: 0,
+        stealDueAt: 0,
+        horizonMs: 10 * 60_000,
+        activeMs: 60_000,
+    };
+
+    // 农场/帮助都要 7 分钟后，只有牧场是 25 秒后 —— 必须不防护
+    const withPasture = planIdleProtection({
+        ...base,
+        farmAt: now + 7 * 60_000,
+        helpAt: now + 7 * 60_000,
+        pastureAt: now + 25_000,
+    });
+    assert.equal(withPasture, 0, '牧场 25 秒后要跑，不能被 7 分钟的防护吞掉');
+
+    // 不传 pastureAt 时行为不变（回归保护）
+    const withoutPasture = planIdleProtection({
+        ...base,
+        farmAt: now + 7 * 60_000,
+        helpAt: now + 7 * 60_000,
+    });
+    assert.ok(withoutPasture > now, '三个定时都在 60 秒外时仍会进入防护');
+
+    // 三者都远，牧场也远时才防护
+    const allFar = planIdleProtection({
+        ...base,
+        farmAt: now + 7 * 60_000,
+        helpAt: now + 7 * 60_000,
+        pastureAt: now + 6 * 60_000,
+    });
+    assert.equal(allFar, now + 6 * 60_000, '取三者最早的那个作为唤醒点');
+});

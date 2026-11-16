@@ -17,8 +17,9 @@ const { getPastureAnimalName } = require('../config/gameConfig');
 /** 动物阶段（抓包观察值，仅用于日志与兜底判断） */
 const STAGE_INFANT = 1;
 const STAGE_GROWING = 2;
-const STAGE_MATURE = 3;
-const STAGE_PRODUCING = 4;
+const STAGE_PRODUCING_ACTUAL = 3;   // 抓包：producing 41/45
+const STAGE_UNKNOWN_4 = 4;          // 语义未确认
+const STAGE_HARVESTABLE = 5;        // 抓包：can_harvest 4/4
 
 /** 牧草低于该值视为需要补草（牧草机容量 100，实测 72 仍可运转） */
 const GRASS_LOW_THRESHOLD = 20;
@@ -228,12 +229,20 @@ function msUntilNextProduce(analysis, nowMs = Date.now()) {
     return Math.max(0, readyAt - nowMs);
 }
 
-/** 阶段中文名（面板展示用；阶段数值是抓包观察值） */
+/**
+ * 阶段中文名。取值根据抓包统计反推（stage → 出现次数 / can_harvest / can_feed / producing）：
+ *   1: 66/0/66/0   → 幼崽（全部需要投喂）
+ *   2:  1/0/1/0    → 成长
+ *   3: 45/0/41/41  → 生产（producing 占多数）
+ *   4:  4/0/4/0    → 语义未确认，保留数字显示
+ *   5:  4/4/0/0    → 可收（can_harvest 全部为真）
+ * 4 没有足够证据命名，不编造。
+ */
 const STAGE_NAMES = {
     [STAGE_INFANT]: '幼崽',
     [STAGE_GROWING]: '成长',
-    [STAGE_MATURE]: '成熟',
-    [STAGE_PRODUCING]: '生产',
+    [STAGE_PRODUCING_ACTUAL]: '生产',
+    [STAGE_HARVESTABLE]: '可收',
 };
 
 /**
@@ -330,8 +339,9 @@ function buildPanelView(analysis, now = Date.now()) {
 module.exports = {
     STAGE_INFANT,
     STAGE_GROWING,
-    STAGE_MATURE,
-    STAGE_PRODUCING,
+    STAGE_PRODUCING_ACTUAL,
+    STAGE_UNKNOWN_4,
+    STAGE_HARVESTABLE,
     GRASS_LOW_THRESHOLD,
     analyzeRanches,
     msUntilNextProduce,
