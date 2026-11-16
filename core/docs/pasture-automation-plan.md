@@ -346,3 +346,60 @@ CAPTURE_DUMP_DIR="D:/tmp/pasture-capture/frames" node capture-server.js
 ```
 
 注意：dump 里包含完整业务帧和登录 code，**不要提交到仓库**。
+
+---
+
+# 实现状态（2026-11-16 晚）
+
+## 已完成：最小闭环
+
+| 新增文件 | 职责 | 测试 |
+|---|---|---|
+| `core/src/proto/pasturepb.proto` | animalpb 全部消息 | 8 个响应真机验证 |
+| `core/src/proto/homesteadpb.proto` | homesteadpb 牧草机相关 | 同上 |
+| `core/src/services/pasture-api.js` | 10 个 RPC 收口 | `pasture-api.test.js` 10/10 |
+| `core/src/services/pasture-analyzer.js` | RanchInfo → 可操作列表 | `pasture-analyzer.test.js` 8/8 |
+| `core/src/services/pasture-orchestrator.js` | 收货架→收获→投喂→清理→补草 | `pasture-orchestrator.test.js` 10/10 |
+| `core/src/services/pasture.js` | barrel | — |
+
+| 修改文件 | 改动 |
+|---|---|
+| `core/src/utils/proto.js` | 加载两个新 proto，注册 26 个类型 |
+| `core/src/models/store.js` | `DEFAULT_AUTOMATION` 加 `pasture` 与四个子开关 |
+| `core/src/config/config.js` | `pastureCheckIntervalMin/Max`（20–30 秒） |
+| `core/src/core/worker.js` | `nextPastureRunAt` + `runPastureTick` + unified tick 接入 |
+
+## 关键设计决定
+
+1. **判断优先用服务端布尔标志**（`can_harvest` / `can_feed` / `can_collect`），
+   本地阶段推断只作兜底。服务端标志已经综合了草料、成熟度、每日次数，
+   自己再推一遍容易和服务端不一致。
+2. **牧场间隔比农场稀疏（20–30 秒）**。牧场操作种类少、产物周期长，
+   而请求预算和农场共用；拉太勤会把农场的抢收预算挤掉。
+3. **有成熟墙钟时才精确定时**。`getNextPastureReadyInMs()` 返回 0 表示
+   没有已知时刻，此时按常规间隔复查，绝不长睡（和农场
+   `OWN_MATURITY_GAP` 的教训一致）。
+4. **补草有 5 分钟冷却**，且一次只补 1 份，避免把库存打空。
+5. **牧场 tick 给农场收获让路**：`ownHarvestIsDue()` / `isImminent(1500)`
+   时直接 return，因为农场抢收的时间窗更窄。
+
+## 仍然没做
+
+| 缺口 | 原因 |
+|---|---|
+| 买动物补栏（`emptySlots` 已算出来了，但没有下单链路） | 商城→放入栏舍的协议没抓到样本 |
+| 扩建 capacity | 同上 |
+| 单个灾害定点处理 | 只有一键 `CleanAllRanch` |
+| 好友牧场偷产物调度 | `StealProduce` 的 API 已备好，但没有并入 friend 轮次 |
+| 面板入口（`/api/pasture`、`Pasture.vue`、菜单项） | 不在本次最小闭环范围内 |
+| `op_id` 语义（11003/11008/11009） | 需要对照操作再抓一轮 |
+
+## 怎么验证
+
+```bash
+cd core
+node --test test/pasture-api.test.js test/pasture-analyzer.test.js test/pasture-orchestrator.test.js
+# 28 tests / 28 pass
+```
+
+全量回归：`npm test` → 1179 项 / 1167 通过 / 12 失败（均为既有 Windows 限制）。

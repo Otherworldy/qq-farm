@@ -50,6 +50,10 @@ const {
     getOwnMaturityGapCount
 } = require('../services/farm');
 const {
+    checkPasture,
+    getNextPastureReadyInMs,
+} = require('../services/pasture');
+const {
     checkFriends,
     startFriendCheckLoop,
     stopFriendCheckLoop,
@@ -232,6 +236,8 @@ function isTransientNetworkError(err) {
 
 let farmTaskRunning = false;
 let nextFarmRunAt = 0;
+let pastureTaskRunning = false;
+let nextPastureRunAt = 0;
 let lastStatusHash = '';
 let lastStatusSentAt = 0;
 let onSellGain = null;
@@ -403,10 +409,16 @@ function resetUnifiedSchedule() {
         CONFIG.helpCheckIntervalMin || 30000,
         CONFIG.helpCheckIntervalMax || 35000
     );
+    const pastureDelay = randomIntervalMs(
+        CONFIG.pastureCheckIntervalMin || 20000,
+        CONFIG.pastureCheckIntervalMax || 30000
+    );
     const stealDelay = randInt(800, 2000);
     const now = Date.now();
     nextFarmRunAt = now + farmDelay;
     nextHelpRunAt = now + helpDelay;
+    // 牧场首轮稍微让开农场，避免启动瞬间并发打满预算
+    nextPastureRunAt = now + farmDelay + pastureDelay;
     nextStealRunAt = now + stealDelay;
     markStealDueAt(nextStealRunAt);
 }
@@ -453,6 +465,39 @@ async function runFarmTick(autoConfig) {
         });
         armStealWake();
         farmTaskRunning = false;
+    }
+}
+
+// ==================== 牧场 Tick ====================
+
+/**
+ * 牧场巡查。
+ *
+ * 与 runFarmTick 同构，但成熟墙钟来自牧场自己的 produce_ready_at_ms：
+ * 拿不到时刻时不能长睡（否则会睡过短周期产物），按常规间隔复查。
+ * 请求预算和农场共用，因此牧场间隔比农场稀疏（20-30s）。
+ */
+async function runPastureTick(autoConfig) {
+    if (pastureTaskRunning || friendSyncPaused) return;
+    if (!autoConfig.pasture) return;
+    // 自家农场收获到点时先让路：农场抢收的时间窗更窄
+    if (ownHarvestIsDue() || ownHarvestIsImminent(1500)) return;
+    pastureTaskRunning = true;
+
+    try {
+        await checkPasture();
+    } catch { } finally {
+        const patrol = randomIntervalMs(
+            CONFIG.pastureCheckIntervalMin || 20000,
+            CONFIG.pastureCheckIntervalMax || 30000
+        );
+        const readyMs = getNextPastureReadyInMs();
+        // readyMs 为 0 表示没有已知成熟时刻：按常规间隔复查，不进入长睡
+        const delay = readyMs > 0
+            ? Math.max(patrol, Math.min(readyMs, 10 * 60_000))
+            : patrol;
+        nextPastureRunAt = Date.now() + delay;
+        pastureTaskRunning = false;
     }
 }
 
@@ -1088,6 +1133,7 @@ async function runUnifiedTick() {
         }
         nextFarmRunAt = now + pauseRemain;
         nextHelpRunAt = now + pauseRemain;
+        nextPastureRunAt = now + pauseRemain;
         nextStealRunAt = now + pauseRemain;
         markStealDueAt(now + pauseRemain);
         return;
@@ -1105,6 +1151,7 @@ async function runUnifiedTick() {
             const retryWakeAt = now + 1000;
             if (nextFarmRunAt <= retryWakeAt) nextFarmRunAt = retryWakeAt;
             if (nextHelpRunAt <= retryWakeAt) nextHelpRunAt = retryWakeAt + 300;
+            if (nextPastureRunAt <= retryWakeAt) nextPastureRunAt = retryWakeAt + 400;
             if (nextStealRunAt <= retryWakeAt) nextStealRunAt = retryWakeAt + 500;
             return;
         }
@@ -1113,6 +1160,7 @@ async function runUnifiedTick() {
             const resumeAt = ownDue + 200;
             if (nextFarmRunAt <= resumeAt) nextFarmRunAt = resumeAt;
             if (nextHelpRunAt <= resumeAt) nextHelpRunAt = resumeAt + 300;
+            if (nextPastureRunAt <= resumeAt) nextPastureRunAt = resumeAt + 400;
             if (nextStealRunAt <= resumeAt) nextStealRunAt = resumeAt + 500;
             return;
         }
@@ -1120,9 +1168,10 @@ async function runUnifiedTick() {
     const stealAt = nextScheduledStealAt();
     const shouldFarm = now >= nextFarmRunAt;
     const shouldHelp = now >= nextHelpRunAt;
+    const shouldPasture = now >= nextPastureRunAt;
     const shouldSteal = stealAt > 0 && now >= stealAt;
 
-    if (!shouldFarm && !shouldHelp && !shouldSteal && !stealIsImminent(1500)) return;
+    if (!shouldFarm && !shouldHelp && !shouldPasture && !shouldSteal && !stealIsImminent(1500)) return;
 
     if (!autoConfig.friend_steal) {
         nextStealRunAt = now + STEAL_IDLE_MS;
@@ -1134,10 +1183,12 @@ async function runUnifiedTick() {
         const afterSteal = nextScheduledStealAt() + 200;
         if (nextFarmRunAt <= now) nextFarmRunAt = afterSteal;
         if (nextHelpRunAt <= now) nextHelpRunAt = afterSteal + 300;
+        if (nextPastureRunAt <= now) nextPastureRunAt = afterSteal + 400;
         return;
     }
     if (shouldFarm) await runFarmTick(autoConfig);
     if (shouldHelp) await runHelpTick(autoConfig);
+    if (shouldPasture) await runPastureTick(autoConfig);
 }
 
 function scheduleUnifiedNextTick() {
@@ -1180,6 +1231,7 @@ function scheduleUnifiedNextTick() {
     const nearest = Math.min(
         Number(nextFarmRunAt) || now + 8000,
         Number(nextHelpRunAt) || now + 30000,
+        Number(nextPastureRunAt) || now + 20000,
         Number(stealAt) || now + STEAL_IDLE_MS
     );
     const waitMs = Math.max(100, nearest - now);

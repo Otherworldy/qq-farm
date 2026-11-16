@@ -267,7 +267,16 @@ const DEFAULT_AUTOMATION = {
     fertilizer_land_types: [...DEFAULT_FERTILIZER_LAND_TYPES],
     fertilizer_smart_seconds: 300,
     skip_own_weed_bug: true,
-    golden_bug_clear: true
+    golden_bug_clear: true,
+
+    // ─── 牧场（MC）───
+    // 数据源与协议见 docs/pasture-automation-plan.md。默认开总开关、
+    // 四个子项全开，与农场「farm + harvest/plant」的粒度保持一致。
+    pasture: true,
+    pasture_harvest: true,
+    pasture_feed: true,
+    pasture_clean: true,
+    pasture_grass: true
 };
 
 /** 默认间隔配置（秒） */

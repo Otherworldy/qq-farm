@@ -724,3 +724,28 @@
     `op_id`（11003/11008/11009）与操作的对应关系、好友牧场完整链路。
   - 文档：`core/docs/pasture-automation-plan.md` 追加「抓包实测结果」附录
     （10 个 RPC 表 + 数据样本 + 两个坑 + 工具链用法）。
+- 2026-11-16 **牧场自动化最小闭环落地（阶段 1+2）**。
+  - 新增 `core/src/services/pasture-api.js`（10 个 RPC 收口，四个 service：
+    AnimalService / RanchService / HomesteadService / FeedMachineService）。
+  - 新增 `core/src/services/pasture-analyzer.js`（纯函数：RanchInfo → 可收获 /
+    可收货物架 / 需投喂 / 灾害 / 草量 / 空栏 / 最近产物成熟墙钟）。
+  - 新增 `core/src/services/pasture-orchestrator.js`（编排：收货架→收获→投喂→
+    清理→补草；guard 含连接态、总开关、重入、农场收获让路）。
+  - 新增 `core/src/services/pasture.js` barrel。
+  - 修改 `proto.js`（加载 pasturepb/homesteadpb，注册 26 个类型）、
+    `store.js`（`DEFAULT_AUTOMATION` 加 `pasture` + 四个子开关，白名单
+    `ALLOWED_AUTOMATION_KEYS` 从默认对象动态派生所以自动生效）、
+    `config.js`（`pastureCheckIntervalMin/Max` 20–30s）、
+    `worker.js`（`nextPastureRunAt` + `runPastureTick` + unified tick 接入，
+    含免打扰/自家收获让路/偷菜让路/nearest 计算四处同步）。
+  - 新增 28 个测试全绿：`pasture-api.test.js` 10（payload 能被对应 Request
+    类型 round-trip 解回，抓字段名错误/int64/结构错位）、
+    `pasture-analyzer.test.js` 8（含 Long 对象、脏数据、空栏推算）、
+    `pasture-orchestrator.test.js` 10（guard、细分开关、执行顺序、补草冷却）。
+  - **同步修了 4 个既有测试的 sandbox**（`maturity-sentinel`、`friend-summary-
+    backoff` ×2、`idle-protection`）：它们用 vm 抽 worker 源码跑，需要补
+    `nextPastureRunAt` / `runPastureTick` 注入，否则 `ReferenceError`。
+  - 全量回归：**1179 项 / 1167 通过 / 12 失败**，失败数与基线一致（均为既有
+    Windows 限制：0600 权限、符号链接、并发抖动、`getStealWhitelist` 沙箱缺注入）。
+  - **仍缺**：买动物补栏、扩建 capacity、单个灾害定点、好友牧场偷产物调度、
+    面板入口、`op_id` 语义确认。详见 `core/docs/pasture-automation-plan.md`。

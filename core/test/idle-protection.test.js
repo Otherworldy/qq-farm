@@ -124,6 +124,7 @@ test('real unified scheduling converts a long nap to protection and resumes at i
   const ctx = {
     unifiedSchedulerRunning: true, loginReady: true, Date: { now: () => now },
     nextFarmRunAt: now + 180_000, nextHelpRunAt: now + 240_000,
+    nextPastureRunAt: now + 200_000, pastureTaskRunning: false, runPastureTick: async () => {},
     pauseRemainMsNow: () => Math.max(0, protectedUntil - now),
     getFriendQuietHours: () => ({ idleProtectionEnabled: true }),
     setIdleProtectionUntil: n => { protectedUntil = n; }, planIdleProtection: protection.planIdleProtection,

@@ -29,6 +29,10 @@ const CONFIG = {
     stealCheckIntervalMax: 480 * 1000,
     friendCheckIntervalMin: 12000,     // 好友检查最小间隔 12秒
     friendCheckIntervalMax: 15000,     // 好友检查最大间隔 15秒
+    // 牧场：操作种类少、产物成熟周期长，所以比农场稀疏；请求预算与农场共用，
+    // 拉得太勤会把农场的抢收预算挤掉。有已知成熟时刻时由牧场自己的墙钟唤醒。
+    pastureCheckIntervalMin: 20000,    // 牧场检查最小间隔 20秒
+    pastureCheckIntervalMax: 30000,    // 牧场检查最大间隔 30秒
     adminPort: Number(process.env.ADMIN_PORT),
     adminPassword: process.env.ADMIN_PASSWORD
 };

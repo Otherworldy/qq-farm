@@ -227,6 +227,7 @@ function workerEntry(h) {
   const sandbox = { ...b, Date, Math, process: { env: { FARM_ACCOUNT_ID: 'synthetic-budget-account' } },
     unifiedSchedulerRunning: true, loginReady: true, friendSyncPaused: false, stealTaskRunning: false,
     nextFarmRunAt: h.clock.now + 1e9, nextHelpRunAt: h.clock.now + 1e9, nextStealRunAt: h.clock.now,
+    nextPastureRunAt: h.clock.now + 1e9, pastureTaskRunning: false, runPastureTick: async () => {},
     STEAL_IDLE_MS: 60000, OWN_HARVEST_RESERVE_MS: 10000,
     PRIORITY_SUMMARY_FLOOR_MIN_MS: 60000, PRIORITY_SUMMARY_FLOOR_MAX_MS: 120000,
     getPauseRemainMs: () => h.state.pause, markIdleQuietUntil: () => {}, pauseAceReports: () => {}, resumeAceReports: () => {},

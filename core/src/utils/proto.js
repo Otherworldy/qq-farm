@@ -54,6 +54,8 @@ async function performLoad() {
         getResourcePath('proto', 'mysteryshoppb.proto'),
         getResourcePath('proto', 'acepb.proto'),
         getResourcePath('proto', 'careerpb.proto'),
+        getResourcePath('proto', 'pasturepb.proto'),
+        getResourcePath('proto', 'homesteadpb.proto'),
     ], { keepCase: true });
 
     // 网关
@@ -248,6 +250,36 @@ async function performLoad() {
     resolved.ItemNotify = newRoot.lookupType('gamepb.itempb.ItemNotify');
     resolved.GoodsUnlockNotify = newRoot.lookupType('gamepb.shoppb.GoodsUnlockNotify');
     resolved.TaskInfoNotify = newRoot.lookupType('gamepb.taskpb.TaskInfoNotify');
+
+    // ─── 牧场（gamepb.animalpb）───
+    resolved.RanchInfo = newRoot.lookupType('gamepb.animalpb.RanchInfo');
+    resolved.AnimalInst = newRoot.lookupType('gamepb.animalpb.AnimalInst');
+    resolved.OpQuota = newRoot.lookupType('gamepb.animalpb.OpQuota');
+    resolved.GetRanchDetailRequest = newRoot.lookupType('gamepb.animalpb.GetRanchDetailRequest');
+    resolved.GetRanchDetailReply = newRoot.lookupType('gamepb.animalpb.GetRanchDetailReply');
+    resolved.HarvestRanchRequest = newRoot.lookupType('gamepb.animalpb.HarvestRanchRequest');
+    resolved.HarvestRanchReply = newRoot.lookupType('gamepb.animalpb.HarvestRanchReply');
+    resolved.FeedAnimalRequest = newRoot.lookupType('gamepb.animalpb.FeedAnimalRequest');
+    resolved.FeedAnimalReply = newRoot.lookupType('gamepb.animalpb.FeedAnimalReply');
+    resolved.TriggerProduceRequest = newRoot.lookupType('gamepb.animalpb.TriggerProduceRequest');
+    resolved.TriggerProduceReply = newRoot.lookupType('gamepb.animalpb.TriggerProduceReply');
+    resolved.StealProduceRequest = newRoot.lookupType('gamepb.animalpb.StealProduceRequest');
+    resolved.StealProduceReply = newRoot.lookupType('gamepb.animalpb.StealProduceReply');
+    resolved.CleanAllRanchRequest = newRoot.lookupType('gamepb.animalpb.CleanAllRanchRequest');
+    resolved.CleanAllRanchReply = newRoot.lookupType('gamepb.animalpb.CleanAllRanchReply');
+    resolved.GetRanchOpTimesRequest = newRoot.lookupType('gamepb.animalpb.GetRanchOpTimesRequest');
+    resolved.GetRanchOpTimesReply = newRoot.lookupType('gamepb.animalpb.GetRanchOpTimesReply');
+
+    // ─── 牧场设施（gamepb.homesteadpb）───
+    resolved.FacilityDetail = newRoot.lookupType('gamepb.homesteadpb.FacilityDetail');
+    resolved.FeedMachineState = newRoot.lookupType('gamepb.homesteadpb.FeedMachineState');
+    resolved.GetBuildingListRequest = newRoot.lookupType('gamepb.homesteadpb.GetBuildingListRequest');
+    resolved.GetBuildingListReply = newRoot.lookupType('gamepb.homesteadpb.GetBuildingListReply');
+    resolved.GetFacilityDetailRequest = newRoot.lookupType('gamepb.homesteadpb.GetFacilityDetailRequest');
+    resolved.GetFacilityDetailReply = newRoot.lookupType('gamepb.homesteadpb.GetFacilityDetailReply');
+    resolved.AddFeedRequest = newRoot.lookupType('gamepb.homesteadpb.AddFeedRequest');
+    resolved.AddFeedReply = newRoot.lookupType('gamepb.homesteadpb.AddFeedReply');
+    resolved.FacilitiesNotify = newRoot.lookupType('gamepb.homesteadpb.FacilitiesNotify');
 
     // 完整加载与类型解析成功，才发布就绪：root 发布、types 原地填充（引用稳定）
     for (const key of Object.keys(resolved)) {
