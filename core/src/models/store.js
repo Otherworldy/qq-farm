@@ -276,6 +276,7 @@ const DEFAULT_AUTOMATION = {
     pasture_harvest: true,
     pasture_feed: true,
     pasture_clean: true,
+    pasture_stroke: true,
     pasture_refill: true,
     pasture_grass: true,
     // 买动物要花牧场货币（item 1007）。默认关闭，让用户显式开启。

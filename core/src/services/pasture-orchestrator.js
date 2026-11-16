@@ -23,6 +23,7 @@ const {
     cleanAllRanch,
     cleanRanch,
     placeAnimal,
+    strokeAnimal,
     getFacilityDetail,
     addFeed,
     getAnimalShop,
@@ -51,6 +52,11 @@ const PASTURE_CURRENCY_ID = 1007;
 const BUY_ANIMAL_COOLDOWN_MS = 10 * 60_000;
 let lastBuyAnimalAtMs = 0;
 let lastBuyAnimalFailAtMs = 0;
+/** 抚摸冷却：同一只动物 10 分钟内不重复摸（抚摸能推进产出，但服务端有配额） */
+const STROKE_COOLDOWN_MS = 10 * 60_000;
+/** 单轮最多摸几只，避免一次把配额打空 */
+const STROKE_MAX_PER_ROUND = 5;
+const strokedAtMs = new Map();   // animalInstId -> 上次抚摸时间
 
 // ─── 辅助 ───
 
@@ -293,6 +299,39 @@ async function performRefillGrass(analysis) {
     }
 }
 
+/**
+ * 抚摸动物。
+ *
+ * 抓包确认抚摸会推进产出（mutation.strokable=true 的动物）。服务端对抚摸有
+ * 次数限制，所以这里按「每只 10 分钟一次、单轮最多 5 只」节流，宁可少摸
+ * 也不要把配额撞上限。
+ */
+async function performStroke(analysis) {
+    const list = analysis.strokable || [];
+    if (!list.length) return 0;
+    const now = Date.now();
+    let count = 0;
+    for (const animal of list) {
+        if (count >= STROKE_MAX_PER_ROUND) break;
+        const last = strokedAtMs.get(animal.animalInstId) || 0;
+        if (now - last < STROKE_COOLDOWN_MS) continue;
+        try {
+            await strokeAnimal(animal.animalInstId, animal.ranchInstId);
+            strokedAtMs.set(animal.animalInstId, now);
+            count += 1;
+        } catch (err) {
+            if (!isTransientNetworkError(err)) {
+                logWarn('牧场', `抚摸 ${animal.animalInstId} 失败: ${err.message}`);
+            }
+            break;
+        }
+    }
+    if (count > 0) {
+        logPasture(`抚摸 ${count} 只动物`, { event: '牧场抚摸', count });
+    }
+    return count;
+}
+
 // ─── 主流程 ───
 
 /**
@@ -329,6 +368,10 @@ async function runPastureOperation(opType = 'all') {
             const r = await performHarvest(analysis);
             if (r) actions.push('harvest');
         }
+    }
+    if (want('stroke', 'pasture_stroke') && analysis.strokable.length) {
+        const n = await performStroke(analysis);
+        if (n) actions.push('stroke');
     }
     if (want('feed', 'pasture_feed') && analysis.needFeed.length) {
         const r = await performFeed(analysis);
@@ -413,6 +456,7 @@ function resetPastureStateForTests() {
     lastFeedMachineAtMs = 0;
     lastBuyAnimalAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
+    strokedAtMs.clear();
 }
 
 module.exports = {
@@ -426,8 +470,10 @@ module.exports = {
     performHarvest,
     performFeed,
     performClean,
+    performStroke,
     performRefillSlots,
     performRefillGrass,
+    STROKE_MAX_PER_ROUND,
     msUntilNextProduce,
     PASTURE_CURRENCY_ID,
 };

@@ -799,3 +799,21 @@
     全量回归 **1214 / 1202 通过 / 12 失败**（基线不变）。
   - 前端 `vue-tsc --noEmit` 0 错误、`vite build` 成功（产物 `dist/assets/Pasture-*.js`）。
   - 面板动物名仍显示 `动物 #60001` —— 名字在加密的 `MCItemInfo` 表里。
+- 2026-11-16 **抚摸接入编排 + 中文名调查结论**。
+  - 用户实测：**抚摸（StrokeAnimal）会推进动物产出**。已接入编排，位置在
+    「收获之后、投喂之前」。节流：同只动物 10 分钟、单轮最多 5 只、
+    只摸 `mutation.strokable==true` 的。新增 `pasture_stroke`（默认开），
+    分析器输出 `strokable[]`，面板加「抚摸」按钮 + 第 6 张汇总卡。
+  - **中文名静态解不开**。`MCItemInfo`（984,593 B）是 `cc.TextAsset`，`text` 字段是
+    `FSpk` 开头私有格式。穷举验证全部不成立：
+    base64 直解（738371 B，%4=3 → 非 XXTEA）、单字节 XOR 256 种、单字节加减各 256 种、
+    zlib/gzip/brotli × 偏移 0–32、TSDK `decrypt()`（输出变随机，非 TSDK 格式）、
+    CCON 字符串表（u8/u16/varint 长度 × 偏移 0–40）。
+    数据特征：熵 7.22、可打印 74%、256 种字节全出现、可打印段与高字节段交替。
+    解析逻辑在客户端且字符串被 TSDK VM 加密 → 只能 hook 运行时。
+  - **改为可填表**：新增 `core/src/gameConfig/PastureNames.json`，
+    `gameConfig.js` 加 `getPastureAnimalName` / `getPastureFacilityName`。
+    没填显示 `动物 #60001` 占位（不编造），填了立刻生效。
+    已知设施名 `7001001=牧草机`（抓包 FacilityDetail.name 直接给了中文）。
+  - 测试 67 项全绿（orchestrator 从 17 增至 21，新增抚摸四条用例）。
+    全量 1218 / 1206 通过 / 12 失败（基线不变）。

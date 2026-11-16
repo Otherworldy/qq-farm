@@ -83,6 +83,7 @@ function createAutomationSettings() {
       pasture_harvest: true,
       pasture_feed: true,
       pasture_clean: true,
+      pasture_stroke: true,
       pasture_refill: true,
       pasture_grass: true,
       pasture_buy_animal: false,

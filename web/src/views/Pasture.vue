@@ -64,6 +64,13 @@ const summaryCards = computed(() => [
     tone: 'text-rose-600 dark:text-rose-400',
   },
   {
+    key: 'stroke',
+    label: '可抚摸',
+    value: String(summary.value.strokable || 0),
+    hint: summary.value.strokable > 0 ? '抚摸推进产出' : '',
+    tone: 'text-violet-600 dark:text-violet-400',
+  },
+  {
     key: 'grass',
     label: '牧草',
     value: String(summary.value.grassAmount),
@@ -78,6 +85,7 @@ const ops = [
   { op: 'harvest', label: '收获', hint: '收动物产物与货架' },
   { op: 'feed', label: '投喂', hint: '给待喂动物加草' },
   { op: 'clean', label: '清理', hint: '清除虫与杂草' },
+  { op: 'stroke', label: '抚摸', hint: '抚摸可推进动物产出' },
   { op: 'refill', label: '补栏', hint: '把背包里的动物放进空栏' },
   { op: 'grass', label: '补草', hint: '给牧草机加料' },
 ]

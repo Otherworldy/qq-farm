@@ -583,3 +583,79 @@ cd core && node --test test/pasture-*.test.js
 | `op_id` 语义（11003/11008/11009） | 两轮抓包各只有 1 次配额查询，缺对照样本 |
 | 抚摸/变异玩法 | `strokeAnimal` API 已收口，未接编排（收益不明） |
 | 扩建 capacity | 用户未执行该操作，无样本 |
+
+---
+
+# 抚摸玩法 + 中文名（2026-11-16 补充）
+
+## 抚摸（strokeAnimal）已接入编排
+
+用户实测确认：**抚摸会推进动物产出**。抓包参数结构：
+
+```
+StrokeAnimal  1: host_gid   2: {ranch_inst_id, animal_inst_id}
+```
+
+编排里的位置：**收获之后、投喂之前**（抚摸推进产出，越早做越好）。
+
+节流（服务端对抚摸有配额，宁可少摸也不撞上限）：
+- 同一只动物 **10 分钟**内不重复摸
+- 单轮最多摸 **5 只**
+- 只摸 `AnimalMutation.strokable == true` 的动物
+
+新增开关 `pasture_stroke`（默认开）。分析器输出 `strokable[]`，
+面板加「抚摸」按钮和第 6 张汇总卡片。
+
+## 中文名：静态解不开，改成可填表
+
+`MCItemInfo`（984,593 B）确实是那个 984K 的表，但它不是明文 yml。
+
+真实结构是 **Cocos 的 `cc.TextAsset`**：
+
+```json
+[1,0,0,[["cc.TextAsset",["_name","text"],1]],[[0,0,1,3]],
+ [[0,"MCItemInfo","FSpk...984500 个字符..."]]]
+```
+
+`text` 字段是 `FSpk` 开头的私有格式。**穷举验证过以下可能，全部不成立**：
+
+| 尝试 | 结果 |
+|---|---|
+| base64 直接解 | 738371 B，%4=3，非 4 字节对齐 → 不是 XXTEA |
+| 单字节 XOR（256 key） | 无一产生合法 UTF-8 |
+| 单字节加/减（各 256） | 无一产生合法 UTF-8 |
+| zlib / gzip / brotli（偏移 0–32 各试） | 全部 Z_DATA_ERROR |
+| TSDK `decrypt()` | 输出变随机（可打印 0.38），说明不是 TSDK 格式 |
+| CCON 字符串表（u8/u16/varint 长度 × 偏移 0–40） | 无一处能连续解析出合法字符串 |
+
+数据特征：熵 7.22、可打印 74%、256 种字节全出现、可打印段与高字节段交替。
+**解析逻辑在客户端里，而客户端字符串被 TSDK 字节码 VM 加密，静态读不出来。**
+要拿原名只能 hook 运行时（改包有签名校验，微信小游戏也注入不了）。
+
+**所以做成可填表** `core/src/gameConfig/PastureNames.json`：
+
+```json
+{
+  "animals":   { "60001": "鸡", "60002": "..." },
+  "facilities": { "7001001": "牧草机" }
+}
+```
+
+- 没填时面板显示 `动物 #60001` / `设施 #7001001`（占位，不编造）
+- 填了立刻生效，面板和日志都用真名
+- 文件缺失或为空不影响任何功能
+
+`gameConfig.js` 新增 `getPastureAnimalName(id)` / `getPastureFacilityName(id)`。
+
+**已知的设施名**：`7001001 = 牧草机`（抓包时 `FacilityDetail.name` 直接返回了中文，已填）。
+
+**待填的动物名**：抓包的 16 种动物 `60001`–`60008` 及以上，需要进游戏看一眼对应关系。
+
+## 测试
+
+```bash
+cd core && node --test test/pasture-*.test.js
+# 67 tests / 67 pass（api 17 / analyzer 12 / orchestrator 21 / visit 8 / routes 9）
+```
+
+全量：1218 项 / 1206 通过 / 12 失败（既有 Windows 限制）。

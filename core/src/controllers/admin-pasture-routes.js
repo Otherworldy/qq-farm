@@ -29,7 +29,7 @@ function requireAccessibleAccount(req, res, getAccountIdFromRequest, canAccessAc
 }
 
 /** 面板允许手动触发的操作类型 */
-const PASTURE_OPS = new Set(["all", "harvest", "feed", "clean", "refill", "grass"]);
+const PASTURE_OPS = new Set(["all", "harvest", "feed", "clean", "stroke", "refill", "grass"]);
 
 function registerAdminPastureRoutes({
   app,

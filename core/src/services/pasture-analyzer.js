@@ -10,6 +10,7 @@
  */
 
 const { toNum } = require('../utils/utils');
+const { getPastureAnimalName } = require('../config/gameConfig');
 
 // ─── 常量 ───
 
@@ -108,6 +109,7 @@ function analyzeRanches(ranches, options = {}) {
     const collectableShelves = [];// 可收的货架
     const stealableShelves = [];  // 可偷的货架（好友牧场）
     const producing = [];         // 生产中（拿不到产物，等时间）
+    const strokable = [];         // 可抚摸（mutation.strokable，抚摸可推进产出）
     const emptySlots = [];        // 空栏（补栏用；本闭环暂不自动买动物）
 
     let totalAnimals = 0;
@@ -147,6 +149,10 @@ function analyzeRanches(ranches, options = {}) {
             } else if (animal.producing) {
                 producing.push(animal);
             }
+            // 抚摸与阶段无关：只要有 strokable 就记下来（抓包确认抚摸能推进产出）
+            if (animal.mutation && animal.mutation.strokable) {
+                strokable.push(animal);
+            }
             // 最近一次产物成熟时刻：只统计未来且已知的，用来算下一次唤醒
             const ready = animal.produceReadyAtMs || animal.matureReadyAtMs;
             if (ready > nowMs && (nextProduceReadyAtMs === 0 || ready < nextProduceReadyAtMs)) {
@@ -185,6 +191,7 @@ function analyzeRanches(ranches, options = {}) {
     if (collectableShelves.length) labels.push(`架:${collectableShelves.length}`);
     if (needFeed.length) labels.push(`喂:${needFeed.length}`);
     if (needClean.length) labels.push(`灾:${needClean.length}`);
+    if (strokable.length) labels.push(`摸:${strokable.length}`);
     if (grassAmount < GRASS_LOW_THRESHOLD) labels.push(`草:${grassAmount}`);
 
     return {
@@ -195,6 +202,7 @@ function analyzeRanches(ranches, options = {}) {
         needFeed,
         needClean,
         producing,
+        strokable,
         emptySlots,
         grassAmount,
         grassEmptyAtMs,
@@ -207,7 +215,8 @@ function analyzeRanches(ranches, options = {}) {
         hasWork: harvestable.length > 0
             || collectableShelves.length > 0
             || needFeed.length > 0
-            || needClean.length > 0,
+            || needClean.length > 0
+            || strokable.length > 0,
         label: labels.length ? `[${labels.join(' ')}]` : '[]',
     };
 }
@@ -253,7 +262,7 @@ function buildPanelView(analysis, now = Date.now()) {
                 slotIndex: animal.slotIndex,
                 animalInstId: animal.animalInstId,
                 animalId: animal.animalId,
-                name: `动物 #${animal.animalId}`,
+                name: getPastureAnimalName(animal.animalId),
                 stage: animal.stage,
                 stageName: STAGE_NAMES[animal.stage] || `阶段${animal.stage}`,
                 canHarvest: animal.canHarvest,
@@ -266,6 +275,7 @@ function buildPanelView(analysis, now = Date.now()) {
                 expectedHarvestExp: animal.expectedHarvestExp,
                 expectedProduceExp: animal.expectedProduceExp,
                 mutation: animal.mutation,
+                strokable: !!(animal.mutation && animal.mutation.strokable),
             });
         }
     }
@@ -301,6 +311,7 @@ function buildPanelView(analysis, now = Date.now()) {
             collectableShelves: (a.collectableShelves || []).length,
             needFeed: (a.needFeed || []).length,
             needClean: (a.needClean || []).length,
+            strokable: (a.strokable || []).length,
             grassAmount: a.grassAmount || 0,
             grassLow: !!a.grassLow,
             nextReadyInSec,

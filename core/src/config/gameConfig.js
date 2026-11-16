@@ -15,6 +15,9 @@ const fruitToPlant = new Map();      // fruitId → plant
 
 // 物品配置
 let itemInfoConfig = null;
+/** 牧场中文名：animal_id / facility_id -> 名字（来自可填表 PastureNames.json） */
+const pastureAnimalNames = new Map();
+const pastureFacilityNames = new Map();
 const itemInfoMap = new Map();       // itemId → itemInfo
 const seedItemMap = new Map();       // seedItemId → itemInfo
 const seedImageMap = new Map();      // seedId/itemId → imageUrl
@@ -85,6 +88,29 @@ function loadConfigs() {
 
         // 活动植物通常早于全量静态配置发布，使用轻量增量表补齐植物、
         // 种子和果实三者的关系，避免土地与图鉴显示裸 ID。
+        // 牧场中文名（可填表）。牧场配置表是私有 FSpk 格式，静态解不开，
+        // 所以名字走人工映射；文件不存在或为空都不影响功能，只是显示 id。
+        try {
+            const pastureNamesPath = path.join(basePath, 'PastureNames.json');
+            if (fs.existsSync(pastureNamesPath)) {
+                const raw = JSON.parse(fs.readFileSync(pastureNamesPath, 'utf8')) || {};
+                pastureAnimalNames.clear();
+                pastureFacilityNames.clear();
+                for (const [id, name] of Object.entries(raw.animals || {})) {
+                    const n = Number(id);
+                    if (n > 0 && name) pastureAnimalNames.set(n, String(name));
+                }
+                for (const [id, name] of Object.entries(raw.facilities || {})) {
+                    const n = Number(id);
+                    if (n > 0 && name) pastureFacilityNames.set(n, String(name));
+                }
+                const total = pastureAnimalNames.size + pastureFacilityNames.size;
+                if (total > 0) console.warn(`[配置] 已加载牧场名称映射 (${total} 项)`);
+            }
+        } catch (err) {
+            console.warn('[配置] 加载 PastureNames.json 失败:', err.message);
+        }
+
         const eventPlantPath = path.join(basePath, 'EventPlants.json');
         if (fs.existsSync(eventPlantPath)) {
             const eventPlants = JSON.parse(fs.readFileSync(eventPlantPath, 'utf8'));
@@ -702,6 +728,28 @@ function deriveGoldMutationItem(itemId) {
 }
 
 /** 根据物品ID获取物品信息 */
+/**
+ * 牧场动物名。没配映射时返回占位名（不编造）。
+ * @param {number} animalId - AnimalInst.animal_id（如 60001）
+ * @returns {string} 映射里的名字；没配映射时返回 `动物 #<id>` 占位
+ */
+function getPastureAnimalName(animalId) {
+    const id = Number(animalId) || 0;
+    const mapped = pastureAnimalNames.get(id);
+    return mapped || `动物 #${id}`;
+}
+
+/**
+ * 牧场设施名。
+ * @param {number} facilityId - FacilityDetail.facility_id（如 7001001）
+ * @returns {string} 映射里的名字；没配映射时返回 `设施 #<id>` 占位
+ */
+function getPastureFacilityName(facilityId) {
+    const id = Number(facilityId) || 0;
+    const mapped = pastureFacilityNames.get(id);
+    return mapped || `设施 #${id}`;
+}
+
 function getItemById(itemId) {
     const id = Number(itemId) || 0;
     // 保持未命中时返回 undefined（推导函数用 null 表示“不适用”）。
@@ -850,6 +898,8 @@ module.exports = {
     getFruitName,
     getPlantByFruitId,
     getItemById,
+    getPastureAnimalName,
+    getPastureFacilityName,
     registerRuntimeItem,
     getItemImageById,
     getGenericFallbackItemIds,

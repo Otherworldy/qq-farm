@@ -47,6 +47,7 @@ export interface PastureSummary {
   collectableShelves: number
   needFeed: number
   needClean: number
+  strokable: number
   grassAmount: number
   grassLow: boolean
   nextReadyInSec: number
@@ -70,6 +71,7 @@ function emptySummary(): PastureSummary {
     collectableShelves: 0,
     needFeed: 0,
     needClean: 0,
+    strokable: 0,
     grassAmount: 0,
     grassLow: false,
     nextReadyInSec: 0,

@@ -35,6 +35,7 @@ export interface AutomationConfig {
   pasture_harvest?: boolean
   pasture_feed?: boolean
   pasture_clean?: boolean
+  pasture_stroke?: boolean
   pasture_refill?: boolean
   pasture_grass?: boolean
   pasture_buy_animal?: boolean

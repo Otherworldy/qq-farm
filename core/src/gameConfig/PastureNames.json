@@ -1,0 +1,21 @@
+{
+  "_readme": [
+    "牧场动物/设施的中文名映射。",
+    "",
+    "为什么需要这个文件：牧场配置表（MCItemInfo / MCAnimalConfig / MCFacilityConfig）",
+    "在 mcRes bundle 里以 cc.TextAsset 形式存在，text 字段是 `FSpk` 开头的私有格式。",
+    "已确认它不是 base64、不是单字节/多字节异或、不是 zlib/gzip/brotli、不是 XXTEA",
+    "（长度不满足 4 字节对齐）、也不是 TSDK 加密。解析逻辑在客户端里，字符串被",
+    "TSDK 字节码 VM 加密，静态读不出来。要拿到原名只能 hook 客户端运行时。",
+    "",
+    "所以这里做成可填表：面板显示 `动物 #60001` 这种占位，填上就显示真名。",
+    "游戏里看一眼对应关系，填一次即可，之后所有面板/日志都会用真名。",
+    "",
+    "animals 的 key 是 AnimalInst.animal_id（抓包确认 60001~60008 都是动物）。",
+    "facilities 的 key 是 FacilityDetail.facility_id（例如 7001001 = 牧草机）。"
+  ],
+  "animals": {},
+  "facilities": {
+    "7001001": "牧草机"
+  }
+}
