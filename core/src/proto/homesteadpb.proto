@@ -1,0 +1,89 @@
+// 家园/设施协议（gamepb.homesteadpb）—— 牧场相关部分
+//
+// 来源：2026-11-16 真机抓包。牧场里的「牧草机」属于 homestead 的设施系统，
+// 因此加草料走的是 FeedMachineService 而不是 animalpb。
+//
+// 已实测：
+//   HomesteadService.GetBuildingList(1)  GetFacilityDetail(1)
+//   FeedMachineService.AddFeed(1)
+//   通知：HomesteadService 侧 FacilitiesNotify(38 条)
+
+syntax = "proto3";
+
+package gamepb.homesteadpb;
+
+// ─────────────────────────── 设施 ───────────────────────────
+
+message ItemAmount {
+    int64 id = 1;      // item_id（本次抓到 1007）
+    int64 count = 2;   // 6000
+}
+
+// GetFacilityDetail 响应实测结构（牧草机，facility_inst_id=10002）：
+//   1:10002 2:"牧草机" 4:7001001 5:8 6:{1:1007,2:6000} 7:1 8:7001001
+//   9:10 10:7 12:2 13:2 14:100 21:{1:99,2:72,4:...,7:1,8:3}
+message FacilityDetail {
+    int64 facility_inst_id = 1;        // 10002
+    string name = 2;                   // "牧草机"
+    int64 subtitle = 3;
+    int64 facility_id = 4;             // 7001001
+    int32 level = 5;                   // 8
+    ItemAmount cost = 6;               // 升级/运转消耗
+    int32 status = 7;
+    int64 template_id = 8;             // 7001001
+    int32 x = 9;
+    int32 y = 10;
+    int32 rotation = 12;
+    int32 module_type = 13;            // 2
+    int32 capacity = 14;               // 100
+    FeedMachineState feed_machine = 21; // 仅牧草机有
+}
+
+// 牧草机运转状态（FacilityDetail.21，也直接作为 AddFeed 的响应）
+//   实测：{1:99 或 100, 2:72, 4:<uint64 -1>, 7:1, 8:3}
+message FeedMachineState {
+    int32 capacity = 1;        // 99 / 100
+    int32 current = 2;         // 72 —— 当前草量
+    int32 reserved = 3;
+    int64 unknown_4 = 4;       // 抓包为 18446744073709552000（uint64 -1）
+    int32 speed_level = 7;     // 1
+    int32 state = 8;           // 3
+}
+
+message GetBuildingListRequest {}
+message GetBuildingListReply {
+    repeated FacilityDetail buildings = 1;
+}
+
+message GetFacilityDetailRequest {
+    int64 facility_inst_id = 1;   // 10002
+}
+message GetFacilityDetailReply {
+    FacilityDetail detail = 1;
+}
+
+// ─────────────────────────── 牧草机 ───────────────────────────
+
+// AddFeed 实测：请求 1:10002 2:1；响应就是 FeedMachineState
+message AddFeedRequest {
+    int64 facility_inst_id = 1;   // 10002
+    int32 count = 2;              // 1
+}
+message AddFeedReply {
+    FeedMachineState state = 1;
+}
+
+// 设施变化推送（本次抓到 38 条，牧场动物/牧草机状态都走这条）
+message FacilitiesNotify {
+    repeated FacilityDetail facilities = 1;
+    int64 host_gid = 2;
+}
+
+service HomesteadService {
+    rpc GetBuildingList(GetBuildingListRequest) returns (GetBuildingListReply);
+    rpc GetFacilityDetail(GetFacilityDetailRequest) returns (GetFacilityDetailReply);
+}
+
+service FeedMachineService {
+    rpc AddFeed(AddFeedRequest) returns (AddFeedReply);
+}

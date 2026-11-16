@@ -13,6 +13,7 @@
  * - CAPTURE_HOSTS           逗号分隔，需要中间人抓取的域名（支持 *. 通配）
  * - CAPTURE_AUTOSTOP_SEC    代理自动停止秒数
  * - CAPTURE_SESSION_TTL_MS  会话过期时间
+ * - CAPTURE_DUMP_DIR        原始流量落盘目录（不设则不落盘，默认关闭）
  */
 
 const fs = require('node:fs');
@@ -39,6 +40,9 @@ const DEFAULT_CONFIG = Object.freeze({
   autoStopSec: 900,
   sessionTtlMs: 60 * 60 * 1000,
   logLevel: 'info',
+  // 原始流量落盘目录。留空表示不记录（默认）：该开关只为协议分析准备，
+  // 日常抓包登录不需要，落盘内容含完整业务帧，不应长期保留。
+  dumpDir: '',
 });
 
 /** 默认数据目录（与 bot 完全一致：FARM_DATA_DIR 优先，pkg 模式用 exe 同级 data） */
@@ -94,6 +98,9 @@ function applyEnvOverrides(config) {
   if (env.CAPTURE_SESSION_TTL_MS !== undefined) {
     next.sessionTtlMs = Math.max(60_000, Number.parseInt(env.CAPTURE_SESSION_TTL_MS, 10) || DEFAULT_CONFIG.sessionTtlMs);
   }
+  if (env.CAPTURE_DUMP_DIR !== undefined) {
+    next.dumpDir = String(env.CAPTURE_DUMP_DIR).trim();
+  }
   return next;
 }
 
@@ -114,6 +121,7 @@ function normalizeConfig(raw) {
     autoStopSec: Math.max(60, Number.parseInt(input.autoStopSec ?? DEFAULT_CONFIG.autoStopSec, 10) || DEFAULT_CONFIG.autoStopSec),
     sessionTtlMs: Math.max(60_000, Number.parseInt(input.sessionTtlMs ?? DEFAULT_CONFIG.sessionTtlMs, 10) || DEFAULT_CONFIG.sessionTtlMs),
     logLevel: String(input.logLevel ?? DEFAULT_CONFIG.logLevel),
+    dumpDir: String(input.dumpDir ?? DEFAULT_CONFIG.dumpDir ?? '').trim(),
   };
 }
 

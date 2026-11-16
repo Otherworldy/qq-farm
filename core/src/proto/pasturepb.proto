@@ -1,0 +1,210 @@
+// 牧场协议（gamepb.animalpb）
+//
+// 来源：2026-11-16 真机抓包（Gamepb.AnimalService + RanchService），
+// 字段名与 field number 经两路交叉验证：
+//   1. mcboot/game.js 里静态提取的 protobuf 定义（字段名明文）；
+//   2. 实际 WS 帧解码 —— 请求体 TSDK 加密需解密，响应体明文。
+//
+// 已实测的方法（括号内为抓到的样本数）：
+//   AnimalService.GetRanchDetail(16) FeedAnimal(6) HarvestRanch(2)
+//                 StealProduce(1) TriggerProduce(2)
+//   RanchService.CleanAllRanch(2) GetRanchOpTimes(1)
+//
+// 尚未抓到样本、字段按 mcboot 静态定义预留（标注 TODO）：
+//   补栏 / 放进栏舍 / 扩建 capacity / 单个灾害处理。
+
+syntax = "proto3";
+
+package gamepb.animalpb;
+
+// ─────────────────────────── 数据模型 ───────────────────────────
+
+// 动物实例。字段编号 1..30 与 mcboot 静态定义完全一致，且每个字段都有抓包实例。
+message AnimalInst {
+    int64 ranch_inst_id = 1;              // 10001
+    int32 slot_index = 2;                 // 栏位序号
+    int64 animal_inst_id = 3;             // 7 / 8 / 11 / 12
+    int64 animal_id = 4;                  // 60001 / 60002 / 60003（种类）
+    int32 stage = 5;                      // 1 幼崽 2 成长 3 成熟 4 生产
+    int32 produce_count = 6;              // 待收产物数量
+    bool can_harvest = 7;                 // 可收获
+    int64 grow_ready_at_ms = 10;          // 成长完成时间
+    int64 produce_ready_at_ms = 11;       // 产物成熟时间（抢收墙钟）
+    bool grass_blocked = 12;              // 缺草阻塞
+    int64 infant_ready_at_ms = 14;
+    bool producing = 15;
+    bool can_deliver = 16;
+    int64 delivering_until_ms = 17;
+    bool can_feed = 18;                   // 可投喂
+    bool limited_can_used = 19;
+    bool can_donate = 20;
+    int32 expected_harvest_exp = 21;      // 预期收获经验（360）
+    repeated ItemAmount expected_harvest_sells = 22;   // 预期收获收益
+    int32 expected_produce_exp = 23;      // 预期产物经验（180）
+    repeated ItemAmount expected_produce_sells = 24;   // 预期产物收益
+    int64 mature_ready_at_ms = 25;
+    AnimalMutation mutation = 30;
+}
+
+message ItemAmount {
+    int64 id = 1;       // item_id，例如 1007
+    int64 count = 2;    // 2160
+}
+
+message AnimalMutation {
+    int32 mutation_type = 1;
+    int32 source = 2;
+    int32 weight_display_x10 = 3;
+    int32 scale_bp = 4;
+    int32 weight_final_x10 = 5;
+    int32 tier = 6;
+    int64 became_at_ms = 7;
+    bool strokable = 8;
+    repeated int64 stroked_gids = 9;
+}
+
+message Grass {
+    int32 amount = 1;
+    int64 empty_at_ms = 2;
+}
+
+// 货架（产物寄存，可被好友偷）
+message Shelf {
+    int32 slot_index = 1;
+    repeated ShelfLot lots = 2;
+    int32 total_remain = 3;
+    bool can_collect = 4;
+    bool can_steal = 5;
+}
+
+message ShelfLot {
+    int64 item_id = 1;
+    int32 base_num = 2;
+    int32 remain_num = 3;
+    int32 stolen_num = 4;
+    int64 animal_id = 5;
+    bool can_steal = 6;
+    repeated int64 stealers = 7;
+}
+
+message Hazard {
+    int64 hazard_id = 1;
+    int64 owner = 2;
+    int32 hazard_type = 3;
+}
+
+message RanchInfo {
+    int64 ranch_inst_id = 1;              // 10001
+    int32 capacity = 2;                   // 4
+    int32 animal_count = 3;               // 4
+    repeated AnimalInst animals = 4;
+    Grass grass = 5;
+    int32 husbandry_type = 6;
+    repeated Shelf shelves = 7;
+    repeated Hazard hazards = 8;
+}
+
+// 操作结果（响应里普遍带 op_results）
+message OpResult {
+    int64 op_id = 1;
+    int32 error_code = 2;
+    string error_message = 3;
+}
+
+// 操作次数配额
+message OpQuota {
+    int64 op_id = 1;          // 11003 / 11008 / 11009
+    int32 times_limit = 2;    // 100 / 20 / 10
+    int32 used_times = 3;
+    int32 remaining_times = 4;
+}
+
+// ─────────────────────────── AnimalService ───────────────────────────
+
+// GetRanchDetail —— 请求 2:<empty>，响应 RanchInfo
+message GetRanchDetailRequest {
+    repeated int64 ranch_inst_ids = 2;
+}
+message GetRanchDetailReply {
+    repeated RanchInfo ranches = 1;
+    repeated OpResult op_results = 3;
+}
+
+// FeedAnimal —— 请求 1:{ranch_inst_id, animal_inst_id} 2:<type>
+message FeedAnimalTarget {
+    int64 ranch_inst_id = 1;
+    int64 animal_inst_id = 2;
+}
+message FeedAnimalRequest {
+    repeated FeedAnimalTarget targets = 1;
+    int32 feed_type = 2;      // 抓到的取值 1 / 2（草料 vs 道具，未定）
+}
+message FeedAnimalReply {
+    repeated RanchInfo ranches = 1;
+    repeated OpResult op_results = 3;
+}
+
+// HarvestRanch —— 请求 2:<empty> 3:1
+message HarvestRanchRequest {
+    repeated int64 ranch_inst_ids = 2;
+    int32 harvest_type = 3;   // 抓到的取值 1
+}
+message HarvestRanchReply {
+    repeated RanchInfo ranches = 1;
+    repeated OpResult op_results = 5;
+}
+
+// TriggerProduce —— 请求空，响应 RanchInfo
+message TriggerProduceRequest {}
+message TriggerProduceReply {
+    repeated RanchInfo ranches = 1;
+    repeated OpResult op_results = 3;
+}
+
+// StealProduce —— 请求 1:<host_gid>，响应好友 RanchInfo
+message StealProduceRequest {
+    int64 host_gid = 1;       // 1288674344
+}
+message StealProduceReply {
+    repeated RanchInfo ranches = 1;
+    repeated OpResult op_results = 2;
+}
+
+// ─────────────────────────── RanchService ───────────────────────────
+
+// CleanAllRanch —— 请求 1:<host_gid> 2:<empty>，响应 RanchInfo
+message CleanAllRanchRequest {
+    int64 host_gid = 1;       // 1284168173
+    repeated int64 ranch_inst_ids = 2;
+}
+message CleanAllRanchReply {
+    repeated RanchInfo ranches = 1;
+    repeated OpResult op_results = 2;
+}
+
+// GetRanchOpTimes —— 请求 1:<empty>，响应 OpQuota 列表
+message GetRanchOpTimesRequest {
+    repeated int64 op_ids = 1;
+}
+message GetRanchOpTimesReply {
+    repeated OpQuota quotas = 1;
+}
+
+service AnimalService {
+    rpc GetRanchDetail(GetRanchDetailRequest) returns (GetRanchDetailReply);
+    rpc FeedAnimal(FeedAnimalRequest) returns (FeedAnimalReply);
+    rpc HarvestRanch(HarvestRanchRequest) returns (HarvestRanchReply);
+    rpc TriggerProduce(TriggerProduceRequest) returns (TriggerProduceReply);
+    rpc StealProduce(StealProduceRequest) returns (StealProduceReply);
+}
+
+service RanchService {
+    rpc CleanAllRanch(CleanAllRanchRequest) returns (CleanAllRanchReply);
+    rpc GetRanchOpTimes(GetRanchOpTimesRequest) returns (GetRanchOpTimesReply);
+}
+
+// ─────────────────── 待补样本（字段来自 mcboot 静态定义）───────────────────
+// 以下三类操作在本次抓包里没有样本，字段按 mcboot 定义预留，不要直接使用：
+//   TODO 买动物 / 放入栏舍（补栏）
+//   TODO 扩建 capacity（用户未做该操作）
+//   TODO 单个灾害处理（只抓到一键清理 CleanAllRanch）

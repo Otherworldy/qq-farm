@@ -242,3 +242,107 @@ npm run inspect:protocol -- <har> --method RanchOp --pretty
 - `models/store.js` 加牧场开关组（纯配置，写完不影响运行）
 - `web/src/router/menu.ts` 加菜单占位
 - 把第二节的明文字段先写成 `pasturepb.proto` 草稿（抓包后校准）
+---
+
+# 附：2026-11-16 抓包实测结果（阶段 0 完成）
+
+> 本节是抓包后的**实测数据**，覆盖上面第 4 节的假设。
+> 抓包方式、工具链和复现步骤见文末。
+
+## A. 协议面已完全确认
+
+牧场 = **`gamepb.animalpb`**（AnimalService + RanchService）+ **`gamepb.homesteadpb`**
+（HomesteadService + FeedMachineService）。已写进
+`core/src/proto/pasturepb.proto` 和 `core/src/proto/homesteadpb.proto`，
+并用真实回包逐条验证通过。
+
+### 10 个 RPC（含抓到的参数）
+
+| 方法 | 请求 | 响应 | 自动化用途 |
+|---|---|---|---|
+| `AnimalService.GetRanchDetail` | `2: ranch_inst_ids[]`（空=自己） | `RanchInfo` | 巡栏 |
+| `AnimalService.HarvestRanch` | `2: ranch_inst_ids[]` `3: harvest_type=1` | `RanchInfo` | **收获** |
+| `AnimalService.FeedAnimal` | `1: [{ranch_inst_id, animal_inst_id}]` `2: feed_type` | `RanchInfo` | **投喂** |
+| `AnimalService.TriggerProduce` | 空 | `RanchInfo` | 触发生产 |
+| `AnimalService.StealProduce` | `1: host_gid` | 好友 `RanchInfo` | **偷产物** |
+| `RanchService.CleanAllRanch` | `1: host_gid` `2: ranch_inst_ids[]` | `RanchInfo` | **一键清理** |
+| `RanchService.GetRanchOpTimes` | `1: op_ids[]` | `OpQuota[]` | 配额 |
+| `HomesteadService.GetBuildingList` | 空 | 建筑列表 | 设施 |
+| `HomesteadService.GetFacilityDetail` | `1: facility_inst_id` | `FacilityDetail` | 牧草机状态 |
+| `FeedMachineService.AddFeed` | `1: facility_inst_id` `2: count` | `FeedMachineState` | **牧草机加料** |
+
+### 通知
+
+`gamepb.homesteadpb.FacilitiesNotify`（38 条）—— 牧场动物/牧草机状态变化都走这条。
+`network.js` 的 `handleNotify` 加这一个分支即可被动感知变化。
+
+### 实测数据样本
+
+```
+RanchInfo        ranch_inst_id=10001  capacity=4  animal_count=4
+AnimalInst       animal_inst_id=7  animal_id=60002  stage=1
+                 grow_ready_at_ms=1794816364540  infant_ready_at_ms=1794812764540
+                 can_feed=true  can_donate=true
+                 expected_harvest_exp=360   expected_harvest_sells=[{id:1007, count:2160}]
+                 expected_produce_exp=180   expected_produce_sells=[{id:1007, count:1620}]
+                 mutation={strokable:true}
+OpQuota          {op_id:11003, limit:100, used:100}
+                 {op_id:11008, limit:20, remaining:20}
+                 {op_id:11009, limit:10, remaining:10}
+FacilityDetail   facility_inst_id=10002  name="牧草机"  facility_id=7001001  level=8
+                 cost={id:1007, count:6000}  module_type=2  capacity=100
+                 feed_machine={capacity:99, current:72, speed_level:1, state:3}
+```
+
+**动物 ID**：60001 / 60002 / 60003（种类）
+**牧草机**：`facility_inst_id=10002`，`facility_id=7001001`
+
+## B. 关键结论
+
+1. **请求体加密、响应体明文**。这是本次最大的实现坑：请求要
+   `tsdkRuntime.decrypt()`，响应直接 protobuf 解码。搞反会得到错位的
+   field number（例如解出 `field 1310`）。
+2. **WS 帧前面有 HTTP 101 响应头**。剥离 `\r\n\r\n` 之前的部分，否则
+   分帧从错误偏移开始，整条连接的消息全乱。
+3. **牧场的道具 ID 空间与农场不同**。`expected_*_sells` 里的 `id=1007`
+   在农场 `ItemInfo.json` 里不存在（农场金币是 1001），说明它是牧场专用
+   道具，需要 `MCItemInfo`（加密表）才能拿名字。
+4. **`op_id` 是 11xxx 段**（农场是 10003/10004/10008/10015）。抓到的
+   11003/11008/11009 语义尚未确认，需要对照操作再抓一轮。
+5. **`AnimalInst` 自带 `expected_harvest_exp` / `expected_produce_sells`**，
+   收益判断不需要配置表，直接读回包即可。
+
+## C. 仍然缺样本的操作
+
+| 缺口 | 影响 |
+|---|---|
+| 买动物 / 放入栏舍（补栏） | 无法自动补栏 |
+| 扩建 capacity | 无法自动扩栏 |
+| 单个灾害处理（只抓到 `CleanAllRanch`） | 只能一键清，不能定点 |
+| `op_id` 与操作的对应关系 | 配额计数算不准 |
+| 好友牧场进入（`StealProduce` 只有 1 次样本） | 偷产物链路不完整 |
+
+## D. 抓包工具链（可复用）
+
+抓包服务是**内嵌在 bot 进程里的 MITM 代理**（`core/src/capture/`），
+本次给它加了一个原始流量落盘开关：
+
+```bash
+cd core
+CAPTURE_DUMP_DIR="D:/tmp/pasture-capture/frames" node capture-server.js
+```
+
+- 默认关闭（不设 `CAPTURE_DUMP_DIR` 就完全不落盘），不影响原有抓包登录功能。
+- 落盘为 `<sessionId>.jsonl`，一行一个数据块 `{t, cid, host, dir, len, b64}`，
+  `dir` 取 `chead` / `c2s` / `s2c`，`cid` 区分连接。
+- 只对 `config.captureHosts`（含 `*.nqf.qq.com`）做 MITM。
+
+分析流程（Node）：
+
+```js
+// 1. 解 WS 帧（复用 core/src/capture/ws-parser.js），s2c 先剥 HTTP 101 头
+// 2. GateMessage 解码 → meta.service_name / meta.method_name
+// 3. c2s 的 body 用 TsdkRuntime.decrypt() 解密；s2c 的 body 直接解
+```
+
+注意：dump 里包含完整业务帧和登录 code，**不要提交到仓库**。

@@ -19,11 +19,89 @@
 
 const net = require('node:net');
 const tls = require('node:tls');
+const fs = require('node:fs');
+const path = require('node:path');
 const { extractLoginInfo, isCaptureHost, parseHttpHead } = require('./code-extractor');
 const { WsFrameParser } = require('./ws-parser');
 const { createResourceUrlRecorder } = require('./resource-url-recorder');
 
 const MAX_CONNECT_HEAD_BYTES = 64 * 1024;
+
+/**
+ * 原始流量落盘器（仅在 config.dumpDir 配了目录时启用，默认关闭）。
+ *
+ * 每会话一个 JSONL，一行一个数据块：`{t, host, dir, len, b64}`。
+ * dir 取值：`chead` 客户端 HTTP 头、`c2s` 客户端→服务器、`s2c` 服务器→客户端。
+ * 落盘的是原始字节，帧切分留给离线分析（WS 分帧可能跨 chunk）。
+ */
+function createFrameDumper(config, log = () => {}) {
+  const dir = String((config && config.dumpDir) || '').trim();
+  if (!dir) return null;
+
+  const streams = new Map();
+  let failed = false;
+
+  function streamFor(sessionId) {
+    const key = String(sessionId || 'unknown');
+    const existing = streams.get(key);
+    if (existing) return existing;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const target = path.join(dir, `${key}.jsonl`);
+      const stream = fs.createWriteStream(target, { flags: 'a' });
+      stream.on('error', error => {
+        if (failed) return;
+        failed = true;
+        log('warn', `原始流量落盘中断: ${error.message}`);
+      });
+      streams.set(key, stream);
+      log('info', `原始流量落盘: ${target}`);
+      return stream;
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        log('warn', `原始流量落盘初始化失败: ${error.message}`);
+      }
+      return null;
+    }
+  }
+
+  return {
+    record(sessionId, cid, host, dirName, buffer, meta) {
+      if (!buffer || buffer.length === 0) return;
+      const stream = streamFor(sessionId);
+      if (!stream) return;
+      const line = {
+        t: Date.now(),
+        cid,
+        host,
+        dir: dirName,
+        len: buffer.length,
+        b64: Buffer.from(buffer).toString('base64'),
+        ...(meta || {}),
+      };
+      try {
+        stream.write(`${JSON.stringify(line)}\n`);
+      } catch {
+        // 落盘失败绝不影响转发
+      }
+    },
+    close(sessionId) {
+      const key = String(sessionId || 'unknown');
+      const stream = streams.get(key);
+      if (!stream) return;
+      streams.delete(key);
+      try {
+        stream.end();
+      } catch {
+        // 忽略
+      }
+    },
+    closeAll() {
+      for (const key of [...streams.keys()]) this.close(key);
+    },
+  };
+}
 
 const CONNECT_RE = /^CONNECT$/i;
 const BRACKETED_IP_RE = /^\[|\]$/g;
@@ -84,6 +162,8 @@ function findHeadEnd(buffer) {
 function createMitmProxyManager(deps = {}) {
   const { config, ca, friendExtractor, sessionStore, resourceUrlRecorder = null, log = () => {} } = deps;
   const activeServers = new Map(); // sessionId -> { port, servers, stop, autoStopTimer }
+  const dumper = createFrameDumper(config, log);
+  let connectionSeq = 0;
 
   // 资源 URL 记录失败绝不影响抓包转发；只对 GET 生效。
   function recordResourceUrl(host, target, method) {
@@ -187,6 +267,7 @@ function createMitmProxyManager(deps = {}) {
 
   function stopForSession(session) {
     return new Promise((resolve) => {
+      if (dumper) dumper.close(session.id);
       const entry = activeServers.get(session.id);
       if (!entry) {
         resolve();
@@ -279,6 +360,7 @@ function createMitmProxyManager(deps = {}) {
   }
 
   function startMitm(rawSocket, { host, port }, session) {
+    const cid = `c${connectionSeq += 1}-${host}`;
     let secureContext;
     try {
       secureContext = ca.getSecureContextForHost(host);
@@ -328,6 +410,7 @@ function createMitmProxyManager(deps = {}) {
      */
     const feedUpstream = (chunk) => {
       if (destroyed) return;
+      if (dumper) dumper.record(session.id, cid, host, 's2c', chunk);
       if (clientReady) clientTls.write(chunk);
 
       if (!wsParser) return;
@@ -376,6 +459,7 @@ function createMitmProxyManager(deps = {}) {
       if (destroyed) return;
 
       if (headParsed) {
+        if (dumper) dumper.record(session.id, cid, host, 'c2s', chunk);
         if (upstreamReady) upstream.write(chunk);
         else clientBuffer = Buffer.concat([clientBuffer, chunk]);
         return;
@@ -391,6 +475,7 @@ function createMitmProxyManager(deps = {}) {
       const headBytes = clientBuffer.subarray(0, headEnd);
       const rest = clientBuffer.subarray(headEnd);
       headParsed = true;
+      if (dumper) dumper.record(session.id, cid, host, 'chead', headBytes);
 
       // 提取登录 code / openID
       const parsed = parseHttpHead(headBytes);
@@ -457,7 +542,12 @@ function createMitmProxyManager(deps = {}) {
   }
 
   function handlePlainHttp(rawSocket, { host, port, path }, head, rest, session, bypassHosts) {
+    const cid = `c${connectionSeq += 1}-${host}`;
     const isBypass = bypassHosts.includes(host);
+    if (dumper) {
+      dumper.record(session.id, cid, host, 'chead', Buffer.from(String(head || ''), 'latin1'));
+      if (rest && rest.length > 0) dumper.record(session.id, cid, host, 'c2s', rest);
+    }
     const info = extractLoginInfo({ host, head, config });
     if (!isBypass && (info.code || info.openId)) {
       sessionStore.addCode(session, { code: info.code, openId: info.openId });
@@ -476,8 +566,14 @@ function createMitmProxyManager(deps = {}) {
       const rewritten = [parts[0], path || '/', parts[2] || 'HTTP/1.1', ...lines.slice(1)].join('\r\n');
       upstream.write(`${rewritten}\r\n\r\n`);
       if (rest.length > 0) upstream.write(rest);
-      rawSocket.on('data', chunk => upstream.write(chunk));
-      upstream.on('data', chunk => rawSocket.write(chunk));
+      rawSocket.on('data', chunk => {
+        if (dumper) dumper.record(session.id, cid, host, 'c2s', chunk);
+        upstream.write(chunk);
+      });
+      upstream.on('data', chunk => {
+        if (dumper) dumper.record(session.id, cid, host, 's2c', chunk);
+        rawSocket.write(chunk);
+      });
       upstream.on('error', () => rawSocket.destroy());
       rawSocket.on('error', () => upstream.destroy());
       upstream.on('close', () => rawSocket.destroy());

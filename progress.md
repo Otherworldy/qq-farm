@@ -691,3 +691,36 @@
       不依赖加密配置表（比农场的本地选种策略还简单）。
     - 阶段：0 抓包 → 1 只读 → 2 自家自动化 → 3 好友 → 4 面板。
   - 仍待办：**需要一份牧场抓包**才能开工阶段 1。
+- 2026-11-16 **牧场协议抓包成功，proto 已落地并验证（阶段 0 完成）**。
+  - 给内嵌抓包服务（`core/src/capture/`）加了原始流量落盘开关 `CAPTURE_DUMP_DIR`
+    （默认关闭；JSONL 逐块记录 `{t,cid,host,dir,len,b64}`，`dir` = chead/c2s/s2c）。
+    落盘只对 `captureHosts` 做 MITM，不影响原有抓包登录。
+  - 环境：Windows 系统代理 `127.0.0.1:18000` + 自签根证书 `QQFarmCaptureRootCA`
+    装入当前用户。用户操作一遍牧场，抓到 **1.4MB / 516 条消息**。
+  - **协议面完全确认**：牧场 = `gamepb.animalpb`（AnimalService + RanchService）
+    + `gamepb.homesteadpb`（HomesteadService + FeedMachineService）。
+    10 个 RPC 全部拿到请求/响应结构：
+    `GetRanchDetail` / `HarvestRanch` / `FeedAnimal` / `TriggerProduce` / `StealProduce`
+    / `CleanAllRanch` / `GetRanchOpTimes` / `GetBuildingList` / `GetFacilityDetail` / `AddFeed`。
+    通知：`FacilitiesNotify`（38 条）。
+  - 新增 `core/src/proto/pasturepb.proto` + `core/src/proto/homesteadpb.proto`，
+    字段名与 field number 经**两路交叉验证**：mcboot 静态提取的定义 + 真实回包解码，
+    8 个响应全部解通（RanchInfo / AnimalInst / OpQuota / FacilityDetail / FeedMachineState）。
+  - **两个实现坑（写进文档）**：
+    1. **请求体加密、响应体明文**。请求要 `tsdkRuntime.decrypt()`，响应直接 decode。
+       搞反会解出错位的 field number（曾解出 `field 1310`）。
+    2. **WS 帧前面有 HTTP 101 响应头**，s2c 必须先剥 `\r\n\r\n` 之前的部分，
+       否则分帧从错误偏移开始，整条连接全乱。
+  - 实测数据：`RanchInfo{ranch_inst_id:10001, capacity:4, animal_count:4}`；
+    `AnimalInst{animal_id:60002, stage:1, can_feed:true, expected_harvest_exp:360,
+    expected_harvest_sells:[{id:1007,count:2160}]}`；
+    `OpQuota{11003:100, 11008:20, 11009:10}`；
+    `FacilityDetail{facility_inst_id:10002, name:"牧草机", facility_id:7001001, level:8,
+    feed_machine:{capacity:99, current:72}}`。
+  - **新发现**：牧场的道具 ID 空间与农场不同 —— `expected_*_sells` 里的 `id=1007`
+    在农场 `ItemInfo.json` 里不存在（农场金币是 1001），属牧场专用道具，
+    需 `MCItemInfo` 加密表才能拿名字。
+  - **仍缺样本**：买动物/补栏、扩建 capacity、单个灾害处理、
+    `op_id`（11003/11008/11009）与操作的对应关系、好友牧场完整链路。
+  - 文档：`core/docs/pasture-automation-plan.md` 追加「抓包实测结果」附录
+    （10 个 RPC 表 + 数据样本 + 两个坑 + 工具链用法）。
