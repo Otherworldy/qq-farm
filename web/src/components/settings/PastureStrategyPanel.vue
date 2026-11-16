@@ -8,11 +8,12 @@ import { useAccountStore } from '@/stores/account'
  * 牧场运行策略。
  *
  * 对应农场的两项策略：
- *  - 优先种子  → 优先补栏动物（补栏时先买它，买不起才退到最便宜的）
+ *  - 优先种子  → 「优先指定动物」这个购买策略本身（选定后在同处挑动物）
  *  - 偷菜白名单 → 偷产物白名单（按货架 lot 的 animal_id 判断）
  *
  * 牧场没有「种植策略」那一套七选一算法：补栏的目标永远是「把空栏填满」，
- * 差别只在挑哪只，所以一个优先项加一个白名单就够了。
+ * 差别只在挑哪只。「优先指定动物」不是独立配置，它就是购买策略的一个选项，
+ * 选定后动物下拉在同一处展开。
  */
 
 const props = defineProps<{
@@ -50,7 +51,7 @@ const BUY_STRATEGIES = [
   { value: 'cheapest', label: '最便宜', hint: '按商店价格升序，最稳。' },
   { value: 'max_exp', label: '经验每小时最高', hint: '按真实养殖数据算经验/时；没养过的动物按价格降序垫后。' },
   { value: 'max_profit', label: '收入每小时最高', hint: '扣除买入价后的净收入/时；同上，无档案时按价格降序。' },
-  { value: 'preferred', label: '优先指定动物', hint: '先买下面指定的动物，买不起再按价格挑。' },
+  { value: 'preferred', label: '优先指定动物', hint: '先买指定的那只，买不起再按价格挑。' },
 ]
 
 const strategyHint = computed(() => {
@@ -123,7 +124,7 @@ onMounted(() => {
       补栏永远先用背包里的动物；只有背包没有、且开了「自动买动物」时才会花钱。
     </p>
 
-    <!-- 购买策略 -->
+    <!-- 购买策略（「优先指定动物」就是策略本身，选定后在同处挑动物） -->
     <div class="mb-4">
       <label class="mb-1 block text-xs text-gray-600 dark:text-gray-300">
         购买策略
@@ -136,6 +137,32 @@ onMounted(() => {
           {{ opt.label }}
         </option>
       </select>
+
+      <!-- 选了「优先指定动物」时直接在这里挑，不再单独一整块配置 -->
+      <div v-if="settings.pastureBuyStrategy === 'preferred'" class="mt-2">
+        <select
+          v-model.number="settings.pasturePreferredAnimal"
+          class="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+        >
+          <option :value="0">
+            选一只想养的动物…
+          </option>
+          <optgroup v-if="nest.length" label="窝类">
+            <option v-for="a in nest" :key="a.id" :value="a.id">
+              {{ a.name }} ({{ a.id }})
+            </option>
+          </optgroup>
+          <optgroup v-if="barn.length" label="棚类">
+            <option v-for="a in barn" :key="a.id" :value="a.id">
+              {{ a.name }} ({{ a.id }})
+            </option>
+          </optgroup>
+        </select>
+        <p v-if="!settings.pasturePreferredAnimal" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          还没选动物 —— 没选之前会按最便宜买。
+        </p>
+      </div>
+
       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
         {{ strategyHint }}
         「经验/时」「收入/时」用牧场里真实养殖出来的数据算；没养过的动物查不到档案，
@@ -182,37 +209,6 @@ onMounted(() => {
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <!-- 优先补栏动物 -->
-    <div class="mb-4">
-      <label class="mb-1 block text-xs text-gray-600 dark:text-gray-300">
-        优先补栏动物
-        <span v-if="settings.pastureBuyStrategy !== 'preferred'" class="text-gray-400">
-          （仅「优先指定动物」策略生效）
-        </span>
-      </label>
-      <select
-        v-model.number="settings.pasturePreferredAnimal"
-        class="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800"
-      >
-        <option :value="0">
-          不指定（买最便宜的）
-        </option>
-        <optgroup v-if="nest.length" label="窝类">
-          <option v-for="a in nest" :key="a.id" :value="a.id">
-            {{ a.name }} ({{ a.id }})
-          </option>
-        </optgroup>
-        <optgroup v-if="barn.length" label="棚类">
-          <option v-for="a in barn" :key="a.id" :value="a.id">
-            {{ a.name }} ({{ a.id }})
-          </option>
-        </optgroup>
-      </select>
-      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        指定的动物买不起时会自动退到买得起的；留空则永远挑最便宜的那只。
-      </p>
     </div>
 
     <!-- 偷产物白名单 -->
