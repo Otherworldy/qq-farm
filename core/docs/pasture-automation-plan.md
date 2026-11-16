@@ -1,0 +1,244 @@
+# 牧场自动化适配方案（规划）
+
+**触发**：2026-11-16 牧场正式开放，用户账号已可进入
+**前置文档**：`pasture-mc-analysis.md`（牧场是什么、美术/配置/玩法面）
+
+---
+
+## 一、结论先行
+
+**能做，且比预想的简单，但有一个硬前置：先抓一次包。**
+
+早期结论「牧场零协议、纯 Mock」是**错的**。修正后的真相：
+
+| 层 | 事实 |
+|---|---|
+| 数据模型 | mcboot 里定义了 **539 个 protobuf 消息、1937 个字段**，字段名全明文 |
+| 请求构造 | 有完整请求对象（`{ranch_inst_ids, op, animals, shelves}` 等），**20+ 个调用点** |
+| 传输 | mcboot **不做传输**，请求交给主包注入的网络模块（外部 dep `238`） |
+| 连接 | 与农场**同一条 WS、同一套 TSDK/ACE、同一个 `GateMessage` 外壳** |
+| RPC 名 | 被 TSDK 字节码 VM 加密，静态拿不到（`_Аce_7716`） |
+
+**关键推论**：既然共用同一条 WS 和同一套帧格式，那么**农场现有的网络层、TSDK、proto 加载、调度骨架全部可以直接复用**，牧场只需要补：协议定义 + 业务编排 + 面板。工作量约等于「再写一个 farming-orchestrator」，而不是「重做一个客户端」。
+
+---
+
+## 二、已经拿到的协议面（静态可得）
+
+字段名是明文，这部分**不需要抓包也能先写 proto**。
+
+### 2.1 核心数据模型
+
+```
+RanchInfo        1 ranch_inst_id  2 capacity  3 animal_count  4 animals[]
+                 5 grass  6 husbandry_type  7 shelves[]  8 hazards[]
+
+AnimalInst       1 ranch_inst_id  2 slot_index  3 animal_inst_id  4 animal_id
+                 5 stage  6 produce_count  7 can_harvest  10 grow_ready_at_ms
+                 11 produce_ready_at_ms  12 grass_blocked  14 infant_ready_at_ms
+                 15 producing  16 can_deliver  17 delivering_until_ms
+                 18 can_feed  19 limited_can_used  20 can_donate
+                 21 expected_harvest_exp  22 expected_harvest_sells[]
+                 23 expected_produce_exp  24 expected_produce_sells[]
+                 25 mature_ready_at_ms  30 mutation
+
+AnimalMutation   1 mutation_type  2 source  3 weight_display_x10  4 scale_bp
+                 5 weight_final_x10  6 tier  7 became_at_ms  8 strokable  9 stroked_gids[]
+
+Shelf            1 slot_index  2 lots[]  3 total_remain  4 can_collect  5 can_steal
+ShelfLot         1 item_id  2 base_num  3 remain_num  4 stolen_num  5 animal_id
+                 6 can_steal  7 stealers[]
+
+Grass            1 amount  2 empty_at_ms
+Hazard           1 hazard_id  2 owner  3 hazard_type
+
+RanchOp (req)    2 ranch_inst_ids[]  3 op  4 animals[]  5 shelves[]   ← op 决定带哪些
+OpQuota          1 op_id  2 times_limit  3 used_times  4 remaining_times
+```
+
+### 2.2 与农场模型的语义对应（这是自动化的落脚点）
+
+| 农场 `LandInfo` / `PlantInfo` | 牧场 `RanchInfo` / `AnimalInst` | 用途 |
+|---|---|---|
+| `lands[]` | `ranches[]` | 巡田/巡栏的入口 |
+| `getCurrentPhase()==MATURE` | `can_harvest == true` | 可收获 |
+| `phases[last].begin_time` | `produce_ready_at_ms` / `mature_ready_at_ms` | **精确抢收墙钟** |
+| `dry_num > 0`（需水） | `can_feed == true` / `grass_blocked` | 需投喂 |
+| `weed_owners` / `insect_owners` | `hazards[]` | 需要清理 |
+| `empty` 空地 | `capacity - animal_count` | 补栏 |
+| `isOccupiedSlaveLand`（2x2 从属） | 无对应（牧场是槽位制） | 简化 |
+| 好友 `stealable` | `Shelf.lots[].can_steal` | 偷产物 |
+
+**结论**：`farm-land-analyzer.js` 的分析器写法、`farming-orchestrator.js` 的「收获→务农→种植→升级」五段式、以及**成熟墙钟表**机制，结构上可以整体照搬，只换字段来源。
+
+### 2.3 已知请求（参数结构，方法名待抓包补）
+
+```
+{ranch_inst_ids}                                     拉取/刷新牧场
+{host_gid, targets}                                  好友牧场
+{ranch_inst_id, host_gid, hazard_ids}                 清灾害
+{ranch_inst_id, host_gid, op_id, count}               某种操作配额
+{ranch_inst_ids, op, animals, shelves}                ★核心操作（RanchOp）
+{op_ids}                                             查配额
+{host_gid, hazard_ids}
+{ranch_inst_id, capacity}                            扩栏
+{item_id, count}                                     买动物/买草
+{add_count, use_gold, host_gid}                      加油草
+{bucket_type}                                        草料桶
+```
+
+`op` 枚举值域 `0..4`（-1 无效）。从调用点可推：`op=1` 带 `shelves`、`op=3/4` 带 `animals`、`op=2` 两者都空 → 对应「收货架 / 喂食 / 清理 / 收获」一类，**但具体映射必须抓包确认，不能猜**。
+
+---
+
+## 三、逐层改造清单
+
+### ✅ 3.1 零改动复用（不要碰）
+
+| 模块 | 说明 |
+|---|---|
+| `utils/network.js` | WS 连接、`GateMessage` 帧编解码、TSDK 加密、心跳、重连。**唯一需要加的是通知分派分支** |
+| `utils/tsdk-runtime.js`、`utils/crypto-wasm.js`、`services/ace-service.js`、`utils/gateway-token.js` | 同一 AppID、同一 TSDK，牧场完全共用 |
+| `services/scheduler.js` | 命名空间定时器 |
+| `services/daily-events.js` | 事件流水，`type` 自定义即可 |
+| `services/json-db.js`、`config/runtime-paths.js` | 持久化 |
+| `runtime/worker-manager.js`、`runtime/data-provider.js`、`runtime/runtime-engine.js` | worker 通道骨架 |
+| `utils/idle-protection.js`、`utils/pause-until.js`、`services/rate-limiter.js`、`services/privacy-guard.js` | 护栏 |
+
+> `network.js` / `tsdk-runtime.js` / `scheduler.js` 里那些注释（启动竞态、踢下线、ACE 暂停、预算不计失败）都是线上事故换来的，**改一行都要有理由**。
+
+### 🔧 3.2 小幅修改（加分支/加白名单/加配置项）
+
+| 文件 | 要改什么 | 规模 |
+|---|---|---|
+| `utils/proto.js` | `performLoad` 的 `newRoot.load([...])` 加 `pasturepb.proto`；`resolved` 里挂一批新类型 | +1 行 +N 条 |
+| `services/request-governor.js` | `WHITELIST` / `WATCHMODE_METHODS` 加牧场 service.method；**预算要和农场分池**（当前 80/min 总，30/min 单方法，牧场进来要重新分配） | 中等 |
+| `models/store.js` | `DEFAULT_AUTOMATION` 加牧场开关组；`cloneAccountConfig` 同步（**否则多账号共享引用**） | 中等 |
+| `core/worker.js` | 加 `nextPastureRunAt`；`runUnifiedTick` 里插一段与 `runFarmTick` 同级；`handleApiCall` 加 case | 中等 |
+| `runtime/data-provider.js` | 映射表加 `getPasture` / `doPastureOp` 等 | 小 |
+| `controllers/admin.js` | 注册 `admin-pasture-routes` | 1 行 |
+| `network.js` | `handleNotify` 加牧场通知分支（`unknownNotifyTypes` 会先把它记下来，可以先用这个侦察） | 小 |
+| `web/src/router/menu.ts` | 加菜单项 | 1 行 |
+
+### 🆕 3.3 需要新增
+
+| 文件 | 职责 | 参照 |
+|---|---|---|
+| `core/src/proto/pasturepb.proto` | 牧场全部消息（可先用第二节的明文字段起草，抓包后校准） | `plantpb.proto` |
+| `core/src/services/pasture-api.js` | RPC 收口，照抄 `farm-api.js` 的三行封装模式 | `farm-api.js`（195 行） |
+| `core/src/services/pasture-analyzer.js` | 纯函数：`ranches[]` → 可收获/需喂/需清理/空栏/可偷/成熟墙钟 | `farm-land-analyzer.js`（670 行） |
+| `core/src/services/pasture-orchestrator.js` | 编排：收货架 → 收产物 → 喂草 → 清灾害 → 补栏 → 升级 | `farming-orchestrator.js`（691 行） |
+| `core/src/services/pasture-visit.js` | 好友牧场：进 → 分析 → 偷产物/帮喂 → 出 | `friend-visit.js`（1493 行，只需 Enter→分析→操作→Leave 骨架） |
+| `core/src/gameConfig/PastureAnimals.json` 等 | 动物/设施/饲料配置 | 数据来源见第五节 |
+| `core/src/controllers/admin-pasture-routes.js` | Express 路由 | `admin-farm-resource-routes.js` |
+| `web/src/views/Pasture.vue` + `stores/pasture.ts` + `components/PasturePanel.vue` | 面板 | `FarmPanel.vue` + `stores/farm.ts` |
+
+### 🚫 3.4 牧场没有对应物的（不要硬搬）
+
+- 施肥体系（`farm-fertilizer.js`、`fertilizer-watch.js`）— 牧场用「投喂草料」，语义不同
+- 2x2 主从地块 — 牧场是槽位制
+- 种植策略（`planting-service.js` 1250 行）— 作物换动物后策略维度不同（稀有度/成长周期/产出价值）
+
+---
+
+## 四、硬前置：拿到协议名
+
+### 4.1 为什么必须抓包
+
+RPC 方法名、proto 消息名、枚举成员名全部被 `globalThis._Аce_7716` 加密（纯 JS 字节码 VM）。
+静态尝试过：函数体已完整提取（11KB），VM 已能在 Node 装载，但 payload 需要真实的模块运行时环境，脱离游戏上下文会进死循环。
+
+**结论**：静态逆向成本远高于抓一次包，**不划算**。
+
+### 4.2 抓包为什么一定成功
+
+`GateMessage` 的外壳是明文：
+
+```protobuf
+message Meta {
+  string service_name = ...;   ← 明文
+  string method_name  = ...;   ← 明文
+  ...
+}
+```
+
+**只有 `body` 被 TSDK 加密**，而项目已经有 TSDK WASM，`inspect:protocol --decrypt-requests` 能直接解。
+
+### 4.3 现成工具
+
+```bash
+npm run inspect:protocol -- <牧场抓包.har> --decrypt-requests --shape
+npm run inspect:protocol -- <har> --service Ranch --direction request
+npm run inspect:protocol -- <har> --method RanchOp --pretty
+```
+
+支持 `_webSocketMessages`（WS 帧），支持按 service/method 过滤，支持 wire 结构摘要。
+
+### 4.4 需要抓什么动作
+
+按价值排序，**做一遍就能覆盖全部自动化所需**：
+
+| 场景 | 能确定的协议 |
+|---|---|
+| 打开牧场主界面 | 拉取 `RanchInfo` 的 service/method + 完整回包结构 |
+| 收割一次货架 | `op` 里「收货架」的值 |
+| 收一只动物的产物 | `op` 里「收产物」的值 |
+| 给栏舍添加牧草 | `op` 里「喂食」的值 + 草料扣减 |
+| 清理一个灾害（虫/杂草） | 灾害操作的方法 + `hazard_type` 语义 |
+| 买一只动物并放入栏舍 | 补栏链路 + `animal_id` 从哪来 |
+| 进入好友牧场偷一次 | 好友牧场链路 + `Shelf.can_steal` 的取值 |
+| 刷新一次牧场 | 是否有增量/通知推送（`PastureNotify`） |
+
+---
+
+## 五、数据来源问题
+
+自动化要算「什么时候收最划算」「该养什么」，需要配置数据：
+
+| 数据 | 状态 | 方案 |
+|---|---|---|
+| 动物 ID / 名称 / 成长时长 / 产出 | 35 张 `MC*` 配置表，**加密**（`FSpk…`） | 优先从协议回包拿（`AnimalInst` 已有 `expected_harvest_exp` / `expected_produce_sells`）；回包不够再解表 |
+| 饲料/牧草单价 | `MCGoods`（加密） | 从商店 RPC 回包拿 |
+| 设施/升级消耗 | `MCFacilityConfig`（加密） | 同上 |
+| 变异/重量分级 | `AnimalMutation` 已在协议里 | 直接用 |
+
+**重要**：`AnimalInst` 自带 `expected_*` 期望收益字段，这意味着**「该收哪个」可以直接从回包算，不依赖配置表** —— 这比农场的本地选种策略还简单。
+
+配置表解密（`FSpk` 前缀，疑似 XXTEA）可以留到后面，不阻塞主线。
+
+---
+
+## 六、分阶段实施
+
+| 阶段 | 内容 | 依赖 | 验收 |
+|---|---|---|---|
+| **0** | 抓一次牧场 HAR，跑 `inspect:protocol` 产出协议清单 | **需要用户操作** | 拿到 service/method/proto |
+| **1** | `pasturepb.proto` + `pasture-api.js` + 只读拉取 | 阶段 0 | 能在面板看到牧场状态（栏舍/动物/草/货架/灾害） |
+| **2** | `pasture-analyzer.js` + 自家自动化（收→喂→清→补） | 阶段 1 | 挂机一晚，无人工干预且产物正常入库 |
+| **3** | 好友牧场（偷产物/帮喂）+ 成熟墙钟调度 | 阶段 2 | 与农场偷菜同等的定时精度 |
+| **4** | 面板完善（地块网格、倒计时、开关分组）、统计 | 阶段 2 | 与 `FarmPanel` 同等可读性 |
+
+阶段 1 和阶段 2 之间是**主要工作量**（约等于重写一个 `farming-orchestrator`，但不含施肥/2x2/种植策略，实际约为其 60%）。
+
+---
+
+## 七、风险与护栏
+
+1. **灰度功能，接口会变**。牧场刚开放，`op` 枚举、字段都可能调整。必须保留「未知字段不 crash」的容错（`farm-land-analyzer.js` 的脏数据容错写法要照抄）。
+2. **请求预算**。当前 `request-governor` 是 80/min 总池、30/min 单方法。牧场接进来后要和农场**分池**，否则两边互相挤压。这是阶段 2 必须先解决的。
+3. **不猜 proto**。字段名和 `op` 值必须有抓包依据；猜错的代价是请求被服务端拒绝甚至风控，和 `故友重逢` 那个决定一致。
+4. **ACE 上报暂停逻辑**。`worker.js` 里「空闲 > 60s 暂停 ACE 上报」的机制，牧场 tick 也要遵守，否则会增加无谓的风控面。
+5. **和农场的让路关系**。农场已有「偷菜到点则让路」的优先级。牧场 tick 加入后要重新排优先级，建议：自家收获 always 最高（农场和牧场同级），其次好友偷取，最后日常。
+
+---
+
+## 八、下一步动作
+
+**唯一阻塞项是阶段 0**：需要一份牧场的抓包。
+
+拿到之后，`inspect:protocol` 能直接吐出 service/method/字段结构，我就可以开始写 `pasturepb.proto` 和 `pasture-api.js`。
+
+在此之前可以并行做的零风险准备（不依赖协议）：
+- `models/store.js` 加牧场开关组（纯配置，写完不影响运行）
+- `web/src/router/menu.ts` 加菜单占位
+- 把第二节的明文字段先写成 `pasturepb.proto` 草稿（抓包后校准）

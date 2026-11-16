@@ -660,3 +660,34 @@
     在 `mcboot/game.js` 里 0 次，无网络代码 → 自动化仍无从下手。
   - 已更正 `core/docs/pasture-mc-analysis.md`（新增第二节「入口判断的更正」、
     第三节「流传截图是真的但版本更新」，并把原入口小节降级为「数据仍是 Mock」）。
+- 2026-11-16 **牧场开放，协议面反转确认 + 出适配规划**。
+  - 用户报告牧场已能进。重新核查 81 包 `mcboot/game.js`（2.05MB）后**推翻早期「零协议纯 Mock」结论**：
+    - 文件里有 **539 个 protobuf 消息 / 1937 个字段**，字段名全明文（`ranch_inst_id`、`animal_inst_id`、
+      `grow_ready_at_ms`、`produce_ready_at_ms`、`can_harvest`、`can_feed`、`grass_blocked`、
+      `can_deliver`、`delivering_until_ms`、`expected_harvest_sells`、`shelves[]`、`hazards[]`、`op_results`
+      等），另有 42 个枚举 / 211 个成员。
+    - **mcboot 自己不传输**（`wx.request`/`WebSocket`/`fetch` 全 0），但**构造完整 proto 请求对象**交给
+      主包注入的网络模块（外部 dep `238`，其上调用 62 个方法索引）。请求如
+      `{ranch_inst_ids, op, animals, shelves}`、`{host_gid, targets}`、`{ranch_inst_id, host_gid, hazard_ids}`。
+    - **RPC 方法名/proto 消息名被 TSDK 字节码 VM 加密**：`globalThis._Аce_7716("<base64>",!1)(-1,[],{...},[void 0],void 0)()`。
+      注意 `Аce` 的 `А` 是**西里尔字母**（`grep ACE` 匹配不到）、`_7716` 是每次构建随机后缀 —— 这就是之前
+      三次「搜 RPC 名 0 次」的真正原因，**不是没有协议，是搜索方法失效**。
+  - **早期「入口未接」的教训同样适用**：`grep mcboot|plant|mainscene` 在业务代码里全 0，因为 bundle 名不硬编码。
+  - 尝试静态复现 `_Аce_7716`：函数体已完整提取（11019 字节，纯 JS 字节码 VM，99 条指令），
+    已在 Node 装载成功，但 payload 依赖真实模块运行时环境，脱离游戏上下文进死循环 → **静态逆向不划算**。
+  - **改为抓包路线**：`GateMessage.meta` 里 `service_name`/`method_name` 是**明文**（只有 body 被 TSDK 加密），
+    项目已有 `npm run inspect:protocol -- <har> --decrypt-requests` + `_webSocketMessages` WS 帧支持 → 抓一次即可。
+  - 产出 `core/docs/pasture-automation-plan.md`（规划，不写代码）：
+    - 可零改动复用：`network.js`/`tsdk-runtime.js`/`crypto-wasm.js`/`ace-service.js`/`scheduler.js`/
+      `daily-events.js`/`json-db.js`/worker 通道。
+    - 需小幅修改：`proto.js`（加载）、`request-governor.js`（**预算要分池**）、`store.js`（automation 加组）、
+      `worker.js`（加 pasture tick）、`data-provider.js`、`admin.js`、`menu.ts`。
+    - 需新增：`pasturepb.proto`、`pasture-api.js`、`pasture-analyzer.js`、`pasture-orchestrator.js`、
+      `pasture-visit.js`、`admin-pasture-routes.js`、`Pasture.vue` + `stores/pasture.ts`。
+    - **语义 1:1 映射**：`can_harvest ↔ MATURE`、`produce_ready_at_ms ↔ phases[last].begin_time`（精确抢收墙钟）、
+      `can_feed ↔ dry_num`、`hazards[] ↔ weed_owners/insect_owners`、`capacity-animal_count ↔ empty`、
+      `ShelfLot.can_steal ↔ stealable`。
+    - **`AnimalInst` 自带 `expected_harvest_exp`/`expected_produce_sells`** → 收益判断可直接从回包算，
+      不依赖加密配置表（比农场的本地选种策略还简单）。
+    - 阶段：0 抓包 → 1 只读 → 2 自家自动化 → 3 好友 → 4 面板。
+  - 仍待办：**需要一份牧场抓包**才能开工阶段 1。
