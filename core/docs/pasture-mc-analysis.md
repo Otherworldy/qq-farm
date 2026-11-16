@@ -196,11 +196,41 @@ PastureWorld (script/world/PastureWorld.ts)
 
 ## 四、玩法清单（10 篇官方文档 + 配置表交叉）
 
-### 核心循环
+### 核心循环（牧场有自己的地块，与农场 24 块地互不相干）
 进牧场 → 自动铺 80% 地块 → 点地块开种植面板 → 选/拖种子 → 逐阶段生长
 → 成熟出可摘特效 → 点击收获 → 枯萎 → 铲除清空。
 
-作物从文案可见：**牧草、小麦、番茄**（阶段：种子→发芽→幼苗→小叶→抽穗/开花→成熟）。
+`PastureWorld` 是独立世界（`SceneType.Pasture`），自带 TileMap 和地块，
+与农场主包 `script/game/farm/` **并行、互不干扰**（文档第 1 节原文）。
+
+#### 三种作物（代码硬编码，非配置驱动）
+
+`mcboot/game.js` 里有完整的 Mock 作物表 `z = [B, 小麦, 番茄]`：
+
+| 作物 | 阶段链 | 阶段数 |
+|---|---|---|
+| 第 1 种（名字取自字符串池索引，未解出；`"牧草"` 在代码中仅作 fallback 默认名） | 种子 → 发芽 → 幼苗 → 成熟 | 4 |
+| **小麦** | 种子 → 发芽 → **抽穗** → 成熟 | 4 |
+| **番茄** | 种子 → 发芽 → **小叶** → **开花** → 成熟 | 5 |
+
+导出接口（`System` 注册的 mock 模块）：
+
+```js
+buildMockPlantConfig(plantId, name, cropAsset)  // 有 cropAsset 就直接造，否则回落默认
+getMCPlantSpritePath(name, stage)               // `${base}/${name}_${stage}${ext}`
+getMockPlantConfig
+randomMockPlantConfig()                         // floor(random()*z.length) 随机取一种
+```
+
+**关键**：`randomMockPlantConfig` 随机挑作物，说明现在是 Mock 行为（真实玩法应由玩家选种子）。
+35 个配置表里**没有** MCCrop / MCPlant / MCSeed —— 作物时长与产物尚无正式配置，
+文档第 9 节把「作物构造 & 阶段时长」列为待接服项之一。
+
+#### 为什么牧场要种地
+
+补给链：**种作物 → 收牧草/饲料 → 投入牧草机 → 喂动物 → 动物（幼崽→成长→生产）产出**（如鸡蛋）。
+牧草机文档写明「从仓库消耗牧草道具」，仓库无草时按钮变「去商店」——
+即牧草既是种出来的，也能直接买。
 
 ### 八大模块
 
