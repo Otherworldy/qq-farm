@@ -24,6 +24,7 @@ const {
     cleanRanch,
     placeAnimal,
     strokeAnimal,
+    triggerProduce,
     getFacilityDetail,
     addFeed,
     getAnimalShop,
@@ -32,6 +33,7 @@ const {
     FEED_MACHINE_FACILITY_ID,
 } = require('./pasture-api');
 const { getBag } = require('./warehouse');
+const { recordOperation } = require('./stats');
 const { analyzeRanches, msUntilNextProduce, GRASS_LOW_THRESHOLD } = require('./pasture-analyzer');
 
 // ─── 模块状态 ───
@@ -99,6 +101,7 @@ async function performHarvest(analysis) {
         count: analysis.harvestable.length,
     });
     noteEvent('info', `牧场收获 ${analysis.harvestable.length} 只动物产物，约 +${gainedExp} 经验`);
+    recordOperation('pastureHarvest', analysis.harvestable.length);
     // 收获回包带最新 RanchInfo，后续判断用它而不是再拉一次
     return { reply, count: analysis.harvestable.length };
 }
@@ -131,28 +134,29 @@ async function performCollectShelves(analysis) {
 
 /** 投喂：can_feed 的动物 */
 /**
- * TriggerProduce —— 不要自动调用。
+ * 触发生产：让到了生产阶段却没开工的动物进入产出周期。
  *
- * 文档里它标的是「开始生产」，mcboot 的 `MCOneKeyTriggerProduceOp.ts` 里
- * 对应的注释却是「一键开轮」。真机两次复现的结果是后者：
- * 调用后产物进了货架，同时**动物整个从栏位消失**（3/3 → 0/3）。
+ * 早先这里被误判成「会把动物收出栏」而禁用，原因是那批日志里
+ * 紧跟着一条 `收货架`（当时用的是 HarvestRanch），动物其实是被那一步收走的。
+ * 后来单独做实验确认：TriggerProduce 之后栏位仍是 3/3，货架才多出产物。
+ * 所以它是安全的，真正危险的是拿 HarvestRanch 去收货架。
  *
- * 也就是说它不是「让鸡开始下蛋」，而是「把这个栏位的这一轮跑完并出栏」。
- * 自动调用等于自动清空牧场，所以这里只记录，绝不发请求。
- * 真要收产物应该用 CollectProduce（同样没有 proto 样本）。
+ * 接口无参数，一次调用覆盖所有待开工的动物。
  */
-let lastNeedsProduceCount = -1;
-
-function noteProduceCandidates(analysis) {
-    const count = (analysis && analysis.needsProduce || []).length;
-    // 只在这批动物的数量变化时记一次，否则每 25 秒刷一条同样的日志
-    if (!count || count === lastNeedsProduceCount) return 0;
-    lastNeedsProduceCount = count;
-    logPasture(`有 ${count} 只动物未开工（TriggerProduce 会连动物一起出栏，暂不自动调用）`, {
-        event: '牧场待开工',
-        count,
-    });
-    return 0;
+async function performTriggerProduce(analysis) {
+    if (!analysis || !(analysis.needsProduce || []).length) return 0;
+    const count = analysis.needsProduce.length;
+    try {
+        await triggerProduce();
+        logPasture(`触发生产 ${count} 只动物`, { event: '牧场触发生产', count });
+        noteEvent('info', `牧场触发 ${count} 只动物开始生产`);
+        return count;
+    } catch (err) {
+        if (!isTransientNetworkError(err)) {
+            logWarn('牧场', `触发生产失败: ${err.message}`);
+        }
+        return 0;
+    }
 }
 
 async function performFeed(analysis) {
@@ -164,6 +168,7 @@ async function performFeed(analysis) {
     const reply = await feedAnimal(targets, 1);
     logPasture(`投喂 ${targets.length} 只动物`, { event: '牧场投喂', count: targets.length });
     noteEvent('info', `牧场投喂 ${targets.length} 只动物`);
+    recordOperation('pastureFeed', targets.length);
     return { reply, count: targets.length };
 }
 
@@ -196,6 +201,7 @@ async function performClean(analysis) {
         mode,
     });
     noteEvent('info', `牧场清理 ${analysis.needClean.length} 个灾害`);
+    recordOperation('pastureClean', analysis.needClean.length);
     return { reply, count: analysis.needClean.length };
 }
 
@@ -242,6 +248,7 @@ async function performRefillSlots(analysis) {
     }
     if (placed > 0) {
         logPasture(`补栏 ${placed} 只（用背包库存）`, { event: '牧场补栏', count: placed });
+        recordOperation('pastureRefill', placed);
         noteEvent('info', `牧场补栏 ${placed} 只动物`);
         return placed;
     }
@@ -289,6 +296,7 @@ async function performRefillSlots(analysis) {
             price: pick.price,
         });
         noteEvent('info', `牧场买入并补栏 1 只动物（花费 ${pick.price}）`);
+        recordOperation('pastureRefill', 1);
         return 1;
     } catch (err) {
         lastBuyAnimalFailAtMs = now;
@@ -340,6 +348,7 @@ async function performRefillGrass(analysis) {
             capacity,
         });
         noteEvent('info', `牧场牧草机补草（${current}/${capacity}）`);
+        recordOperation('pastureGrass', 1);
         return 1;
     } catch (err) {
         if (!isTransientNetworkError(err)) {
@@ -378,6 +387,7 @@ async function performStroke(analysis) {
     }
     if (count > 0) {
         logPasture(`抚摸 ${count} 只动物`, { event: '牧场抚摸', count });
+        recordOperation('pastureStroke', count);
     }
     return count;
 }
@@ -419,8 +429,9 @@ async function runPastureOperation(opType = 'all') {
             if (r) actions.push('harvest');
         }
     }
-    if (analysis.needsProduce && analysis.needsProduce.length) {
-        noteProduceCandidates(analysis);
+    if (want('produce', 'pasture_produce') && analysis.needsProduce.length) {
+        const n = await performTriggerProduce(analysis);
+        if (n) actions.push('trigger_produce');
     }
     if (want('stroke', 'pasture_stroke') && analysis.strokable.length) {
         const n = await performStroke(analysis);
@@ -510,7 +521,6 @@ function resetPastureStateForTests() {
     lastBuyAnimalAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
     strokedAtMs.clear();
-    lastNeedsProduceCount = -1;
 }
 
 module.exports = {
@@ -525,7 +535,7 @@ module.exports = {
     performFeed,
     performClean,
     performStroke,
-    noteProduceCandidates,
+    performTriggerProduce,
     performRefillSlots,
     performRefillGrass,
     STROKE_MAX_PER_ROUND,

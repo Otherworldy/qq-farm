@@ -447,6 +447,14 @@ const OP_META: Record<string, { label: string, icon: string, color: string }> = 
   taskClaim: { label: '任务', icon: 'i-carbon-task-complete', color: 'text-indigo-500' },
   sell: { label: '出售', icon: 'i-carbon-shopping-cart', color: 'text-pink-500' },
   tongQiGift: { label: '同气礼包', icon: 'i-carbon-gift', color: 'text-rose-500' },
+  // 牧场
+  pastureHarvest: { label: '牧场收获', icon: 'i-carbon-home', color: 'text-teal-500' },
+  pastureFeed: { label: '牧场投喂', icon: 'i-carbon-wheat', color: 'text-amber-500' },
+  pastureClean: { label: '牧场清理', icon: 'i-carbon-clean', color: 'text-rose-400' },
+  pastureStroke: { label: '牧场抚摸', icon: 'i-carbon-touch-1', color: 'text-violet-500' },
+  pastureRefill: { label: '牧场补栏', icon: 'i-carbon-add-alt', color: 'text-sky-500' },
+  pastureGrass: { label: '牧场补草', icon: 'i-carbon-sprout', color: 'text-emerald-500' },
+  pastureSteal: { label: '牧场偷取', icon: 'i-carbon-run', color: 'text-orange-500' },
 }
 
 const filteredOperations = computed(() => {

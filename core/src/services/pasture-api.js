@@ -129,6 +129,26 @@ async function triggerProduce() {
 }
 
 /**
+ * 收取副产品（货架上的蛋/奶）。
+ *
+ * ⚠️ 服务端目前对这个方法一律返回 1020002（网络繁忙）。
+ * 已实验排除：AnimalService / RanchService 两个 service、空 body、
+ * ranch_inst_ids 在字段 1/2/3 的 varint 与 packed 形态、以及嵌套 message 形态，
+ * 全部同一个错误码；同期 TriggerProduce 能返回业务码 1045232，说明不是限流。
+ * 结论：要么方法未实现，要么请求体结构比现有猜测复杂得多 —— 需要真实抓包才能定。
+ * 保留这个函数是为了将来补上字段后直接接线，**当前不要调用**。
+ */
+async function collectProduce(ranchIds) {
+    const ids = Array.isArray(ranchIds) && ranchIds.length ? ranchIds : [10001];
+    const payload = { ranch_inst_ids: ids.map(id => toLong(id)) };
+    return sendPastureRequest(
+        ANIMAL_SERVICE, 'CollectProduce',
+        types.CollectProduceRequest, types.CollectProduceReply,
+        payload
+    );
+}
+
+/**
  * 偷取好友牧场产物
  * @param {number} [hostGid] 被偷者 gid（好友）；不传则用自己
  * @param {{ranchInstId:number, animalInstId:number}} [target] 指定偷哪只；不传=全部可偷
@@ -294,6 +314,7 @@ async function addFeed(facilityInstId, count = 1) {
 }
 
 module.exports = {
+    collectProduce,
     ANIMAL_SERVICE,
     RANCH_SERVICE,
     HOMESTEAD_SERVICE,

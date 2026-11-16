@@ -1010,3 +1010,80 @@ pasture-task.test.js   9 项（scene_id 编码 / 只领 4·5·6 / 开关独立 /
   面板却停在旧组件上（加不加 `:key` 都一样）。去掉过渡层后四个 tab 都正常。
 - **运行策略补齐**：新增「优先补栏动物」（对应农场优先种子）和
   「偷产物白名单」（对应农场偷菜白名单），进「策略设置 → 牧场策略」。
+
+---
+
+# 第四轮：把 TriggerProduce 判对了，CollectProduce 判死了
+
+## 一、修正：TriggerProduce 是安全的（上一轮判错了）
+
+上一轮看到「触发生产」之后动物消失，就认定它会清空栏位。**那是错的。**
+
+单独做了一次干净实验，只调 `TriggerProduce`，别的什么都不做：
+
+```
+实验前：栏位 3/3，货架 0
+后：TriggerProduce → ok，返回完整 ranches
+后：栏位 3/3（动物还在！），货架 3 个槽位各 5 项产物
+```
+
+**动物是在上一步「收货架」里被 `HarvestRanch` 收走的**，和 `TriggerProduce` 无关。
+两个操作在日志里前后脚出现，才看错了因果。
+
+所以 `pasture_produce` 开关恢复，自动流程恢复调用。真机日志：
+
+```
+11:55:01 触发生产 1 只动物 → trigger_produce
+11:55:12 货架有 1 个待收（需要 CollectProduce，跳过）
+11:55:12 收获 1 只（预期 +1 经验）→ harvest
+```
+
+从买入、投喂、清理、触发生产到收获出栏，一整轮养殖全自动跑完。
+
+## 二、CollectProduce：服务端不可用，不是字段问题
+
+`TriggerProduce` 能返回业务码 `1045232`（当前没有可以生产的），说明链路是通的。
+但 `CollectProduce` **无论发什么都是 `1020002 网络繁忙`**。
+
+穷举排除过的组合：
+
+| 维度 | 试过 |
+|---|---|
+| service | `AnimalService`、`RanchService` |
+| 空 body | ✅ |
+| `ranch_inst_ids` 字段号 | 1 / 2 / 3 |
+| 编码形态 | varint、packed repeated、嵌套 message |
+| 带 slot_index | 1 / 5 |
+| 静默 70 秒后单发 | 排除限流 |
+
+**全部同一个错误码**，而同期 `TriggerProduce` 正常 → **不是限流、不是参数**。
+是方法未实现，或请求体结构比这些猜测复杂得多。
+
+**结论**：`collectProduce()` 保留在 `pasture-api.js` 但加了大段警告注释，**当前不调用**。
+货架产物会堆着，用户进游戏手动收。要打通最后一段，需要抓一次游戏里点
+「收取副产品」的包 —— 有字节我就能像 `scene_id=2` 那样反推出来。
+
+## 三、今日统计对齐
+
+农场的「今日统计」有一堆计数器，牧场之前一个都没接。现在补齐 7 项：
+
+`pastureHarvest / pastureFeed / pastureClean / pastureStroke / pastureRefill / pastureGrass / pastureSteal`
+
+真机验证（跑了几轮之后）：
+
+```json
+{"Harvest": 11, "Feed": 14, "Clean": 2, "Stroke": 0, "Refill": 8, "Grass": 0, "Steal": 0}
+```
+
+概览页「今日统计」里直接可见，图标和配色与农场项一致。
+
+## 四、当前完整状态
+
+```
+买入 → 补栏 → 投喂 → 清理灾害 → 触发生产 → 产物进货架 → 收获出栏
+  ✅     ✅      ✅        ✅          ✅           ⚠️          ✅
+                                                （收不走）
+```
+
+唯一缺口是货架那一段。动物会走完整个生命周期，牧场币也会持续消耗
+（`pasture_buy_animal` 打开时）—— 这是养殖循环本身的设计，不是 bug。

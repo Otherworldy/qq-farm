@@ -33,6 +33,7 @@ export interface AutomationConfig {
   // 牧场（MC）
   pasture?: boolean
   pasture_harvest?: boolean
+  pasture_produce?: boolean
   pasture_feed?: boolean
   pasture_clean?: boolean
   pasture_stroke?: boolean

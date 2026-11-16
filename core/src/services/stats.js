@@ -52,7 +52,15 @@ const operations = {
   sell: 0,
   upgrade: 0,
   levelUp: 0,
-  tongQiGift: 0
+  tongQiGift: 0,
+  // 牧场（与农场的分项平行，面板「今日统计」里看得见）
+  pastureHarvest: 0,
+  pastureFeed: 0,
+  pastureClean: 0,
+  pastureStroke: 0,
+  pastureRefill: 0,
+  pastureGrass: 0,
+  pastureSteal: 0
 };
 
 /** 同气连枝礼包计数 */

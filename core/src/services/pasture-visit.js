@@ -14,6 +14,7 @@ const { getUserState, isConnected } = require('../utils/network');
 const { toNum, log, logWarn } = require('../utils/utils');
 const { isAutomationOn, getPastureStealWhitelist } = require('../models/store');
 const { recordEvent } = require('./daily-events');
+const { recordOperation } = require('./stats');
 const { getRanchDetail, stealProduce } = require('./pasture-api');
 const { analyzeRanches } = require('./pasture-analyzer');
 const { getAllFriends } = require('./friend-api');
@@ -100,6 +101,7 @@ async function checkFriendPastures(options = {}) {
             try {
                 await stealProduce(friend.gid);
                 stolen += 1;
+                recordOperation('pastureSteal', 1);
                 log('牧场', `偷取好友 ${friend.name || friend.gid} 的产物`, {
                     module: 'pasture',
                     event: '牧场偷取',

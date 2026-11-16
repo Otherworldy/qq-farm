@@ -263,6 +263,8 @@ async function performLoad() {
     resolved.FeedAnimalReply = newRoot.lookupType('gamepb.animalpb.FeedAnimalReply');
     resolved.TriggerProduceRequest = newRoot.lookupType('gamepb.animalpb.TriggerProduceRequest');
     resolved.TriggerProduceReply = newRoot.lookupType('gamepb.animalpb.TriggerProduceReply');
+    resolved.CollectProduceRequest = newRoot.lookupType('gamepb.animalpb.CollectProduceRequest');
+    resolved.CollectProduceReply = newRoot.lookupType('gamepb.animalpb.CollectProduceReply');
     resolved.StealProduceRequest = newRoot.lookupType('gamepb.animalpb.StealProduceRequest');
     resolved.StealProduceReply = newRoot.lookupType('gamepb.animalpb.StealProduceReply');
     resolved.CleanAllRanchRequest = newRoot.lookupType('gamepb.animalpb.CleanAllRanchRequest');

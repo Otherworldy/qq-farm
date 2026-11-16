@@ -490,9 +490,9 @@ test('补栏：指定的优先动物买不起时退到买得起的', async () =>
     assert.ok(buyCall && buyCall.includes(':10002:'), `买不起鹅时买鸡（实际 ${buyCall}）`);
 });
 
-// ── TriggerProduce 绝不能自动调用：它会连动物一起出栏 ──
+// ── TriggerProduce 会触发产出，动物留在栏位（实测 3/3 不变）──
 
-test('TriggerProduce：即使有未开工的动物也绝不自动调用', async () => {
+test('触发生产：停在生产阶段没开工的动物会被 TriggerProduce 叫醒', async () => {
     const { orchestrator, calls } = setupMocks({
         reply: {
             ranches: [{
@@ -503,16 +503,16 @@ test('TriggerProduce：即使有未开工的动物也绝不自动调用', async 
                 shelves: [], hazards: [],
             }],
         },
-        auto: {},
+        auto: { pasture_produce: true },
     });
 
-    await orchestrator.runPastureOperation('all');
-    assert.equal(calls.includes('triggerProduce'), false,
-        'TriggerProduce 是「一键开轮」，调用会把动物整个收出栏（真机复现 3/3 → 0/3）');
+    const result = await orchestrator.runPastureOperation('all');
+    assert.ok(calls.includes('triggerProduce'), '应发 TriggerProduce');
+    assert.ok(result.actions.includes('trigger_produce'), '动作里要记下来');
 });
 
-test('TriggerProduce：只在日志里如实记录待开工数量', async () => {
-    const { orchestrator } = setupMocks({
+test('触发生产：开关关掉就不发请求', async () => {
+    const { orchestrator, calls } = setupMocks({
         reply: {
             ranches: [{
                 ranch_inst_id: 10001, capacity: 3, grass: { amount: 100 },
@@ -522,8 +522,27 @@ test('TriggerProduce：只在日志里如实记录待开工数量', async () => 
                 shelves: [], hazards: [],
             }],
         },
-        auto: {},
+        auto: { pasture_produce: false },
     });
-    // 不抛错即可；这条测试保证记录路径本身不会发请求
-    await assert.doesNotReject(() => orchestrator.runPastureOperation('all'));
+
+    await orchestrator.runPastureOperation('all');
+    assert.equal(calls.includes('triggerProduce'), false);
+});
+
+test('触发生产：已经在产的动物不重复触发', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: {
+            ranches: [{
+                ranch_inst_id: 10001, capacity: 3, grass: { amount: 100 },
+                animals: [
+                    { ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 7, animal_id: 60001, stage: 3, producing: true },
+                ],
+                shelves: [], hazards: [],
+            }],
+        },
+        auto: { pasture_produce: true },
+    });
+
+    await orchestrator.runPastureOperation('all');
+    assert.equal(calls.includes('triggerProduce'), false, '没有待开工的就不该发');
 });

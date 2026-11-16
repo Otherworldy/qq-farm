@@ -225,11 +225,25 @@ message GetRanchOpTimesReply {
     repeated OpQuota quotas = 1;
 }
 
+// 收取副产品（货架上的蛋/奶）。
+// 官方文档「牧场操作 RPC」给出方法名 collectProduce → CollectProduce，
+// 但请求体至今没有抓包样本，mcboot 与主包里也只有混淆后的调用。
+// 这里先按空消息定义，只用来做一次可验证实验：发出去看服务端是成功还是报错。
+// 一旦拿到真实样本，把字段补到 CollectProduceRequest 上。
+message CollectProduceRequest {
+    // 实验：参照 HarvestRanch / GetRanchDetail 都用 ranch_inst_ids，先试字段 1
+    repeated int64 ranch_inst_ids = 1;
+}
+message CollectProduceReply {
+    repeated RanchInfo ranches = 1;
+}
+
 service AnimalService {
     rpc GetRanchDetail(GetRanchDetailRequest) returns (GetRanchDetailReply);
     rpc FeedAnimal(FeedAnimalRequest) returns (FeedAnimalReply);
     rpc HarvestRanch(HarvestRanchRequest) returns (HarvestRanchReply);
     rpc TriggerProduce(TriggerProduceRequest) returns (TriggerProduceReply);
+    rpc CollectProduce(CollectProduceRequest) returns (CollectProduceReply);
     rpc StealProduce(StealProduceRequest) returns (StealProduceReply);
     rpc PlaceAnimal(PlaceAnimalRequest) returns (PlaceAnimalReply);
 }

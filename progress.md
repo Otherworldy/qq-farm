@@ -913,3 +913,22 @@
     `pasture-analyzer.test.js` 22 项，牧场全套 **97 项全绿**。
     新增断言覆盖「货架绝不调 HarvestRanch」「TriggerProduce 绝不自动调」
     「优先动物买不起时退让」「白名单不命中不发偷取请求」。
+- 2026-11-16 **牧场第四轮：纠正 TriggerProduce 误判 + 今日统计对齐**。
+  - **纠正上一轮的错误结论**：`TriggerProduce` **不会**收走动物。干净实验（只调它、
+    别的都不做）：调用前 3/3 货架 0 → 调用后 **栏位仍 3/3**，货架多出 3 槽各 5 项产物。
+    上一轮把「触发生产 → 收货架(harvestRanch)」两步看成一步，才误判成 TriggerProduce 有害。
+    `pasture_produce` 开关恢复（前后端），自动流程恢复调用。
+  - **完整养殖循环真机跑通**（日志实录）：
+    `买入并补栏` → `feed → clean` → `触发生产 1 只动物` → `货架待收` → `收获 1 只`。
+  - **`CollectProduce` 判定为服务端不可用**（不是字段问题）：穷举
+    `AnimalService`/`RanchService` × 空 body × 字段 1/2/3 × varint/packed/嵌套 message ×
+    带 slot_index × 静默 70 秒后单发，**全部 `1020002 网络繁忙`**；同期 `TriggerProduce`
+    正常返回业务码 `1045232` → 排除限流与参数错误。函数保留但加警告注释，当前不调用。
+    货架产物留给用户进游戏手动收；打通最后一段需要抓一次「收取副产品」的包。
+  - **今日统计对齐**（需求 4 的补漏）：农场有 18 项计数器，牧场一项都没接。
+    新增 `pastureHarvest/pastureFeed/pastureClean/pastureStroke/pastureRefill/pastureGrass/pastureSteal`，
+    在 orchestrator 与 visit 各处 `recordOperation`。真机验证后概览页「今日统计」显示
+    `{Harvest:11, Feed:14, Clean:2, Refill:8}`，图标配色与农场项一致。
+  - 临时实验端点（`/api/pasture/probe`）用完即删，不留调试入口在生产代码里。
+  - 测试：牧场全套 **98 项全绿**（含「触发生产会发请求 / 开关关掉不发 / 已在产不重复触发」
+    三条按新结论重写的断言）。

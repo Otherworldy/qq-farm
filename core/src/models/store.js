@@ -274,6 +274,8 @@ const DEFAULT_AUTOMATION = {
     // 四个子项全开，与农场「farm + harvest/plant」的粒度保持一致。
     pasture: true,
     pasture_harvest: true,
+    // 触发生产：让到了生产阶段的动物进入产出周期（实测动物会留在栏位）
+    pasture_produce: true,
     pasture_feed: true,
     pasture_clean: true,
     pasture_stroke: true,

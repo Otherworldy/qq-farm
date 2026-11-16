@@ -83,6 +83,7 @@ function createAutomationSettings() {
       golden_bug_clear: true,
       pasture: true,
       pasture_harvest: true,
+      pasture_produce: true,
       pasture_feed: true,
       pasture_clean: true,
       pasture_stroke: true,
