@@ -36,6 +36,8 @@ interface StrategySettings {
     helpMax: number
     stealMin: number
     stealMax: number
+    pastureMin: number
+    pastureMax: number
   }
   friendQuietHours: {
     enabled: boolean

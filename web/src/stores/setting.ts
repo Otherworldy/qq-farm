@@ -40,6 +40,7 @@ export interface AutomationConfig {
   pasture_grass?: boolean
   pasture_buy_animal?: boolean
   pasture_steal?: boolean
+  pasture_task?: boolean
 }
 
 export interface IntervalsConfig {
@@ -53,6 +54,8 @@ export interface IntervalsConfig {
   helpMax?: number
   stealMin?: number
   stealMax?: number
+  pastureMin?: number
+  pastureMax?: number
 }
 
 export interface FriendQuietHoursConfig {

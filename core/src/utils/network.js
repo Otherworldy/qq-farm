@@ -661,6 +661,20 @@ function handleNotify(msg) {
             return;
         }
 
+        // 牧场设施变化：牧草机草量、动物状态都会走这条。
+        // 只用来「提前叫醒」牧场 tick，不在这里做业务判断 —— 真正的决策仍然
+        // 拿着 GetRanchDetail 的最新快照做，避免推送里的字段不全导致误判。
+        if (type.includes('FacilitiesNotify')) {
+            try {
+                const notify = types.FacilitiesNotify.decode(eventBody);
+                networkEvents.emit('facilitiesChanged', {
+                    count: (notify.facilities || []).length,
+                    hostGid: toNum(notify.host_gid),
+                });
+            } catch { }
+            return;
+        }
+
         // 红点 / 列表变更 / 每日计数类推送：纯 UI 状态提示，业务数据由定时轮询兜底。
         // 按后缀匹配而不是逐条列举，新增同类推送不应反复刷成“未知推送风险”。
         if (

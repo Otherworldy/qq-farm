@@ -282,7 +282,10 @@ const DEFAULT_AUTOMATION = {
     // 买动物要花牧场货币（item 1007）。默认关闭，让用户显式开启。
     pasture_buy_animal: false,
     // 好友牧场偷产物。默认关闭：会给每个好友多发一次请求，预算要先让农场。
-    pasture_steal: false
+    pasture_steal: false,
+    // 牧场任务领取（同一套 TaskService，scene_id=2 / task_type 4·5·6）。
+    // 与农场的 task 完全独立：关掉农场任务不应连带停掉牧场。
+    pasture_task: true
 };
 
 /** 默认间隔配置（秒） */
@@ -295,7 +298,10 @@ const DEFAULT_INTERVALS = {
     // 偷菜：无已知成熟墙钟时的重新发现间隔。默认贴近 2026-10-18 前的
     // 硬编码行为（5-8 分钟高斯抖动），用户主动改小才提高巡查密度。
     stealMin: 300,
-    stealMax: 480
+    stealMax: 480,
+    // 牧场：动物动作少、周期长，比农场稀疏。默认 20-30 秒。
+    pastureMin: 20,
+    pastureMax: 30
 };
 
 /** 默认静默时段 */

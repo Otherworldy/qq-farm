@@ -30,6 +30,7 @@ interface AutomationSettings {
     pasture_grass: boolean
     pasture_buy_animal: boolean
     pasture_steal: boolean
+    pasture_task: boolean
     fertilizer_gift: boolean
     fertilizer_buy_organic: boolean
     fertilizer_buy_normal: boolean
@@ -187,9 +188,11 @@ const mysteryShopSettingsVisible = ref(false)
           <BaseSwitch v-model="settings.automation.pasture_grass" label="自动给牧草机补草" />
           <BaseSwitch v-model="settings.automation.pasture_buy_animal" label="自动买动物（花牧场币）" />
           <BaseSwitch v-model="settings.automation.pasture_steal" label="偷好友牧场产物" />
+          <BaseSwitch v-model="settings.automation.pasture_task" label="自动领牧场任务" />
         </div>
         <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
           「自动买动物」默认关闭，开启后才会花牧场货币补充空栏；补栏始终优先用背包里已有的动物。
+          牧场任务与农场任务是两套进度（同一 TaskService，scene_id=2），可以独立开关。
         </p>
       </div>
 

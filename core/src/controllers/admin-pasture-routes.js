@@ -5,7 +5,9 @@
  * 业务逻辑在 worker 里（services/pasture-*）。
  *
  * GET  /api/pasture          牧场状态（动物/货架/灾害/草量/空栏）
+ * GET  /api/pasture/tasks    牧场任务（taskpb scene_id=2，task_type 4/5/6）
  * POST /api/pasture/operate  手动触发一轮操作（all / harvest / feed / clean / refill / grass）
+ * POST /api/pasture/tasks/claim  立即领取所有可领的牧场任务
  */
 
 function sendMissingAccount(res, statusCode = 400) {
@@ -46,6 +48,32 @@ function registerAdminPastureRoutes({
     try {
       const data = await provider.getPasture(accountId);
       res.json({ ok: true, data });
+    }
+    catch (error) {
+      sendProviderError(res, error);
+    }
+  });
+
+  app.get("/api/pasture/tasks", async (req, res) => {
+    const accountId = requireAccessibleAccount(req, res, getAccountIdFromRequest, canAccessAccount);
+    if (!accountId)
+      return;
+
+    try {
+      res.json({ ok: true, data: await provider.getPastureTasks(accountId) });
+    }
+    catch (error) {
+      sendProviderError(res, error);
+    }
+  });
+
+  app.post("/api/pasture/tasks/claim", async (req, res) => {
+    const accountId = requireAccessibleAccount(req, res, getAccountIdFromRequest, canAccessAccount);
+    if (!accountId)
+      return;
+
+    try {
+      res.json({ ok: true, data: await provider.claimPastureTasks(accountId) });
     }
     catch (error) {
       sendProviderError(res, error);

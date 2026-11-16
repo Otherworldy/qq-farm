@@ -814,3 +814,116 @@ core: 牧场 76 项全绿（api 19 / analyzer 19 / orchestrator 22 / visit 8 / r
 
 - 进游戏放一只，或
 - 打开 `pasture_buy_animal` 让 bot 自己买（最便宜的是鸡，2 牧场币）
+
+---
+
+# 与农场全面对齐（2026-11-16 夜，第二轮）
+
+目标是把牧场做成「和农场一样」：同样的自动化粒度、同样的入口位置、同样的首页展示。
+
+## 一、牧场任务（新增能力）
+
+**这是本轮最重要的发现**：牧场不是没有任务，而是**和农场共用同一个 `TaskService`**，
+只是拉列表时要带 `scene_id = 2`（`GLOBAL_SCENE_ID_BIG_FARM`），
+且任务类型只用 4/5/6（家园成长 / 家园每日 / 家园支线），农场是 1/2/3。
+
+来源是 mcboot 分包里的官方功能文档《牧场任务系统》：
+
+> 与农场 `TaskManager` **完全独立**（独立 Manager / Model / Event），
+> 共用主包 `TaskService`（taskpb），拉列表固定 `scene_id = 2`。
+
+### scene_id 字段号是怎么确定的（不是猜的）
+
+`TaskInfoRequest` 原本是空 message，文档只写了 `{ scene_id: 2 }`，没写字段号。
+但抓包给出了硬证据：
+
+| | 请求 body |
+|---|---|
+| 农场 `TaskInfo` | **0 字节** |
+| 牧场 `TaskInfo` | **2 字节，hex `e998`** |
+
+TSDK 加密是**确定性**的，且**不改变长度**。于是直接拿 TSDK 加密反推：
+
+```
+明文 08 02  →  密文 e998   ★ 与抓包完全一致
+明文 10 02  →  d498        ✗
+明文 18 02  →  0598        ✗
+明文 08 01  →  e970        ✗
+```
+
+所以 `scene_id` 就是 **字段 1**，值 2。这是证明，不是推测。
+
+### 实现
+
+- `core/src/proto/taskpb.proto`：`TaskInfoRequest { int32 scene_id = 1; }`
+- `core/src/services/task.js`：
+  - `getTaskInfo(sceneId = 0)` —— 传 0 时 body 为空，与旧行为完全一致
+  - `checkAndClaimPastureTasks()` —— 只挑 `task_type` 4/5/6，逐条 `doClaim`
+  - `getPastureTaskSummary()` —— 只读，供面板
+- 开关：`pasture_task`（默认**开**），**独立于**农场的 `task`：
+  两套进度，关掉农场任务不该连带停掉牧场。
+- `worker.js` 的 `runPastureTick` 里跟着牧场一起跑。
+
+### 真机结果
+
+```
+GET /api/pasture/tasks
+  {"total":4,"claimable":3,"items":[
+    {"id":300004,"desc":"生产3次","category":"pasture_growth","progress":3/3,"canClaim":true},
+    {"id":400001,"desc":"完成1次生产","category":"pasture_daily","progress":1/1,"canClaim":true},
+    {"id":400003,"desc":"完成1次收获","category":"pasture_daily","progress":1/1,"canClaim":true}]}
+
+POST /api/pasture/tasks/claim  →  {"claimed":3}
+GET  /api/pasture/tasks        →  claimable 3 → 1
+```
+
+## 二、自动化补强
+
+**推送触发**：`FacilitiesNotify` 之前被当成「未识别推送」丢掉。
+现在解码并分发 `facilitiesChanged`，把下一轮牧场 tick 拉到 1.5 秒内
+（3 秒去抖，好友牧场的通知不叫醒自家 tick）。
+真正的决策仍以 `GetRanchDetail` 的最新快照为准 —— 推送只负责叫醒，不负责判断。
+
+**间隔可配**：`intervals.pastureMin / pastureMax`（默认 20/30 秒），
+写进「策略设置 → 巡查时机」，跟农场/帮助/偷菜并列。
+
+## 三、首页与入口
+
+**概览首页**：新增「牧场」卡，六格 —— 栏位 / 可收获 / 待投喂 / 货架 / 牧草 / 可领任务，
+右上角直接跳「我的牧场」。倒计时卡里也加了「牧场」一行（`nextChecks.pastureRemainSec`）。
+牧场状态 60 秒拉一次（比面板的 20 秒稀疏），切账号立刻重拉。
+
+**个人页**：`Personal.vue` 从 3 个 tab 变 4 个 —— 我的农场 / **我的牧场** / 我的背包 / 我的任务。
+面板抽成 `web/src/components/PasturePanel.vue`，结构与 `FarmPanel` 对齐：
+卡片头 + 药丸汇总 + 内容区。侧边栏的「牧场」项改为 `showInNav: false`，
+路由保留给深链接。
+
+## 四、对齐情况总表
+
+| 农场能力 | 牧场 | 说明 |
+|---|---|---|
+| 巡查 tick | ✅ | 加了推送触发 |
+| 自动收获 | ✅ | 含货架 |
+| 自动种植 | ✅ | 对应「补栏」，先背包后购买 |
+| 浇水/除草/除虫 | ✅ | 对应「投喂/清理」 |
+| 精确抢收 | ✅ | 用 `grow/produce_ready_at_ms` |
+| 自动任务 | ✅ **本轮新增** | `scene_id=2` |
+| 自动卖果实 | ✅ | 货架收取 |
+| 好友互动 | ✅ | 偷产物（默认关） |
+| 推送触发巡田 | ✅ **本轮新增** | `FacilitiesNotify` |
+| 巡查间隔可配 | ✅ **本轮新增** | `intervals.pastureMin/Max` |
+| 概览首页状态 | ✅ **本轮新增** | 独立卡片 + 倒计时行 |
+| 个人页入口 | ✅ **本轮新增** | 第 4 个 tab |
+| 自动控制开关 | ✅ | 10 个 |
+| **图鉴** | ❌ 牧场没有 | 官方文档写明「图鉴等后置」；`IllustratedService` 只有作物/鲜花/树木，无动物 |
+| **土地升级/扩建** | ⏸ 无明文协议 | 建筑升级 RPC 被 TSDK VM 加密，无样本；按项目规矩不猜 |
+
+## 五、测试
+
+```
+pasture-task.test.js   9 项（scene_id 编码 / 只领 4·5·6 / 开关独立 / 空开销）
+牧场全套              86 项全绿
+```
+
+`scene_id` 那条测试验证过「去掉字段就失败」：把 proto 里的 `scene_id` 删掉，
+立刻挂 2 项，加回来 9 项全过。

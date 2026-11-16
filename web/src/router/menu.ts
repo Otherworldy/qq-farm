@@ -24,11 +24,13 @@ export const menuRoutes: MenuItem[] = [
     component: () => import('@/views/Personal.vue'),
   },
   {
+    // 入口在「个人 → 我的牧场」，这里只留路由给深链接用
     path: 'pasture',
     name: 'pasture',
     label: '牧场',
     icon: 'i-carbon-home',
     component: () => import('@/views/Pasture.vue'),
+    showInNav: false,
   },
   {
     path: 'friends',

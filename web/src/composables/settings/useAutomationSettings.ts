@@ -32,6 +32,7 @@ const defaultAutomation = {
   pasture_grass: true,
   pasture_buy_animal: false,
   pasture_steal: false,
+  pasture_task: true,
   fertilizer_gift: false,
   fertilizer_buy_organic: false,
   fertilizer_buy_normal: false,

@@ -9,6 +9,7 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useAccountStore } from '@/stores/account'
 import { useBagStore } from '@/stores/bag'
+import { usePastureStore } from '@/stores/pasture'
 import { useStatusStore } from '@/stores/status'
 import { useToastStore } from '@/stores/toast'
 import { formatCouponAmount, formatGoldAmount, formatGoldBeanAmount } from '@/utils/number-format'
@@ -16,6 +17,7 @@ import { formatCouponAmount, formatGoldAmount, formatGoldBeanAmount } from '@/ut
 const statusStore = useStatusStore()
 const accountStore = useAccountStore()
 const bagStore = useBagStore()
+const pastureStore = usePastureStore()
 const toastStore = useToastStore()
 
 const {
@@ -267,19 +269,50 @@ const fertilizerOrganic = computed(() => dashboardItems.value.find((item: any) =
 const collectionNormal = computed(() => dashboardItems.value.find((item: any) => Number(item.id) === 3001))
 const collectionRare = computed(() => dashboardItems.value.find((item: any) => Number(item.id) === 3002))
 
+// ── 牧场概览 ──
+const {
+  summary: pastureSummary,
+  taskSummary: pastureTaskSummary,
+} = storeToRefs(pastureStore)
+
+const pastureCards = computed(() => {
+  const s = pastureSummary.value
+  return [
+    { key: 'animals', label: '栏位', value: `${s.animals}/${s.capacity}`, icon: 'i-carbon-home', tone: 'text-sky-600 dark:text-sky-400' },
+    { key: 'harvestable', label: '可收获', value: String(s.harvestable), icon: 'i-carbon-crop-growth', tone: 'text-orange-600 dark:text-orange-400' },
+    { key: 'feed', label: '待投喂', value: String(s.needFeed), icon: 'i-carbon-wheat', tone: 'text-amber-600 dark:text-amber-400' },
+    { key: 'shelves', label: '货架', value: String(s.collectableShelves), icon: 'i-carbon-catalog', tone: 'text-emerald-600 dark:text-emerald-400' },
+    { key: 'grass', label: '牧草', value: String(s.grassAmount), icon: 'i-carbon-sprout', tone: s.grassLow ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400' },
+    { key: 'tasks', label: '可领任务', value: String(pastureTaskSummary.value.claimable), icon: 'i-carbon-task', tone: 'text-violet-600 dark:text-violet-400' },
+  ]
+})
+
+/** 牧场状态比农场变化慢，60 秒拉一次就够，避免和 bot 抢请求预算 */
+const PASTURE_POLL_MS = 60_000
+async function refreshPasture() {
+  if (!currentAccountId.value || !realtimeConnected.value)
+    return
+  await pastureStore.fetchPasture(currentAccountId.value)
+  await pastureStore.fetchTasks(currentAccountId.value)
+}
+useIntervalFn(refreshPasture, PASTURE_POLL_MS, { immediate: false })
+
 const nextFarmCheck = ref('--:--:--')
+const nextPastureCheck = ref('--:--:--')
 const nextHelpCheck = ref('--:--:--')
 const nextStealCheck = ref('--:--:--')
 const nextStealKnown = ref('')
 const localUptime = ref(0)
 
 let localNextFarmRemainSec = 0
+let localNextPastureRemainSec = 0
 let localNextHelpRemainSec = 0
 let localNextStealKnownRemainSec = 0
 // 倒计时解耦：服务端的 nextChecks 是调度变量，每次 tick 都会重排（偷菜跑完
 // 重排、降速地板、观察窗切换等十几处赋值点）。本地记绝对到期时刻，服务端
 // 新值只在「更早」或「旧时刻已过期」时接受——显示单调递减，不再来回跳。
 let localFarmDeadlineMs = 0
+let localPastureDeadlineMs = 0
 let localHelpDeadlineMs = 0
 let localStealDeadlineMs = 0
 function mergeDeadlineMs(prevMs: number, remainSec: number) {
@@ -376,6 +409,7 @@ function resetDashboardState() {
   localNextStealRemainSec = 0
   localNextStealKnownRemainSec = 0
   localFarmDeadlineMs = 0
+  localPastureDeadlineMs = 0
   localHelpDeadlineMs = 0
   localStealDeadlineMs = 0
   lastRipeAtByGid.clear()
@@ -387,6 +421,7 @@ function resetDashboardState() {
   slowdownDelaySec.value = 0
   watchlistRipe.value = []
   nextFarmCheck.value = '--:--:--'
+  nextPastureCheck.value = '--:--:--'
   nextHelpCheck.value = '--:--:--'
   nextStealCheck.value = '--:--:--'
   nextStealKnown.value = ''
@@ -439,6 +474,7 @@ function formatBucketTime(item: any) {
 function updateCountdowns() {
   if (currentAccountDisconnected.value) {
     nextFarmCheck.value = '账号未登录'
+    nextPastureCheck.value = '账号未登录'
     nextHelpCheck.value = '账号未登录'
     nextStealCheck.value = '账号未登录'
     return
@@ -458,6 +494,14 @@ function updateCountdowns() {
   }
   else {
     nextFarmCheck.value = '检查中...'
+  }
+
+  localNextPastureRemainSec = remainFromDeadlineMs(localPastureDeadlineMs)
+  if (localNextPastureRemainSec > 0) {
+    nextPastureCheck.value = formatDuration(localNextPastureRemainSec)
+  }
+  else {
+    nextPastureCheck.value = '检查中...'
   }
 
   localNextHelpRemainSec = remainFromDeadlineMs(localHelpDeadlineMs)
@@ -507,8 +551,10 @@ watch(status, (newVal) => {
     if (pendingSwitched)
       localStealDeadlineMs = 0
     localFarmDeadlineMs = mergeDeadlineMs(localFarmDeadlineMs, newVal.nextChecks.farmRemainSec || 0)
+    localPastureDeadlineMs = mergeDeadlineMs(localPastureDeadlineMs, newVal.nextChecks.pastureRemainSec || 0)
     localHelpDeadlineMs = mergeDeadlineMs(localHelpDeadlineMs, newVal.nextChecks.helpRemainSec || 0)
     localNextFarmRemainSec = remainFromDeadlineMs(localFarmDeadlineMs)
+    localNextPastureRemainSec = remainFromDeadlineMs(localPastureDeadlineMs)
     localNextHelpRemainSec = remainFromDeadlineMs(localHelpDeadlineMs)
     localStealDeadlineMs = mergeDeadlineMs(
       localStealDeadlineMs,
@@ -844,6 +890,7 @@ onMounted(async () => {
   statusStore.setRealtimeLogsEnabled(!hasActiveLogFilter.value)
   syncRealtimeAccount()
   await refresh()
+  void refreshPasture()
   scrollToNewest()
 })
 
@@ -851,6 +898,11 @@ onMounted(async () => {
 useIntervalFn(refresh, 10000)
 // Countdown timer (every 1s)
 useIntervalFn(updateCountdowns, 1000)
+// 牧场状态：切账号后立刻重拉一次
+watch(currentAccountId, () => {
+  pastureStore.clearPastureData()
+  void refreshPasture()
+})
 </script>
 
 <template>
@@ -1057,6 +1109,47 @@ useIntervalFn(updateCountdowns, 1000)
       </div>
     </div>
 
+    <!-- 牧场概览 -->
+    <div class="ui-card rounded-lg p-5">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="flex items-center gap-2 text-lg font-medium">
+          <div class="i-carbon-home" />
+          <span>牧场</span>
+          <span
+            v-if="pastureSummary.capacity > 0"
+            class="rounded bg-teal-100 px-2 py-0.5 text-xs text-teal-700 dark:bg-teal-900/30 dark:text-teal-300"
+          >
+            {{ pastureSummary.label || '运行中' }}
+          </span>
+        </h3>
+        <router-link
+          to="/personal"
+          class="flex items-center gap-1 rounded bg-gray-100 px-2.5 py-1 text-xs text-gray-600 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+        >
+          <div class="i-carbon-arrow-right" />
+          我的牧场
+        </router-link>
+      </div>
+      <div class="grid grid-cols-3 gap-2 sm:grid-cols-6">
+        <div
+          v-for="card in pastureCards"
+          :key="card.key"
+          class="ui-subtle-panel flex items-center justify-between rounded-lg px-3 py-2"
+        >
+          <div class="flex items-center gap-2">
+            <div class="text-base" :class="[card.icon, card.tone]" />
+            <div class="text-xs text-gray-500">{{ card.label }}</div>
+          </div>
+          <div class="text-sm font-bold" :class="card.tone">
+            {{ card.value }}
+          </div>
+        </div>
+      </div>
+      <div v-if="pastureSummary.capacity === 0" class="mt-2 text-xs text-gray-400">
+        还没有牧场数据。进一次游戏里的牧场，或到「个人 → 我的牧场」点刷新。
+      </div>
+    </div>
+
     <div class="flex flex-1 flex-col items-stretch gap-5 md:flex-row">
       <div class="flex flex-1 flex-col gap-5 md:w-3/4">
         <div class="ui-card-elevated flex flex-1 flex-col rounded-lg p-5 md:overflow-hidden">
@@ -1151,6 +1244,15 @@ useIntervalFn(updateCountdowns, 1000)
               </div>
               <div class="text-lg font-bold font-mono">
                 {{ nextFarmCheck }}
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                <div class="i-carbon-home text-lg text-teal-500" />
+                <span>牧场</span>
+              </div>
+              <div class="text-lg font-bold font-mono">
+                {{ nextPastureCheck }}
               </div>
             </div>
             <div class="flex items-center justify-between">

@@ -119,6 +119,8 @@ const {
 const {
     cleanupTaskSystem,
     checkAndClaimTasks,
+    checkAndClaimPastureTasks,
+    getPastureTaskSummary,
     getTaskClaimDailyState,
     getTaskDailyStateLikeApp,
     getGrowthTaskStateLikeApp
@@ -239,12 +241,17 @@ let farmTaskRunning = false;
 let nextFarmRunAt = 0;
 let pastureTaskRunning = false;
 let nextPastureRunAt = 0;
+/** 牧场推送去抖：服务端一次状态变化可能连发几条，只接受第一条 */
+let lastPasturePushAt = 0;
+const PASTURE_PUSH_DEBOUNCE_MS = 3000;
+const PASTURE_PUSH_LEAD_MS = 1500;
 let lastStatusHash = '';
 let lastStatusSentAt = 0;
 let onSellGain = null;
 let onFarmHarvested = null;
 let onOwnMaturityChanged = null;
 let onDogSkillGiftPending = null;
+let onPastureFacilitiesChanged = null;
 let harvestSellRunning = false;
 let onWsError = null;
 let onDisconnectHandler = null;
@@ -371,6 +378,10 @@ function applyIntervalsToRuntime(intervals) {
     const stealRange = normalizeIntervalRangeSec(iv.stealMin, iv.stealMax, 300, 480);
     CONFIG.stealCheckIntervalMin = stealRange.min * 1000;
     CONFIG.stealCheckIntervalMax = stealRange.max * 1000;
+
+    const pastureRange = normalizeIntervalRangeSec(iv.pastureMin, iv.pastureMax, 20, 30);
+    CONFIG.pastureCheckIntervalMin = pastureRange.min * 1000;
+    CONFIG.pastureCheckIntervalMax = pastureRange.max * 1000;
 }
 
 /** 在 [minMs, maxMs] 范围内取一个偏中间的毫秒数 */
@@ -487,6 +498,9 @@ async function runPastureTick(autoConfig) {
 
     try {
         await checkPasture();
+        // 牧场任务与农场任务是两套进度，各自开关：这里跟着牧场一起跑，
+        // 但只在牧场开关打开时才走，免得关掉牧场还在花请求领任务。
+        if (autoConfig.pasture_task) await checkAndClaimPastureTasks();
         // 好友偷产物带 5 分钟冷却，内部自己节流；开关默认关
         await checkFriendPastures();
     } catch { } finally {
@@ -1517,6 +1531,28 @@ async function startBot(config) {
         };
         networkEvents.on('dogSkillGiftPending', onDogSkillGiftPending);
 
+        // 牧场推送：只用来提前叫醒，真正的判断仍以 GetRanchDetail 快照为准。
+        // 不在这里直接发请求，避免推送风暴；去抖后把下一轮拉到 1.5 秒内。
+        if (onPastureFacilitiesChanged) networkEvents.off('facilitiesChanged', onPastureFacilitiesChanged);
+        onPastureFacilitiesChanged = (payload) => {
+            if (!loginReady) return;
+            const autoConfig = getAutomation();
+            if (!autoConfig || !autoConfig.pasture) return;
+            // 好友牧场的通知不叫醒自家 tick
+            const selfGid = toNum(getUserState().gid);
+            const hostGid = toNum(payload && payload.hostGid);
+            if (hostGid && selfGid && hostGid !== selfGid) return;
+            const now = Date.now();
+            if (now - lastPasturePushAt < PASTURE_PUSH_DEBOUNCE_MS) return;
+            lastPasturePushAt = now;
+            const target = now + PASTURE_PUSH_LEAD_MS;
+            if (!nextPastureRunAt || nextPastureRunAt > target) {
+                nextPastureRunAt = target;
+                if (unifiedSchedulerRunning) scheduleUnifiedNextTick();
+            }
+        };
+        networkEvents.on('facilitiesChanged', onPastureFacilitiesChanged);
+
         // 获取背包点券数
         try {
             const bag = await getBag();
@@ -1876,6 +1912,13 @@ async function handleApiCall(msg) {
             }
             case 'doPastureOp':
                 result = await require('../services/pasture').runPastureOperation(args[0] || 'all');
+                break;
+            case 'getPastureTasks':
+                // 牧场任务与农场任务同源不同 scene，面板按需单独拉
+                result = await getPastureTaskSummary();
+                break;
+            case 'claimPastureTasks':
+                result = { claimed: await checkAndClaimPastureTasks() };
                 break;
             case 'getFriends':
                 result = await getFriendsList(args[0] === true);
@@ -2345,8 +2388,14 @@ function syncStatus() {
     stats.watchlistRipe = require('../services/friend').getWatchlistRipeSnapshots(now);
     stats.watchlistWakeBeforeMinutes = Math.round(getWatchlistWakeBeforeMs() / 60000);
 
+    const pastureRemainSec = nextPastureRunAt > now
+        ? Math.max(0, Math.ceil((nextPastureRunAt - now) / 1000))
+        : 0;
+
     stats.nextChecks = {
         farmRemainSec,
+        pastureRemainSec,
+        pastureReadySec: Math.max(0, Math.ceil(getNextPastureReadyInMs() / 1000)),
         helpRemainSec,
         helpExpCapped: expCapped,
         stealRemainSec,

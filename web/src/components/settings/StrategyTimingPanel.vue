@@ -14,6 +14,8 @@ interface StrategyTimingSettings {
     helpMax: number
     stealMin: number
     stealMax: number
+    pastureMin: number
+    pastureMax: number
   }
   friendQuietHours: {
     enabled: boolean
@@ -54,6 +56,8 @@ const helpMin = intervalModel('helpMin')
 const helpMax = intervalModel('helpMax')
 const stealMin = intervalModel('stealMin')
 const stealMax = intervalModel('stealMax')
+const pastureMin = intervalModel('pastureMin')
+const pastureMax = intervalModel('pastureMax')
 
 function addPauseMinutes(minutes: number) {
   const current = Date.parse(settings.value.friendQuietHours.pauseUntil || '')
@@ -163,6 +167,24 @@ async function restartAccount() {
     <p class="text-xs text-gray-500 dark:text-gray-400">
       仅在“没有任何已知成熟时刻”时按该间隔重新发现可偷作物；好友作物成熟仍按成熟墙钟精确到点出手。
       调小会提高巡查密度与请求量。
+    </p>
+
+    <div class="grid grid-cols-2 gap-3 md:grid-cols-2">
+      <BaseInput
+        v-model.number="pastureMin"
+        label="牧场巡查最小 (秒)"
+        type="number"
+        min="5"
+      />
+      <BaseInput
+        v-model.number="pastureMax"
+        label="牧场巡查最大 (秒)"
+        type="number"
+        min="5"
+      />
+    </div>
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      牧场动作少、周期长，默认 20-30 秒，比农场稀疏；服务端设施推送到达时会提前叫醒，不必靠调小这里抢收。
     </p>
 
     <div class="idle-rest-settings flex flex-wrap items-center gap-4 border-t pt-3 dark:border-gray-700">

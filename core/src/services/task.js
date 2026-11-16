@@ -59,9 +59,12 @@ function isTransientError(err) {
 
 // ---- RPC 调用 ----
 
-async function getTaskInfo() {
+async function getTaskInfo(sceneId = 0) {
+  // 牧场是同一套 TaskService，只是 scene_id=2；不传就等于农场（body 为空）
+  const payload = {};
+  if (Number(sceneId) > 0) payload.scene_id = toNum(sceneId);
   const request = types.TaskInfoRequest.encode(
-    types.TaskInfoRequest.create({})
+    types.TaskInfoRequest.create(payload)
   ).finish();
   const { body } = await sendMsgAsync('gamepb.taskpb.TaskService', 'TaskInfo', request);
   return types.TaskInfoReply.decode(body);
@@ -326,6 +329,9 @@ async function doClaim(task) {
     const summary = items.length > 0 ? getRewardSummary(items) : '无';
     const categoryLabel =
       task.category === 'daily' ? '每日任务' :
+      task.category === 'pasture_daily' ? '牧场每日' :
+      task.category === 'pasture_growth' ? '牧场成长' :
+      task.category === 'pasture_side' ? '牧场支线' :
       task.category === 'growth' ? '成长任务' : '任务';
 
     log('任务', `领取(${categoryLabel}): ${task.desc}${shareLabel} → ${summary}`, {
@@ -412,6 +418,109 @@ async function checkAndClaimTasks() {
   }
 }
 
+// ---- 牧场任务（同一套 TaskService，scene_id=2 / task_type 4·5·6）----
+//
+// 官方文档「牧场任务系统」：牧场任务与农场 TaskManager 完全独立，
+// 但共用主包 TaskService，拉列表固定 scene_id=2（GLOBAL_SCENE_ID_BIG_FARM），
+// 牧场只用 task_type 4/5/6（家园成长 / 家园每日 / 家园支线）。
+// 服务端按 scene_id 分流：农场请求返回 task_type 1/2，牧场请求返回 4/5/6（抓包实测）。
+
+const PASTURE_SCENE_ID = 2;
+const PASTURE_TASK_CATEGORY = {
+  4: 'pasture_growth',
+  5: 'pasture_daily',
+  6: 'pasture_side',
+};
+
+let checkingPastureTasks = false;
+
+function pastureTaskCategory(taskType) {
+  return PASTURE_TASK_CATEGORY[toNum(taskType)] || '';
+}
+
+/**
+ * 拉牧场任务并领取所有可领项。
+ * 开关是独立的 pasture_task —— 牧场任务和农场任务是两套进度，
+ * 关掉农场任务不应该连带停掉牧场。
+ */
+async function checkAndClaimPastureTasks() {
+  if (checkingPastureTasks) return 0;
+  if (!isAutomationOn('pasture_task')) return 0;
+  if (!isConnected()) return 0;
+
+  checkingPastureTasks = true;
+  let claimed = 0;
+
+  try {
+    const reply = await getTaskInfo(PASTURE_SCENE_ID);
+    const taskInfo = (reply && reply.task_info) || null;
+    if (!taskInfo) return 0;
+
+    const raw = [
+      ...(Array.isArray(taskInfo.tasks) ? taskInfo.tasks : []),
+      ...(Array.isArray(taskInfo.growth_tasks) ? taskInfo.growth_tasks : []),
+      ...(Array.isArray(taskInfo.daily_tasks) ? taskInfo.daily_tasks : []),
+    ];
+    const claimable = [];
+    for (const task of raw) {
+      const category = pastureTaskCategory(task && task.task_type);
+      if (!category) continue;
+      claimable.push(...analyzeTaskList([task], category));
+    }
+
+    if (claimable.length === 0) return 0;
+
+    log('牧场', `发现 ${claimable.length} 个可领取牧场任务`, {
+      module: 'task', event: '扫描牧场任务', result: 'ok', count: claimable.length,
+    });
+
+    for (const task of claimable) {
+      if (await doClaim(task)) claimed += 1;
+    }
+  } catch (err) {
+    if (isTransientError(err)) return claimed;
+    logWarn('牧场', `检查牧场任务失败: ${err.message}`, {
+      module: 'task', event: '扫描牧场任务', result: 'error',
+    });
+  } finally {
+    checkingPastureTasks = false;
+  }
+
+  return claimed;
+}
+
+/** 只读：牧场任务概况，供面板展示 */
+async function getPastureTaskSummary() {
+  const reply = await getTaskInfo(PASTURE_SCENE_ID);
+  const taskInfo = (reply && reply.task_info) || {};
+  const raw = [
+    ...(Array.isArray(taskInfo.tasks) ? taskInfo.tasks : []),
+    ...(Array.isArray(taskInfo.growth_tasks) ? taskInfo.growth_tasks : []),
+    ...(Array.isArray(taskInfo.daily_tasks) ? taskInfo.daily_tasks : []),
+  ];
+  const items = [];
+  for (const t of raw) {
+    const category = pastureTaskCategory(t && t.task_type);
+    if (!category) continue;
+    const f = formatTask(t, category);
+    items.push({
+      id: f.id,
+      desc: f.desc,
+      category,
+      progress: f.progress,
+      totalProgress: f.totalProgress,
+      canClaim: f.canClaim,
+      isClaimed: !!t.is_claimed,
+      shareMultiple: f.shareMultiple,
+    });
+  }
+  return {
+    total: items.length,
+    claimable: items.filter((i) => i.canClaim).length,
+    items,
+  };
+}
+
 // ---- 推送通知处理 ----
 
 /**
@@ -459,12 +568,16 @@ function cleanupTaskSystem() {
   networkEvents.off('taskInfoNotify', onTaskInfoNotify);
   taskScheduler.clearAll();
   checking = false;
+  checkingPastureTasks = false;
 }
 
 // ---- 导出 ----
 
 module.exports = {
   checkAndClaimTasks,
+  checkAndClaimPastureTasks,
+  getPastureTaskSummary,
+  PASTURE_SCENE_ID,
   initTaskSystem,
   cleanupTaskSystem,
   claimTaskReward,

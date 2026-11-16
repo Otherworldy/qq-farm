@@ -66,7 +66,12 @@ message TaskInfo {
 // ============ 请求/回复 ============
 
 // --- 获取任务信息 ---
-message TaskInfoRequest {}
+// scene_id：0（或不传）= 农场；2 = 牧场（GLOBAL_SCENE_ID_BIG_FARM）。
+// 2026-11-16 真机抓包证实：农场请求 body 为空，牧场请求 body 为 2 字节，
+// 用 TSDK 加密反推——明文 08 02 加密得 e998，与抓包字节完全一致（10 02 得 d498，不符）。
+message TaskInfoRequest {
+    int32 scene_id = 1;
+}
 
 message TaskInfoReply {
     TaskInfo task_info = 1;

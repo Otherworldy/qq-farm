@@ -81,6 +81,24 @@ function emptySummary(): PastureSummary {
   }
 }
 
+/** 牧场任务（taskpb scene_id=2，task_type 4/5/6） */
+export interface PastureTask {
+  id: number
+  desc: string
+  category: string
+  progress: number
+  totalProgress: number
+  canClaim: boolean
+  isClaimed: boolean
+  shareMultiple: number
+}
+
+export interface PastureTaskSummary {
+  total: number
+  claimable: number
+  items: PastureTask[]
+}
+
 export const usePastureStore = defineStore('pasture', () => {
   const summary = ref<PastureSummary>(emptySummary())
   const animals = ref<PastureAnimal[]>([])
@@ -93,6 +111,9 @@ export const usePastureStore = defineStore('pasture', () => {
   const error = ref('')
   /** 上一次操作的返回，用于面板短期提示 */
   const lastActions = ref<string[]>([])
+  const tasks = ref<PastureTask[]>([])
+  const taskSummary = ref<{ total: number, claimable: number }>({ total: 0, claimable: 0 })
+  const taskLoading = ref(false)
 
   function clearPastureData() {
     summary.value = emptySummary()
@@ -103,6 +124,8 @@ export const usePastureStore = defineStore('pasture', () => {
     updatedAt.value = 0
     error.value = ''
     lastActions.value = []
+    tasks.value = []
+    taskSummary.value = { total: 0, claimable: 0 }
   }
 
   function isCurrentAccount(accountId: string) {
@@ -177,6 +200,49 @@ export const usePastureStore = defineStore('pasture', () => {
     }
   }
 
+  async function fetchTasks(accountId: string) {
+    if (!accountId)
+      return
+    taskLoading.value = true
+    try {
+      const { data } = await api.get('/api/pasture/tasks', {
+        headers: { 'x-account-id': accountId },
+      })
+      if (data && data.ok && data.data) {
+        tasks.value = data.data.items || []
+        taskSummary.value = {
+          total: Number(data.data.total) || 0,
+          claimable: Number(data.data.claimable) || 0,
+        }
+      }
+    }
+    catch { /* 任务只是附加信息，失败不打断牧场主流程 */ }
+    finally {
+      taskLoading.value = false
+    }
+  }
+
+  async function claimTasks(accountId: string) {
+    if (!accountId)
+      return 0
+    taskLoading.value = true
+    try {
+      const { data } = await api.post('/api/pasture/tasks/claim', {}, {
+        headers: { 'x-account-id': accountId },
+      })
+      const claimed = Number(data?.data?.claimed) || 0
+      await fetchTasks(accountId)
+      return claimed
+    }
+    catch (e: any) {
+      error.value = e?.response?.data?.error || e?.message || '领取牧场任务失败'
+      return 0
+    }
+    finally {
+      taskLoading.value = false
+    }
+  }
+
   return {
     summary,
     animals,
@@ -188,8 +254,13 @@ export const usePastureStore = defineStore('pasture', () => {
     operating,
     error,
     lastActions,
+    tasks,
+    taskSummary,
+    taskLoading,
     clearPastureData,
     fetchPasture,
     operate,
+    fetchTasks,
+    claimTasks,
   }
 })

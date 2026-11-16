@@ -855,3 +855,29 @@
     容器 healthy，`GET /api/pasture` 返回正常（中文名「鸡」显示正确）。
   - **待用户确认**：牧场当前 0/3 栏位（动物空），需放一只动物或开
     `pasture_buy_animal` 才能看到收获闭环。
+- 2026-11-16 **牧场与农场全面对齐**（除牧场本身没有的功能）。
+  - **牧场任务（新能力）**：牧场并非没有任务，而是与农场**共用 `TaskService`**，
+    只需 `scene_id=2`（`GLOBAL_SCENE_ID_BIG_FARM`），任务类型 4/5/6
+    （家园成长/每日/支线；农场是 1/2/3）。来源是 mcboot 里的官方文档《牧场任务系统》。
+  - **scene_id 字段号用加密反推证明，不是猜**：农场 `TaskInfo` 请求 0 字节、
+    牧场 2 字节 `e998`；TSDK 加密确定性且不变长 → `08 02` 加密得 `e998` 完全一致
+    （`10 02`→`d498`、`18 02`→`0598` 均不符）。所以 `TaskInfoRequest { int32 scene_id = 1; }`。
+  - 新增 `checkAndClaimPastureTasks` / `getPastureTaskSummary`；开关 `pasture_task`
+    默认开且**独立于**农场 `task`；`getTaskInfo(sceneId)` 传 0 时 body 仍为空（零行为变化）。
+  - **真机验证**：`GET /api/pasture/tasks` 返回「生产3次/完成1次生产/完成1次收获」等
+    真实牧场任务（claimable 3），`POST /tasks/claim` 返回 `{"claimed":3}`，领完 3→1。
+  - **推送触发**：`FacilitiesNotify` 之前被当「未识别推送」丢弃，现在解码分发
+    `facilitiesChanged`，把下一轮 tick 拉到 1.5 秒内（3 秒去抖、好友牧场不叫醒自家）。
+    推送只负责叫醒，决策仍以 `GetRanchDetail` 快照为准。
+  - **间隔可配**：`intervals.pastureMin/Max`（默认 20/30 秒），进「策略设置 → 巡查时机」。
+  - **首页**：概览新增「牧场」卡（栏位/可收获/待投喂/货架/牧草/可领任务 + 跳转），
+    倒计时卡加「牧场」行（`nextChecks.pastureRemainSec`），60 秒轮询、切号立刻重拉。
+  - **个人页**：`Personal.vue` 3 tab → 4 tab（我的农场/**我的牧场**/背包/任务）；
+    面板抽成 `components/PasturePanel.vue`（结构对齐 `FarmPanel`）；
+    侧边栏牧场项改 `showInNav: false`，路由保留给深链接。
+  - **对齐缺口（有意不做）**：牧场**没有图鉴**（官方文档写明「图鉴等后置」，
+    `IllustratedService` 只有作物/鲜花/树木）；**栏舍升级**无明文 RPC（TSDK VM 加密，
+    无样本），按项目规矩不猜。
+  - 测试：`pasture-task.test.js` 9 项，牧场全套 86 项全绿；
+    验证过「删掉 scene_id 立刻挂 2 项，加回来 9 项全过」。
+  - 前端 `pnpm build:web` 通过（补齐 4 处 `pasture_task`/`pastureMin` 类型与默认值）。

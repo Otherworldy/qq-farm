@@ -160,6 +160,8 @@ function createDataProvider(deps) {
 
         // ========== Pasture API ==========
         getPasture: (ref) => callWorkerApi(resolveAccountId(ref), 'getPasture'),
+        getPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'getPastureTasks'),
+        claimPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'claimPastureTasks'),
         doPastureOp: (ref, opType) => callWorkerApi(resolveAccountId(ref), 'doPastureOp', opType),
 
         // ========== Friend API ==========
