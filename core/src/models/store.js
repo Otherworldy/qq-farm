@@ -279,7 +279,9 @@ const DEFAULT_AUTOMATION = {
     pasture_refill: true,
     pasture_grass: true,
     // 买动物要花牧场货币（item 1007）。默认关闭，让用户显式开启。
-    pasture_buy_animal: false
+    pasture_buy_animal: false,
+    // 好友牧场偷产物。默认关闭：会给每个好友多发一次请求，预算要先让农场。
+    pasture_steal: false
 };
 
 /** 默认间隔配置（秒） */

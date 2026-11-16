@@ -776,3 +776,26 @@
     新增 `getAnimalShop` 缓存、Long 处理、定点清理优先、补栏两条路径等用例。
   - 全量回归 **1193 / 1181 通过 / 12 失败**（基线不变）。
   - 抓包环境已还原：系统代理恢复 `127.0.0.1:7897`（ProxyEnable=0，与抓包前一致）。
+- 2026-11-16 **牧场面板 + 好友偷取收尾（功能闭环）**。
+  - 后端：新增 `controllers/admin-pasture-routes.js`（`GET /api/pasture`、
+    `POST /api/pasture/operate`，op 白名单），`services/pasture-visit.js`（好友偷产物）。
+    `worker.js` 加 `getPasture` / `doPastureOp` 两个 case，`data-provider.js` 加映射，
+    `admin.js` 注册路由。
+  - **好友偷取无需门票**：农场偷菜要 Enter→分析→操作→Leave 四步，牧场
+    `StealProduce` 直接用 `host_gid` 指名，一次请求。`pasture-visit.js` 因此很薄：
+    拉好友列表 → 逐个 `GetRanchDetail(host_gid)` → 有 `can_steal` 货架就偷。
+    护栏：开关默认关、单轮 ≤5 个好友、5 分钟冷却、单好友失败不影响其他。
+  - `GetRanchDetail` proto 补 `host_gid = 1`（第二轮抓包确认好友场景出现过 8 个不同 gid）。
+  - 分析器加 `buildPanelView()`：把 analysis 转成面板可渲染结构
+    （汇总 + 动物列表含阶段名/倒计时 + 货架 + 灾害 + 空栏）。
+  - 前端：新增 `stores/pasture.ts`（含账号切换丢弃过期响应）、`views/Pasture.vue`
+    （汇总卡片/单项操作/动物网格/货架灾害空栏，20s 轮询，未连接不打接口），
+    `menu.ts` 加「牧场」菜单项。`AutomationSettingsTab.vue` 加「牧场自动化」分组
+    共 8 个开关，并同步 `useAutomationSettings` / `stores/setting.ts` /
+    `DefaultPlanSettingsTab` 三处默认值。
+  - 新增开关：`pasture_refill`（默认开）、`pasture_buy_animal`（默认**关**）、
+    `pasture_steal`（默认**关**）。
+  - **测试 51 项全绿**：api 17 / analyzer 12 / orchestrator 17 / visit 8 / routes 9。
+    全量回归 **1214 / 1202 通过 / 12 失败**（基线不变）。
+  - 前端 `vue-tsc --noEmit` 0 错误、`vite build` 成功（产物 `dist/assets/Pasture-*.js`）。
+  - 面板动物名仍显示 `动物 #60001` —— 名字在加密的 `MCItemInfo` 表里。

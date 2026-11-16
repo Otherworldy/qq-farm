@@ -121,8 +121,10 @@ message OpQuota {
 
 // ─────────────────────────── AnimalService ───────────────────────────
 
-// GetRanchDetail —— 请求 2:<empty>，响应 RanchInfo
+// GetRanchDetail —— 看自己的牧场时只有 2:ranch_inst_ids（可空）；
+// 看好友牧场时 1:host_gid 是好友 gid（第二轮抓包确认：同一方法出现过 8 个不同 gid）。
 message GetRanchDetailRequest {
+    int64 host_gid = 1;                   // 空=自己
     repeated int64 ranch_inst_ids = 2;
 }
 message GetRanchDetailReply {

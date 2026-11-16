@@ -60,15 +60,18 @@ function selfGid() {
 // ─── 牧场查询 ───
 
 /**
- * 拉取牧场详情。不传 ranchIds 表示拉自己的。
- * @param {number[]} [ranchIds]
+ * 拉取牧场详情。
+ * @param {number[]} [ranchIds] 留空表示该主人的全部牧场
+ * @param {number} [hostGid] 看好友牧场时传好友 gid；不传=自己
  */
-async function getRanchDetail(ranchIds) {
+async function getRanchDetail(ranchIds, hostGid) {
     const ids = Array.isArray(ranchIds) ? ranchIds : [];
+    const payload = { ranch_inst_ids: ids.map(id => toLong(id)) };
+    if (hostGid) payload.host_gid = toLong(hostGid);
     return sendPastureRequest(
         ANIMAL_SERVICE, 'GetRanchDetail',
         types.GetRanchDetailRequest, types.GetRanchDetailReply,
-        { ranch_inst_ids: ids.map(id => toLong(id)) }
+        payload
     );
 }
 

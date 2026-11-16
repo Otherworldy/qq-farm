@@ -7,6 +7,7 @@
 const pastureApi = require('./pasture-api');
 const {
     analyzeRanches,
+    buildPanelView,
     msUntilNextProduce,
     GRASS_LOW_THRESHOLD,
 } = require('./pasture-analyzer');
@@ -16,6 +17,7 @@ const {
     getNextPastureReadyInMs,
     isPastureAutomationEnabled,
 } = require('./pasture-orchestrator');
+const { checkFriendPastures } = require('./pasture-visit');
 
 module.exports = {
     // 编排
@@ -23,9 +25,11 @@ module.exports = {
     runPastureOperation,
     getNextPastureReadyInMs,
     isPastureAutomationEnabled,
+    checkFriendPastures,
 
     // 分析
     analyzeRanches,
+    buildPanelView,
     msUntilNextProduce,
     GRASS_LOW_THRESHOLD,
 
@@ -37,9 +41,15 @@ module.exports = {
     triggerProduce: pastureApi.triggerProduce,
     stealProduce: pastureApi.stealProduce,
     cleanAllRanch: pastureApi.cleanAllRanch,
+    cleanRanch: pastureApi.cleanRanch,
+    placeAnimal: pastureApi.placeAnimal,
+    strokeAnimal: pastureApi.strokeAnimal,
     getBuildingList: pastureApi.getBuildingList,
     getFacilityDetail: pastureApi.getFacilityDetail,
     addFeed: pastureApi.addFeed,
+    getAnimalShop: pastureApi.getAnimalShop,
+    buyGoods: pastureApi.buyGoods,
+    isAnimalItemId: pastureApi.isAnimalItemId,
 
     // 常量
     RANCH_OP_IDS: pastureApi.RANCH_OP_IDS,

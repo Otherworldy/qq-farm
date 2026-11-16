@@ -219,6 +219,103 @@ function msUntilNextProduce(analysis, nowMs = Date.now()) {
     return Math.max(0, readyAt - nowMs);
 }
 
+/** 阶段中文名（面板展示用；阶段数值是抓包观察值） */
+const STAGE_NAMES = {
+    [STAGE_INFANT]: '幼崽',
+    [STAGE_GROWING]: '成长',
+    [STAGE_MATURE]: '成熟',
+    [STAGE_PRODUCING]: '生产',
+};
+
+/**
+ * 把分析结果转成面板直接可渲染的结构。
+ *
+ * 面板只需要「现在是什么状态、还能做什么」，不需要原始 RanchInfo。
+ * 动物名字拿不到（在加密的 MCItemInfo 表里），所以按 ID 显示，等以后解表再补。
+ *
+ * @param {object} analysis - analyzeRanches() 的返回值
+ * @param {number} [now]
+ */
+function buildPanelView(analysis, now = Date.now()) {
+    const a = analysis || {};
+    const remainSec = (atMs) => {
+        const at = Number(atMs) || 0;
+        if (!at) return 0;
+        return Math.max(0, Math.ceil((at - now) / 1000));
+    };
+
+    const animals = [];
+    for (const list of [a.harvestable || [], a.needFeed || [], a.producing || []]) {
+        for (const animal of list) {
+            const readyAt = animal.produceReadyAtMs || animal.matureReadyAtMs || 0;
+            animals.push({
+                ranchInstId: animal.ranchInstId,
+                slotIndex: animal.slotIndex,
+                animalInstId: animal.animalInstId,
+                animalId: animal.animalId,
+                name: `动物 #${animal.animalId}`,
+                stage: animal.stage,
+                stageName: STAGE_NAMES[animal.stage] || `阶段${animal.stage}`,
+                canHarvest: animal.canHarvest,
+                canFeed: animal.canFeed,
+                producing: animal.producing,
+                grassBlocked: animal.grassBlocked,
+                produceCount: animal.produceCount,
+                readyAtMs: readyAt,
+                readyInSec: remainSec(readyAt),
+                expectedHarvestExp: animal.expectedHarvestExp,
+                expectedProduceExp: animal.expectedProduceExp,
+                mutation: animal.mutation,
+            });
+        }
+    }
+    animals.sort((x, y) => x.slotIndex - y.slotIndex);
+
+    const shelves = [];
+    for (const shelf of [...(a.collectableShelves || []), ...(a.stealableShelves || [])]) {
+        shelves.push({
+            ranchInstId: shelf.ranchInstId,
+            slotIndex: shelf.slotIndex,
+            totalRemain: shelf.totalRemain,
+            canCollect: shelf.canCollect,
+            canSteal: shelf.canSteal,
+            lots: shelf.lots.length,
+        });
+    }
+
+    const hazards = (a.needClean || []).map(h => ({
+        ranchInstId: h.ranchInstId,
+        hazardId: h.hazardId,
+        hazardType: h.hazardType,
+    }));
+
+    const nextReadyInSec = remainSec(a.nextProduceReadyAtMs);
+
+    return {
+        // 汇总
+        summary: {
+            animals: a.totalAnimals || 0,
+            capacity: a.totalCapacity || 0,
+            emptySlots: (a.emptySlots || []).length,
+            harvestable: (a.harvestable || []).length,
+            collectableShelves: (a.collectableShelves || []).length,
+            needFeed: (a.needFeed || []).length,
+            needClean: (a.needClean || []).length,
+            grassAmount: a.grassAmount || 0,
+            grassLow: !!a.grassLow,
+            nextReadyInSec,
+            expectedHarvestExp: a.expectedHarvestExpTotal || 0,
+            label: a.label || '[]',
+            hasWork: !!a.hasWork,
+        },
+        animals,
+        shelves,
+        hazards,
+        emptySlots: a.emptySlots || [],
+        updatedAt: now,
+    };
+}
+
 module.exports = {
     STAGE_INFANT,
     STAGE_GROWING,
@@ -227,6 +324,7 @@ module.exports = {
     GRASS_LOW_THRESHOLD,
     analyzeRanches,
     msUntilNextProduce,
+    buildPanelView,
     // 供测试单独验证
     normalizeAnimal,
     normalizeShelf,

@@ -491,3 +491,95 @@ cd core && node --test test/pasture-api.test.js test/pasture-analyzer.test.js te
 | `op_id` 语义（11003/11008/11009） | 本轮只抓到 1 次配额查询，缺对照样本 |
 | 抚摸/变异玩法 | `strokeAnimal` 已收口，未接入编排 |
 | 面板入口 | 不在当前范围 |
+
+---
+
+# 面板与好友偷取（2026-11-16 收尾）
+
+## 后端新增
+
+| 文件 | 内容 |
+|---|---|
+| `core/src/controllers/admin-pasture-routes.js` | `GET /api/pasture`、`POST /api/pasture/operate`（op 白名单校验） |
+| `core/src/services/pasture-visit.js` | 好友牧场偷产物 |
+
+`worker.js` 的 `handleApiCall` 加了两个 case：
+- `getPasture` — 拉详情 → 分析 → `buildPanelView()`，一步出面板数据
+- `doPastureOp` — 手动触发一轮（`all` / 单项）
+
+`data-provider.js` 对应加 `getPasture` / `doPastureOp`，
+`admin.js` 注册路由。
+
+## 一个关键区别：好友偷取不需要门票
+
+农场的偷菜要走 `VisitService.Enter` → 分析 → 操作 → `Leave`，四步。
+牧场的 `StealProduce` **直接用 `host_gid` 指名**，一次请求就完事，不需要进入/离开。
+
+所以 `pasture-visit.js` 很薄：
+
+```
+拉好友列表 → 逐个 GetRanchDetail(host_gid) → 有 can_steal 的货架就 StealProduce(gid)
+```
+
+护栏：
+- `pasture_steal` 默认 **false**（每轮会给每个好友多发一次请求）
+- 单轮最多查 5 个好友
+- 5 分钟冷却
+- 单个好友失败不影响其他好友
+
+`GetRanchDetail` 的 proto 补上了 `host_gid = 1`（第二轮抓包确认：同一方法在好友
+牧场场景出现过 8 个不同 gid）。
+
+## 面板
+
+| 文件 | 内容 |
+|---|---|
+| `web/src/stores/pasture.ts` | Pinia store：`fetchPasture` / `operate` / 账号切换丢弃过期响应 |
+| `web/src/views/Pasture.vue` | 视图：汇总卡片、单项操作、动物网格、货架/灾害/空栏 |
+| `web/src/router/menu.ts` | 菜单项「牧场」（`i-carbon-home`） |
+
+视图特性：
+- 20 秒轮询（牧场变化慢，不跟 bot 抢预算）
+- 未连接时不打接口，只显示提示
+- 操作完立刻刷新，不等下一次轮询
+- 动物卡片显示栏位、阶段、产物倒计时、预期经验、变异品阶/体重
+- **动物名字拿不到**（在加密的 `MCItemInfo` 表里），面板显示 `动物 #60001`
+
+## 设置开关（7 + 1 个）
+
+`AutomationSettingsTab.vue` 新增「牧场自动化」分组：
+
+| 开关 | 默认 |
+|---|---|
+| `pasture` 牧场巡查 | 开 |
+| `pasture_harvest` 自动收获（含货架） | 开 |
+| `pasture_feed` 自动投喂 | 开 |
+| `pasture_clean` 自动清理灾害 | 开 |
+| `pasture_refill` 自动补栏（用背包动物） | 开 |
+| `pasture_grass` 自动给牧草机补草 | 开 |
+| `pasture_buy_animal` 自动买动物（花牧场币） | **关** |
+| `pasture_steal` 偷好友牧场产物 | **关** |
+
+前端的 `useAutomationSettings` / `stores/setting.ts` / `DefaultPlanSettingsTab`
+三处默认值也同步补齐，避免面板读不到字段。
+
+## 测试
+
+```bash
+cd core && node --test test/pasture-*.test.js
+# 51 tests / 51 pass
+#   api 17 / analyzer 12 / orchestrator 17 / visit 8 / routes 9
+```
+
+全量 `npm test`：1214 项 / 1202 通过 / 12 失败（既有 Windows 限制）。
+
+前端：`vue-tsc --noEmit` 0 错误，`vite build` 成功（`dist/assets/Pasture-*.js`）。
+
+## 仍然没做
+
+| 缺口 | 原因 |
+|---|---|
+| 动物/设施的中文名 | 在加密的 `MCItemInfo` / `MCFacilityConfig` 表里，未解 |
+| `op_id` 语义（11003/11008/11009） | 两轮抓包各只有 1 次配额查询，缺对照样本 |
+| 抚摸/变异玩法 | `strokeAnimal` API 已收口，未接编排（收益不明） |
+| 扩建 capacity | 用户未执行该操作，无样本 |

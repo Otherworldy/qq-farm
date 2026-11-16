@@ -51,6 +51,7 @@ const {
 } = require('../services/farm');
 const {
     checkPasture,
+    checkFriendPastures,
     getNextPastureReadyInMs,
 } = require('../services/pasture');
 const {
@@ -486,6 +487,8 @@ async function runPastureTick(autoConfig) {
 
     try {
         await checkPasture();
+        // 好友偷产物带 5 分钟冷却，内部自己节流；开关默认关
+        await checkFriendPastures();
     } catch { } finally {
         const patrol = randomIntervalMs(
             CONFIG.pastureCheckIntervalMin || 20000,
@@ -1861,6 +1864,17 @@ async function handleApiCall(msg) {
         switch (method) {
             case 'getLands':
                 result = await require('../services/farm-land-analyzer').getLandsDetailForPanel();
+                break;
+            case 'getPasture': {
+                // 面板读路径：拉一次详情 → 分析 → 转成可渲染结构
+                const pasture = require('../services/pasture');
+                const reply = await pasture.getRanchDetail();
+                const analysis = pasture.analyzeRanches((reply && reply.ranches) || []);
+                result = pasture.buildPanelView(analysis);
+                break;
+            }
+            case 'doPastureOp':
+                result = await require('../services/pasture').runPastureOperation(args[0] || 'all');
                 break;
             case 'getFriends':
                 result = await getFriendsList(args[0] === true);

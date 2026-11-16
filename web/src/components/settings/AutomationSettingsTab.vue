@@ -21,6 +21,14 @@ interface AutomationSettings {
     friend_golden_bug: boolean
     friend_help_exp_limit: boolean
     golden_bug_clear: boolean
+    pasture: boolean
+    pasture_harvest: boolean
+    pasture_feed: boolean
+    pasture_clean: boolean
+    pasture_refill: boolean
+    pasture_grass: boolean
+    pasture_buy_animal: boolean
+    pasture_steal: boolean
     fertilizer_gift: boolean
     fertilizer_buy_organic: boolean
     fertilizer_buy_normal: boolean
@@ -158,6 +166,29 @@ const mysteryShopSettingsVisible = ref(false)
         </div>
         <BaseSwitch v-model="settings.automation.skip_own_weed_bug" label="不除自己草虫" />
         <BaseSwitch v-model="settings.automation.golden_bug_clear" label="自动清除黄金虫" />
+      </div>
+
+      <div class="border-t border-gray-100 pt-4 dark:border-gray-700">
+        <div class="mb-2 flex items-center gap-2">
+          <span class="i-carbon-home text-base text-sky-600 dark:text-sky-400" />
+          <h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            牧场自动化
+          </h4>
+          <span class="text-xs text-gray-400">与农场共用同一条连接</span>
+        </div>
+        <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <BaseSwitch v-model="settings.automation.pasture" label="牧场巡查" />
+          <BaseSwitch v-model="settings.automation.pasture_harvest" label="自动收获（含货架）" />
+          <BaseSwitch v-model="settings.automation.pasture_feed" label="自动投喂" />
+          <BaseSwitch v-model="settings.automation.pasture_clean" label="自动清理灾害" />
+          <BaseSwitch v-model="settings.automation.pasture_refill" label="自动补栏（用背包动物）" />
+          <BaseSwitch v-model="settings.automation.pasture_grass" label="自动给牧草机补草" />
+          <BaseSwitch v-model="settings.automation.pasture_buy_animal" label="自动买动物（花牧场币）" />
+          <BaseSwitch v-model="settings.automation.pasture_steal" label="偷好友牧场产物" />
+        </div>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          「自动买动物」默认关闭，开启后才会花牧场货币补充空栏；补栏始终优先用背包里已有的动物。
+        </p>
       </div>
 
       <Transition name="fade">

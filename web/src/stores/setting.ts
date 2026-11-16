@@ -30,6 +30,15 @@ export interface AutomationConfig {
   friend_help_exp_limit?: boolean
   golden_bug_clear?: boolean
   skip_own_weed_bug?: boolean
+  // 牧场（MC）
+  pasture?: boolean
+  pasture_harvest?: boolean
+  pasture_feed?: boolean
+  pasture_clean?: boolean
+  pasture_refill?: boolean
+  pasture_grass?: boolean
+  pasture_buy_animal?: boolean
+  pasture_steal?: boolean
 }
 
 export interface IntervalsConfig {

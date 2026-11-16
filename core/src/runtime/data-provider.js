@@ -158,6 +158,10 @@ function createDataProvider(deps) {
         buyGoods: (ref, shopId, goodsId, count) => callWorkerApi(resolveAccountId(ref), 'buyGoods', shopId, goodsId, count),
         doAnalytics: (ref, days) => callWorkerApi(resolveAccountId(ref), 'getAnalytics', days),
 
+        // ========== Pasture API ==========
+        getPasture: (ref) => callWorkerApi(resolveAccountId(ref), 'getPasture'),
+        doPastureOp: (ref, opType) => callWorkerApi(resolveAccountId(ref), 'doPastureOp', opType),
+
         // ========== Friend API ==========
         getFriends: (ref, force = false) => callWorkerApi(resolveAccountId(ref), 'getFriends', force,
             force ? FRIEND_TIMEOUT : undefined),

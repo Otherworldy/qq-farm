@@ -51,6 +51,7 @@ const {
 const { registerAdminFriendRoutes } = require("./admin-friend-routes");
 const { registerAdminIllustratedRoutes } = require("./admin-illustrated-routes");
 const { registerAdminLoginLogRoutes } = require("./admin-login-log-routes");
+const { registerAdminPastureRoutes } = require("./admin-pasture-routes");
 const { registerAdminPlantBlacklistRoutes } = require("./admin-plant-blacklist-routes");
 const { registerAdminStealWhitelistRoutes } = require("./admin-steal-whitelist-routes");
 const { registerAdminProxyRoutes } = require("./admin-proxy-routes");
@@ -431,6 +432,13 @@ function startAdminServer(dataProvider) {
   registerLogoutRoute(app, invalidateAdminSessionAndDisconnect);
 
   registerAdminFarmResourceRoutes({
+    app,
+    provider,
+    getAccountIdFromRequest,
+    canAccessAccount,
+    sendProviderError,
+  });
+  registerAdminPastureRoutes({
     app,
     provider,
     getAccountIdFromRequest,

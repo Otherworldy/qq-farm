@@ -189,3 +189,57 @@ test('msUntilNextProduce：无已知时刻返回 0', () => {
     assert.equal(msUntilNextProduce({ nextProduceReadyAtMs: 1000 }, 400), 600);
     assert.equal(msUntilNextProduce({ nextProduceReadyAtMs: 1000 }, 5000), 0, '已过期按 0');
 });
+// ─── 面板视图（buildPanelView）───
+
+const { buildPanelView } = require('../src/services/pasture-analyzer');
+
+test('buildPanelView：汇总数字与 animals 拍平', () => {
+    const now = 1794810000000;
+    const a = analyzeRanches([realRanch()], { now });
+    const view = buildPanelView(a, now);
+
+    assert.equal(view.summary.animals, 4);
+    assert.equal(view.summary.capacity, 4);
+    assert.equal(view.summary.emptySlots, 0, '4 个槽位全占');
+    assert.equal(view.summary.harvestable, 1);
+    assert.equal(view.summary.collectableShelves, 1);
+    assert.equal(view.summary.needFeed, 1);
+    assert.equal(view.summary.needClean, 1);
+    assert.equal(view.summary.grassAmount, 12);
+    assert.equal(view.summary.grassLow, true);
+
+    // 三只动物进了面板（可收获 + 需投喂 + 生产中），缺草那只不进
+    assert.equal(view.animals.length, 3);
+    assert.ok(view.animals.every(x => x.name.startsWith('动物 #')));
+    assert.ok(view.animals.every(x => typeof x.stageName === 'string'));
+    // 按槽位升序
+    assert.deepEqual(view.animals.map(x => x.slotIndex), [1, 2, 3]);
+});
+
+test('buildPanelView：产物成熟倒计时按 now 计算', () => {
+    const now = 1794810000000;
+    const a = analyzeRanches([realRanch()], { now });
+    const view = buildPanelView(a, now);
+    const first = view.animals.find(x => x.animalInstId === 7);
+    assert.equal(first.readyAtMs, 1794818744037);
+    assert.equal(first.readyInSec, Math.ceil((1794818744037 - now) / 1000));
+    assert.ok(view.summary.nextReadyInSec > 0);
+});
+
+test('buildPanelView：无数据时不 crash', () => {
+    assert.doesNotThrow(() => buildPanelView(null));
+    const view = buildPanelView(analyzeRanches([]));
+    assert.equal(view.summary.animals, 0);
+    assert.deepEqual(view.animals, []);
+    assert.deepEqual(view.shelves, []);
+    assert.deepEqual(view.hazards, []);
+    assert.equal(view.summary.nextReadyInSec, 0);
+});
+
+test('buildPanelView：货架与灾害带出去重后的条目', () => {
+    const view = buildPanelView(analyzeRanches([realRanch()]));
+    assert.equal(view.shelves.length, 2, '可收 + 可偷各一条');
+    assert.equal(view.hazards.length, 1);
+    assert.equal(view.hazards[0].hazardId, 501);
+    assert.equal(view.shelves[0].lots, 1);
+});
