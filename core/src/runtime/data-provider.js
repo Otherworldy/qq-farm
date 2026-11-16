@@ -161,6 +161,7 @@ function createDataProvider(deps) {
         // ========== Pasture API ==========
         getPasture: (ref) => callWorkerApi(resolveAccountId(ref), 'getPasture'),
         getPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'getPastureTasks'),
+        listPastureAnimals: (ref) => callWorkerApi(resolveAccountId(ref), 'listPastureAnimals'),
         claimPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'claimPastureTasks'),
         doPastureOp: (ref, opType) => callWorkerApi(resolveAccountId(ref), 'doPastureOp', opType),
 
@@ -249,6 +250,8 @@ function createDataProvider(deps) {
                 bagSeedPriority: s.bagSeedPriority,
                 bagSeedKnownIds: s.bagSeedKnownIds,
                 bagSeedFallbackStrategy: s.bagSeedFallbackStrategy,
+                pasturePreferredAnimal: s.pasturePreferredAnimal,
+                pastureStealWhitelist: s.pastureStealWhitelist,
             };
             store.applyConfigSnapshot(patch, { accountId: id });
             const rev = nextConfigRevision();
@@ -277,6 +280,8 @@ function createDataProvider(deps) {
                 autoAcceptFriendMinLevel: store.getAutoAcceptFriendMinLevel(id),
                 bagSeedPriority: store.getBagSeedPriority(id),
                 bagSeedFallbackStrategy: store.getBagSeedFallbackStrategy(id),
+                pasturePreferredAnimal: store.getPasturePreferredAnimal(id),
+                pastureStealWhitelist: store.getPastureStealWhitelist(id),
                 configRevision: rev
             };
         },

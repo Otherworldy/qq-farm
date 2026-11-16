@@ -12,7 +12,7 @@
 
 const { getUserState, isConnected } = require('../utils/network');
 const { toNum, log, logWarn } = require('../utils/utils');
-const { isAutomationOn } = require('../models/store');
+const { isAutomationOn, getPastureStealWhitelist } = require('../models/store');
 const { recordEvent } = require('./daily-events');
 const { getRanchDetail, stealProduce } = require('./pasture-api');
 const { analyzeRanches } = require('./pasture-analyzer');
@@ -86,6 +86,16 @@ async function checkFriendPastures(options = {}) {
             }
             const analysis = analyzeRanches((detail && detail.ranches) || [], { now });
             if (!analysis.stealableShelves.length) continue;
+
+            // 偷产物白名单：按货架 lot 里的 animal_id 判断，空数组 = 不限制。
+            // 与农场偷菜白名单语义保持一致（空=全偷，非空=只偷名单内）。
+            const whitelist = getPastureStealWhitelist();
+            if (whitelist.length > 0) {
+                const wanted = new Set(whitelist);
+                const hits = analysis.stealableShelves.some(shelf =>
+                    (shelf.lots || []).some(lot => wanted.has(toNum(lot.animalId))));
+                if (!hits) continue;
+            }
 
             try {
                 await stealProduce(friend.gid);

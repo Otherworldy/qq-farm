@@ -208,14 +208,16 @@ test('buildPanelView：汇总数字与 animals 拍平', () => {
     assert.equal(view.summary.grassAmount, 12);
     assert.equal(view.summary.grassLow, true);
 
-    // 三只动物进了面板（可收获 + 需投喂 + 生产中），缺草那只不进
-    assert.equal(view.animals.length, 3);
+    // 四只动物全部进面板 —— 面板是「栏里有什么」，不是「要做什么」。
+    // 缺草那只不属于可收/待喂/生产中任何一类，旧实现会把它漏掉，
+    // 真机上表现为「刚买的鸡在成长阶段，面板完全看不到」。
+    assert.equal(view.animals.length, 4);
     // 填了映射的显示真名，没填的显示 `动物 #<id>` 占位
     assert.ok(view.animals.every(x => x.name && !x.name.includes('undefined')));
     assert.ok(view.animals.some(x => x.name === '鸭'), '60002 应显示「鸭」');
     assert.ok(view.animals.every(x => typeof x.stageName === 'string'));
     // 按槽位升序
-    assert.deepEqual(view.animals.map(x => x.slotIndex), [1, 2, 3]);
+    assert.deepEqual(view.animals.map(x => x.slotIndex), [1, 2, 3, 4]);
 });
 
 test('buildPanelView：产物成熟倒计时按 now 计算', () => {
@@ -297,4 +299,70 @@ test('面板视图用的是真名而不是 id', () => {
     const view = buildPanelView(analyzeRanches([realRanch()]));
     const first = view.animals.find(a => a.animalId === 60002);
     assert.equal(first.name, '鸭', 'animal_id 60002 应显示为「鸭」');
+});
+
+// ── 面板必须看到「栏里有什么」，而不只是「要做什么」──
+
+test('buildPanelView 包含幼崽和成长阶段的动物', () => {
+    const ranches = [{
+        ranch_inst_id: 10001,
+        capacity: 3,
+        grass: { amount: 100 },
+        animals: [
+            // 幼崽：不可收、不待喂、不生产 —— 三个动作分类都不会收它
+            { ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 7, animal_id: 60001, stage: 1 },
+            { ranch_inst_id: 10001, slot_index: 2, animal_inst_id: 8, animal_id: 60002, stage: 2 },
+            // 可收
+            { ranch_inst_id: 10001, slot_index: 3, animal_inst_id: 9, animal_id: 60003, stage: 5, produce_count: 1 },
+        ],
+    }];
+
+    const analysis = analyzeRanches(ranches);
+    assert.equal(analysis.totalAnimals, 3);
+    assert.equal(analysis.allAnimals.length, 3, 'analyzeRanches 要保留全量动物');
+
+    const view = buildPanelView(analysis, Date.now());
+    assert.equal(view.summary.animals, 3);
+    assert.equal(view.animals.length, 3, '面板不能漏掉幼崽和成长中的动物');
+    assert.deepEqual(view.animals.map(a => a.slotIndex), [1, 2, 3], '按栏位排序');
+    assert.deepEqual(view.animals.map(a => a.stage), [1, 2, 5]);
+});
+
+// ── 到了生产阶段却没开工的动物（牧场不像农场种下就长）──
+
+test('analyzeRanches 单独标出需要 TriggerProduce 的动物', () => {
+    const ranches = [{
+        ranch_inst_id: 10001,
+        capacity: 3,
+        grass: { amount: 100 },
+        animals: [
+            // 生产阶段但没在产、也没产物 —— 需要触发
+            { ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 7, animal_id: 60001, stage: 3 },
+            // 已经在产 —— 不用管
+            { ranch_inst_id: 10001, slot_index: 2, animal_inst_id: 8, animal_id: 60001, stage: 3, producing: true },
+            // 幼崽 —— 还没到阶段，不能触发
+            { ranch_inst_id: 10001, slot_index: 3, animal_inst_id: 9, animal_id: 60001, stage: 1 },
+        ],
+    }];
+
+    const a = analyzeRanches(ranches);
+    assert.equal(a.needsProduce.length, 1, '只有那只停在生产阶段没开工的');
+    assert.equal(a.needsProduce[0].animalInstId, 7);
+
+    const view = buildPanelView(a, Date.now());
+    assert.equal(view.summary.needsProduce, 1, '面板汇总要带出来');
+});
+
+test('analyzeRanches：可收获的动物不再算作待触发', () => {
+    const ranches = [{
+        ranch_inst_id: 10001,
+        capacity: 1,
+        grass: { amount: 100 },
+        animals: [{
+            ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 7, animal_id: 60001,
+            stage: 5, can_harvest: true, produce_count: 2,
+        }],
+    }];
+    const a = analyzeRanches(ranches);
+    assert.equal(a.needsProduce.length, 0, '有东西可收时不该再去触发生产');
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import BagPanel from '@/components/BagPanel.vue'
 import FarmPanel from '@/components/FarmPanel.vue'
 import PasturePanel from '@/components/PasturePanel.vue'
@@ -7,12 +7,16 @@ import TaskPanel from '@/components/TaskPanel.vue'
 
 const currentTab = ref<'farm' | 'pasture' | 'bag' | 'task'>('farm')
 
-const panels = {
-  farm: FarmPanel,
-  pasture: PasturePanel,
-  bag: BagPanel,
-  task: TaskPanel,
-} as const
+// 用三元而不是查表：模板里对对象下标取动态 key 拿不稳组件引用，
+// 实测切 tab 后高亮变了但面板还是旧的。三元表达式和原来 3 个 tab 时一致。
+// 这里刻意不用 <Transition mode="out-in">：套一层过渡后，切 tab 时按钮高亮会变，
+// 但面板一直停在旧组件上（实测加不加 :key 都一样）。去掉过渡后切换正常。
+const currentPanel = computed(() =>
+  currentTab.value === 'pasture' ? PasturePanel
+    : currentTab.value === 'bag' ? BagPanel
+      : currentTab.value === 'task' ? TaskPanel
+        : FarmPanel,
+)
 </script>
 
 <template>
@@ -73,17 +77,7 @@ const panels = {
     </div>
 
     <div class="flex-1 overflow-hidden overflow-y-auto">
-      <Transition
-        mode="out-in"
-        enter-active-class="transition duration-200 ease-out"
-        enter-from-class="transform opacity-0 scale-95"
-        enter-to-class="transform opacity-100 scale-100"
-        leave-active-class="transition duration-150 ease-in"
-        leave-from-class="transform opacity-100 scale-100"
-        leave-to-class="transform opacity-0 scale-95"
-      >
-        <component :is="panels[currentTab]" />
-      </Transition>
+      <component :is="currentPanel" />
     </div>
   </div>
 </template>

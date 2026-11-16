@@ -86,6 +86,14 @@ function buildSettingsPayload(store, accountId, currentUser) {
     intervals: accountId ? store.getIntervals(accountId) : {},
     plantingStrategy: accountId ? store.getPlantingStrategy(accountId) : null,
     preferredSeedId: accountId ? store.getPreferredSeed(accountId) : null,
+    pasturePreferredAnimal:
+      accountId && typeof store.getPasturePreferredAnimal === "function"
+        ? store.getPasturePreferredAnimal(accountId)
+        : 0,
+    pastureStealWhitelist:
+      accountId && typeof store.getPastureStealWhitelist === "function"
+        ? store.getPastureStealWhitelist(accountId)
+        : [],
     prioritize2x2Crops:
       accountId && typeof store.getPrioritize2x2Crops === "function"
         ? store.getPrioritize2x2Crops(accountId)

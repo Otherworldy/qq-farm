@@ -403,6 +403,13 @@ const DEFAULT_ACCOUNT_CONFIG = {
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
     prioritize2x2Crops: false,
+    // ── 牧场策略（对应农场的「优先种子」和「偷菜白名单」）──
+    // 补栏时优先买的动物 ID（60001-60016 窝类 / 70001-70012 棚类）。
+    // 0 = 不指定，按「最便宜且买得起」挑。背包里有货时永远先用背包。
+    pasturePreferredAnimal: 0,
+    // 偷好友牧场产物时只偷这些动物（按货架 lot 的 animal_id 判断）。
+    // 空数组 = 不限制，与农场 stealWhitelist 语义一致。
+    pastureStealWhitelist: [],
     friendBadRetryDate: '',
     intervals: DEFAULT_INTERVALS,
     friendQuietHours: DEFAULT_QUIET_HOURS,
@@ -662,6 +669,9 @@ function cloneAccountConfig(config = DEFAULT_ACCOUNT_CONFIG) {
         plantingStrategy: ALLOWED_PLANTING_STRATEGIES.includes(String(config.plantingStrategy || ''))
             ? String(config.plantingStrategy) : DEFAULT_ACCOUNT_CONFIG.plantingStrategy,
         preferredSeedId: Math.max(0, Number.parseInt(config.preferredSeedId, 10) || 0),
+        pasturePreferredAnimal: Math.max(0, Number.parseInt(config.pasturePreferredAnimal, 10) || 0),
+        pastureStealWhitelist: (Array.isArray(config.pastureStealWhitelist) ? config.pastureStealWhitelist : [])
+            .map(Number).filter(n => Number.isFinite(n) && n > 0),
         prioritize2x2Crops: config.prioritize2x2Crops === true,
         plantBlacklist: plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
         stealWhitelist: stealWhitelist.map(Number).filter(n => Number.isFinite(n) && n > 0),
@@ -777,6 +787,14 @@ function normalizeAccountConfig(raw, fallbackConfig = accountFallbackConfig) {
     // 首选种子
     if (input.preferredSeedId !== undefined && input.preferredSeedId !== null) {
         cfg.preferredSeedId = Math.max(0, Number.parseInt(input.preferredSeedId, 10) || 0);
+    }
+    // 牧场策略
+    if (input.pasturePreferredAnimal !== undefined && input.pasturePreferredAnimal !== null) {
+        cfg.pasturePreferredAnimal = Math.max(0, Number.parseInt(input.pasturePreferredAnimal, 10) || 0);
+    }
+    if (Array.isArray(input.pastureStealWhitelist)) {
+        cfg.pastureStealWhitelist = input.pastureStealWhitelist
+            .map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
     if (input.prioritize2x2Crops !== undefined && input.prioritize2x2Crops !== null) {
         cfg.prioritize2x2Crops = input.prioritize2x2Crops === true;
@@ -910,6 +928,8 @@ function pickDefaultPlanConfig(raw) {
         autoCodeRefresh: { ...cfg.autoCodeRefresh },
         plantingStrategy: cfg.plantingStrategy,
         preferredSeedId: cfg.preferredSeedId,
+        pasturePreferredAnimal: cfg.pasturePreferredAnimal,
+        pastureStealWhitelist: [...cfg.pastureStealWhitelist],
         prioritize2x2Crops: cfg.prioritize2x2Crops === true,
         intervals: { ...cfg.intervals },
         friendQuietHours: { ...cfg.friendQuietHours },
@@ -1315,6 +1335,7 @@ function sanitizeGlobalConfigBeforeSave() {
 const PANEL_OWNED_FIELDS = [
     'stealDelaySeconds', 'plantOrderRandom', 'plantDelaySeconds', 'intervals',
     'plantingStrategy', 'preferredSeedId', 'prioritize2x2Crops', 'autoCodeRefresh',
+    'pasturePreferredAnimal', 'pastureStealWhitelist',
     'friendQuietHours', 'kickoutRelogin',
     'fertilizerBuyOrganicCount', 'fertilizerBuyOrganicThresholdHours',
     'fertilizerBuyNormalCount', 'fertilizerBuyNormalThresholdHours',
@@ -1416,6 +1437,8 @@ function getConfigSnapshot(accountId) {
         autoCodeRefresh: { ...cfg.autoCodeRefresh },
         plantingStrategy: cfg.plantingStrategy,
         preferredSeedId: cfg.preferredSeedId,
+        pasturePreferredAnimal: cfg.pasturePreferredAnimal,
+        pastureStealWhitelist: [...cfg.pastureStealWhitelist],
         prioritize2x2Crops: cfg.prioritize2x2Crops === true,
         friendBadRetryDate: String(cfg.friendBadRetryDate || ''),
         intervals: { ...cfg.intervals },
@@ -1477,6 +1500,14 @@ function applyConfigSnapshot(patch = {}, opts = {}) {
     }
     if (patch.preferredSeedId !== undefined && patch.preferredSeedId !== null) {
         cfg.preferredSeedId = Math.max(0, Number.parseInt(patch.preferredSeedId, 10) || 0);
+    }
+    // 牧场策略
+    if (patch.pasturePreferredAnimal !== undefined && patch.pasturePreferredAnimal !== null) {
+        cfg.pasturePreferredAnimal = Math.max(0, Number.parseInt(patch.pasturePreferredAnimal, 10) || 0);
+    }
+    if (Array.isArray(patch.pastureStealWhitelist)) {
+        cfg.pastureStealWhitelist = patch.pastureStealWhitelist
+            .map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
     if (patch.prioritize2x2Crops !== undefined && patch.prioritize2x2Crops !== null) {
         cfg.prioritize2x2Crops = patch.prioritize2x2Crops === true;
@@ -1830,6 +1861,14 @@ function setPlantBlacklist(accountId, blacklist) {
         ? blacklist.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
     setAccountConfigSnapshot(accountId, cfg);
     return [...cfg.plantBlacklist];
+}
+
+function getPasturePreferredAnimal(accountId) {
+    return getAccountConfigSnapshot(accountId).pasturePreferredAnimal;
+}
+
+function getPastureStealWhitelist(accountId) {
+    return [...getAccountConfigSnapshot(accountId).pastureStealWhitelist || []];
 }
 
 function getStealWhitelist(accountId) {
@@ -2465,6 +2504,8 @@ module.exports = {
     getPlantBlacklist,
     setPlantBlacklist,
     getStealWhitelist,
+    getPasturePreferredAnimal,
+    getPastureStealWhitelist,
     setStealWhitelist,
     getDefaultAccountConfig,
     getAnnouncement,

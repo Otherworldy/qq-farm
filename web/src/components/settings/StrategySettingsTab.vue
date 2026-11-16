@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import BagSeedPriorityPanel from '@/components/settings/BagSeedPriorityPanel.vue'
+import PastureStrategyPanel from '@/components/settings/PastureStrategyPanel.vue'
 import StealWhitelistPanel from '@/components/settings/StealWhitelistPanel.vue'
 import StrategyTimingPanel from '@/components/settings/StrategyTimingPanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -23,6 +24,8 @@ interface BagSeedItem {
 interface StrategySettings {
   plantingStrategy: string
   preferredSeedId: number
+  pasturePreferredAnimal: number
+  pastureStealWhitelist: number[]
   prioritize2x2Crops: boolean
   bagSeedPriority: number[]
   bagSeedFallbackStrategy: string
@@ -176,6 +179,7 @@ const settings = defineModel<StrategySettings>('settings', { required: true })
       </div>
 
       <StealWhitelistPanel />
+      <PastureStrategyPanel :settings="settings" />
 
       <StrategyTimingPanel v-model:settings="settings" />
 

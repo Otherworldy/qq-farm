@@ -109,6 +109,8 @@ export interface AutoCodeRefreshConfig {
 export interface SettingsState {
   plantingStrategy: string
   preferredSeedId: number
+  pasturePreferredAnimal?: number
+  pastureStealWhitelist?: number[]
   prioritize2x2Crops: boolean
   bagSeedPriority: number[]
   bagSeedKnownIds: number[]
@@ -177,6 +179,8 @@ export const useSettingStore = defineStore('setting', () => {
   const settings = ref<SettingsState>({
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
+    pasturePreferredAnimal: 0,
+    pastureStealWhitelist: [],
     prioritize2x2Crops: false,
     bagSeedPriority: [],
     bagSeedKnownIds: [],
@@ -213,6 +217,8 @@ export const useSettingStore = defineStore('setting', () => {
     settings.value = {
       plantingStrategy: 'max_exp',
       preferredSeedId: 0,
+    pasturePreferredAnimal: 0,
+    pastureStealWhitelist: [],
       prioritize2x2Crops: false,
       bagSeedPriority: [],
       bagSeedKnownIds: [],

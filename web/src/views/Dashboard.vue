@@ -290,7 +290,9 @@ const pastureCards = computed(() => {
 /** 牧场状态比农场变化慢，60 秒拉一次就够，避免和 bot 抢请求预算 */
 const PASTURE_POLL_MS = 60_000
 async function refreshPasture() {
-  if (!currentAccountId.value || !realtimeConnected.value)
+  // 不依赖 WS：/api/pasture 是普通 HTTP 接口，WS 未连时后端照样能答。
+  // 之前这里卡了 realtimeConnected，导致首屏永远是 0/0。
+  if (!currentAccountId.value)
     return
   await pastureStore.fetchPasture(currentAccountId.value)
   await pastureStore.fetchTasks(currentAccountId.value)
@@ -898,10 +900,14 @@ onMounted(async () => {
 useIntervalFn(refresh, 10000)
 // Countdown timer (every 1s)
 useIntervalFn(updateCountdowns, 1000)
-// 牧场状态：切账号后立刻重拉一次
+// 牧场状态：切账号后立刻重拉；WS 连上后也补一次（首屏可能早于登录就绪）
 watch(currentAccountId, () => {
   pastureStore.clearPastureData()
   void refreshPasture()
+})
+watch(realtimeConnected, (v) => {
+  if (v)
+    void refreshPasture()
 })
 </script>
 
@@ -1116,10 +1122,10 @@ watch(currentAccountId, () => {
           <div class="i-carbon-home" />
           <span>牧场</span>
           <span
-            v-if="pastureSummary.capacity > 0"
+            v-if="pastureSummary.hasWork"
             class="rounded bg-teal-100 px-2 py-0.5 text-xs text-teal-700 dark:bg-teal-900/30 dark:text-teal-300"
           >
-            {{ pastureSummary.label || '运行中' }}
+            {{ pastureSummary.label }}
           </span>
         </h3>
         <router-link

@@ -1913,6 +1913,9 @@ async function handleApiCall(msg) {
             case 'doPastureOp':
                 result = await require('../services/pasture').runPastureOperation(args[0] || 'all');
                 break;
+            case 'listPastureAnimals':
+                result = require('../config/gameConfig').listPastureAnimals();
+                break;
             case 'getPastureTasks':
                 // 牧场任务与农场任务同源不同 scene，面板按需单独拉
                 result = await getPastureTaskSummary();

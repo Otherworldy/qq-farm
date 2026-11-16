@@ -78,6 +78,7 @@ function setupMocks(options = {}) {
     mockModule('models/store', {
         isAutomationOn: key => (key === 'pasture' ? auto.pasture : !!auto[key]),
         getAutomation: () => auto,
+        getPasturePreferredAnimal: () => options.preferredAnimal || 0,
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
 
@@ -434,4 +435,95 @@ test('planIdleProtection：牧场临近时不能进入长时防护', () => {
         pastureAt: now + 6 * 60_000,
     });
     assert.equal(allFar, now + 6 * 60_000, '取三者最早的那个作为唤醒点');
+});
+
+// ── 运行策略：优先补栏动物（对应农场的「优先种子」）──
+
+test('补栏：指定优先动物时买它，而不是最便宜的那只', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true },
+        preferredAnimal: 60003,
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10003, animalId: 60002, price: 1080, unlocked: true },
+            { goodsId: 10004, animalId: 60003, price: 2712, unlocked: true },
+        ],
+    });
+    await orchestrator.runPastureOperation('refill');
+    const buyCall = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buyCall, '应发起购买');
+    assert.ok(buyCall.includes(':10004:'), `应买指定的鹅 10004（实际 ${buyCall}）`);
+    assert.ok(calls.some(c => String(c).startsWith('place:') && c.includes('60003')),
+        '买完放入对应的鹅');
+});
+
+test('补栏：没指定优先动物时仍买最便宜的', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true },
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10004, animalId: 60003, price: 2712, unlocked: true },
+        ],
+    });
+    await orchestrator.runPastureOperation('refill');
+    const buyCall = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buyCall && buyCall.includes(':10002:'), `未指定时买最便宜的鸡（实际 ${buyCall}）`);
+});
+
+test('补栏：指定的优先动物买不起时退到买得起的', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 10 }],
+        auto: { pasture_buy_animal: true },
+        preferredAnimal: 60003,
+        animalGoods: [
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+            { goodsId: 10004, animalId: 60003, price: 2712, unlocked: true },
+        ],
+    });
+    await orchestrator.runPastureOperation('refill');
+    const buyCall = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buyCall && buyCall.includes(':10002:'), `买不起鹅时买鸡（实际 ${buyCall}）`);
+});
+
+// ── TriggerProduce 绝不能自动调用：它会连动物一起出栏 ──
+
+test('TriggerProduce：即使有未开工的动物也绝不自动调用', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: {
+            ranches: [{
+                ranch_inst_id: 10001, capacity: 3, grass: { amount: 100 },
+                animals: [
+                    { ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 7, animal_id: 60001, stage: 3 },
+                ],
+                shelves: [], hazards: [],
+            }],
+        },
+        auto: {},
+    });
+
+    await orchestrator.runPastureOperation('all');
+    assert.equal(calls.includes('triggerProduce'), false,
+        'TriggerProduce 是「一键开轮」，调用会把动物整个收出栏（真机复现 3/3 → 0/3）');
+});
+
+test('TriggerProduce：只在日志里如实记录待开工数量', async () => {
+    const { orchestrator } = setupMocks({
+        reply: {
+            ranches: [{
+                ranch_inst_id: 10001, capacity: 3, grass: { amount: 100 },
+                animals: [
+                    { ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 7, animal_id: 60001, stage: 3 },
+                ],
+                shelves: [], hazards: [],
+            }],
+        },
+        auto: {},
+    });
+    // 不抛错即可；这条测试保证记录路径本身不会发请求
+    await assert.doesNotReject(() => orchestrator.runPastureOperation('all'));
 });

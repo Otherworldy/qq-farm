@@ -51,6 +51,8 @@ function createStrategySettings() {
   return {
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
+    pasturePreferredAnimal: 0,
+    pastureStealWhitelist: [],
     prioritize2x2Crops: false,
     bagSeedPriority: [] as number[],
     bagSeedFallbackStrategy: 'level',

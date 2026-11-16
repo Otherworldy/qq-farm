@@ -42,7 +42,7 @@ function friendRanchWithStealable() {
             animals: [],
             grass: { amount: 80 },
             shelves: [{ slot_index: 1, total_remain: 5, can_collect: false, can_steal: true,
-                lots: [{ item_id: 1007, remain_num: 5, can_steal: true, stealers: [] }] }],
+                lots: [{ item_id: 1007, remain_num: 5, animal_id: 60001, can_steal: true, stealers: [] }] }],
             hazards: [],
         }],
     };
@@ -75,6 +75,7 @@ function setup(options = {}) {
     mockModule('models/store', {
         isAutomationOn: key => !!auto[key],
         getAutomation: () => auto,
+        getPastureStealWhitelist: () => options.stealWhitelist || [],
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
     mockModule('services/friend-api', {
@@ -190,4 +191,33 @@ test('pickFriends：兼容 gid / target_gid / id 三种字段', () => {
         friends: [{ gid: 11 }, { target_gid: 22 }, { id: 33 }, { gid: 0 }],
     });
     assert.deepEqual(picked.map(f => f.gid), [11, 22, 33], 'gid=0 的应被过滤');
+});
+// ── 运行策略：偷产物白名单（对应农场的偷菜白名单）──
+
+test('checkFriendPastures：白名单为空时不限制', async () => {
+    const { visit } = setup({
+        stealWhitelist: [],
+        ranchByGid: { 1288674344: friendRanchWithStealable() },
+    });
+    const result = await visit.checkFriendPastures();
+    assert.equal(result.stolen, 1, '空名单 = 全偷');
+});
+
+test('checkFriendPastures：白名单命中动物时才偷', async () => {
+    const { visit } = setup({
+        stealWhitelist: [60001],   // 好友货架 lot 的 animal_id 就是 60001
+        ranchByGid: { 1288674344: friendRanchWithStealable() },
+    });
+    const result = await visit.checkFriendPastures();
+    assert.equal(result.stolen, 1, '命中则偷');
+});
+
+test('checkFriendPastures：白名单不含该动物时不偷', async () => {
+    const { visit, calls } = setup({
+        stealWhitelist: [60002, 60003],   // 没有 60001
+        ranchByGid: { 1288674344: friendRanchWithStealable() },
+    });
+    const result = await visit.checkFriendPastures();
+    assert.equal(result.stolen, 0, '不在名单里就不偷');
+    assert.equal(calls.some(c => String(c).startsWith('steal:')), false, '一次偷取请求都不该发');
 });

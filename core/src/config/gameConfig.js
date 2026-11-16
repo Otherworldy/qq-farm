@@ -733,6 +733,17 @@ function deriveGoldMutationItem(itemId) {
  * @param {number} animalId - AnimalInst.animal_id（如 60001）
  * @returns {string} 映射里的名字；没配映射时返回 `动物 #<id>` 占位
  */
+/**
+ * 全部牧场动物（按 ID 升序），供面板做「优先补栏」下拉。
+ * @returns {Array<{id:number,name:string}>}
+ */
+function listPastureAnimals() {
+    return [...pastureAnimalNames.entries()]
+        .map(([id, name]) => ({ id: Number(id), name }))
+        .filter(it => Number.isFinite(it.id) && it.id > 0)
+        .sort((a, b) => a.id - b.id);
+}
+
 function getPastureAnimalName(animalId) {
     const id = Number(animalId) || 0;
     const mapped = pastureAnimalNames.get(id);
@@ -899,6 +910,7 @@ module.exports = {
     getPlantByFruitId,
     getItemById,
     getPastureAnimalName,
+    listPastureAnimals,
     getPastureFacilityName,
     registerRuntimeItem,
     getItemImageById,

@@ -881,3 +881,35 @@
   - 测试：`pasture-task.test.js` 9 项，牧场全套 86 项全绿；
     验证过「删掉 scene_id 立刻挂 2 项，加回来 9 项全过」。
   - 前端 `pnpm build:web` 通过（补齐 4 处 `pasture_task`/`pastureMin` 类型与默认值）。
+- 2026-11-16 **牧场真机闭环验证 + 修掉三个真 bug + 补运行策略**。
+  - **闭环验证通过**（日志实录）：`买入并补栏 1 只动物（goods 10002，花费 2）` →
+    `本轮操作：refill_slots` → `投喂 1 只动物` → `清理 1 个灾害（定点）` →
+    `发现 1 个可领取牧场任务` → `领取(牧场每日): 清理1次牧场`。全自主，无人工介入。
+  - **浏览器逐项确认前端**：概览页「牧场」卡（栏位/可收获/待投喂/货架/牧草/可领任务 +
+    跳转）、倒计时「牧场」行（实时 00:00:09）、个人页 4 个 tab、
+    「我的牧场」面板（含动物网格与牧场任务）、「策略设置 → 牧场策略」。
+  - **bug1 `HarvestRanch` 被当成收货架接口**：真机日志「收货架 3 个」之后
+    栏位 3/3 → 0/3，三只鸡全被收出栏。官方文档区分 `CollectProduce`（收副产品）/
+    `HarvestAnimal`（收获出栏）/ `HarvestRanch`（一键收获）。
+    **改为完全不调用**，只记录待收数量 —— `CollectProduce` 无 proto 样本，按规矩不猜。
+  - **bug2 `TriggerProduce` 是「一键开轮」不是「开始生产」**：两次复现都是
+    调用后产物进货架 + 动物整个消失。`MCOneKeyTriggerProduceOp.ts` 的注释正是「一键开轮」。
+    **改为绝不自动调用**，并删除 `pasture_produce` 开关（前后端），去掉这条日志刷屏。
+  - **bug3 面板看不到幼崽/成长中动物**：`buildPanelView` 只遍历三个**动作**分类，
+    刚买的鸡（stage 1-2）不属于任何一类，整个从面板消失（`summary.animals=1` 但
+    `animals=[]`）。改为遍历新增的 `allAnimals` 全量列表。
+  - **bug4 概览页牧场卡首屏恒 0/0**：`refreshPasture` 卡了 `realtimeConnected`，
+    首屏 WS 未连就 return。改为只看 accountId，并 watch WS 连上后补拉。
+  - **bug5 `<Transition mode="out-in">` 卡死 tab 切换**：`Personal.vue` 切 tab 时
+    按钮高亮变了但面板停在旧组件（加不加 `:key` 都一样）。去掉过渡层后四个 tab 正常。
+  - **运行策略补齐**（需求 4 缺口）：新增 `pasturePreferredAnimal`（优先补栏动物，
+    对应农场「优先种子」）与 `pastureStealWhitelist`（偷产物白名单，按货架 lot 的
+    `animal_id` 判断，空=不限制，对应农场「偷菜白名单」）；新增
+    `GET /api/pasture/animals`（28 种动物清单）与「策略设置 → 牧场策略」面板。
+  - **能力边界（诚实记录）**：收获出栏代码路径正确（`can_harvest` → `HarvestRanch`）
+    但要等动物自然产出；收副产品缺 `CollectProduce` proto；启动生产因语义危险不自动调。
+    动物会自然进入 `producing=true`（抓包有此类样本），不调 TriggerProduce 也能等到。
+  - 测试：`pasture-orchestrator.test.js` 27 项、`pasture-visit.test.js` 11 项、
+    `pasture-analyzer.test.js` 22 项，牧场全套 **97 项全绿**。
+    新增断言覆盖「货架绝不调 HarvestRanch」「TriggerProduce 绝不自动调」
+    「优先动物买不起时退让」「白名单不命中不发偷取请求」。

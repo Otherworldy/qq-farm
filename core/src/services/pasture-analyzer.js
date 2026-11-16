@@ -112,6 +112,14 @@ function analyzeRanches(ranches, options = {}) {
     const producing = [];         // 生产中（拿不到产物，等时间）
     const strokable = [];         // 可抚摸（mutation.strokable，抚摸可推进产出）
     const emptySlots = [];        // 空栏（补栏用；本闭环暂不自动买动物）
+    // 该开工但没开工的动物：到了生产阶段（stage>=3）却没在产、也还没产出。
+    // 牧场不像农场「种下就自己长」—— 成熟后要先 TriggerProduce 才真的开始产蛋，
+    // 不触发就一直停在 producing=false，永远等不到 can_harvest。
+    const needsProduce = [];
+    // 全量动物（按 slot 排序）。上面几个分类是「要做什么」，
+    // 这个是「栏里有什么」—— 幼崽和成长阶段的动物不在任何动作分类里，
+    // 面板只按分类渲染就会把它们整个丢掉（实测刚买的鸡看不到）。
+    const allAnimals = [];
 
     let totalAnimals = 0;
     let totalCapacity = 0;
@@ -139,6 +147,7 @@ function analyzeRanches(ranches, options = {}) {
         // 动物
         for (const rawAnimal of animals) {
             const animal = normalizeAnimal(rawAnimal, ranchInstId);
+            allAnimals.push(animal);
             if (animal.canHarvest) {
                 harvestable.push(animal);
                 expectedHarvestExpTotal += animal.expectedHarvestExp;
@@ -149,6 +158,12 @@ function analyzeRanches(ranches, options = {}) {
                 needFeed.push(animal);
             } else if (animal.producing) {
                 producing.push(animal);
+            }
+            // 到了生产阶段却没在产：需要 TriggerProduce
+            if (!animal.producing && !animal.canHarvest
+                && Number(animal.stage) >= STAGE_PRODUCING_ACTUAL
+                && !Number(animal.produceCount)) {
+                needsProduce.push(animal);
             }
             // 抚摸与阶段无关：只要有 strokable 就记下来（抓包确认抚摸能推进产出）
             if (animal.mutation && animal.mutation.strokable) {
@@ -205,6 +220,8 @@ function analyzeRanches(ranches, options = {}) {
         producing,
         strokable,
         emptySlots,
+        needsProduce,
+        allAnimals,
         grassAmount,
         grassEmptyAtMs,
         grassLow: grassAmount < GRASS_LOW_THRESHOLD,
@@ -263,8 +280,13 @@ function buildPanelView(analysis, now = Date.now()) {
     };
 
     const animals = [];
-    for (const list of [a.harvestable || [], a.needFeed || [], a.producing || []]) {
-        for (const animal of list) {
+    // 用全量列表：幼崽/成长阶段既不可收也不待喂也不生产，
+    // 只看动作分类会把它们漏掉，面板就成了空的。
+    const panelSource = Array.isArray(a.allAnimals) && a.allAnimals.length
+        ? a.allAnimals
+        : [].concat(a.harvestable || [], a.needFeed || [], a.producing || []);
+    {
+        for (const animal of panelSource) {
             const readyAt = animal.produceReadyAtMs || animal.matureReadyAtMs || 0;
             animals.push({
                 ranchInstId: animal.ranchInstId,
@@ -321,6 +343,7 @@ function buildPanelView(analysis, now = Date.now()) {
             needFeed: (a.needFeed || []).length,
             needClean: (a.needClean || []).length,
             strokable: (a.strokable || []).length,
+            needsProduce: (a.needsProduce || []).length,
             grassAmount: a.grassAmount || 0,
             grassLow: !!a.grassLow,
             nextReadyInSec,

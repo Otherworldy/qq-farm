@@ -14,7 +14,7 @@
 
 const { getUserState, isConnected } = require('../utils/network');
 const { toNum, log, logWarn } = require('../utils/utils');
-const { isAutomationOn, getAutomation } = require('../models/store');
+const { isAutomationOn, getAutomation, getPasturePreferredAnimal } = require('../models/store');
 const { recordEvent } = require('./daily-events');
 const {
     getRanchDetail,
@@ -85,7 +85,10 @@ function noteEvent(level, message) {
 
 // ─── 单个操作 ───
 
-/** 收获：货架 + 成熟动物产物一次收掉 */
+/**
+ * 收获出栏：一键收获（HarvestRanch），把 can_harvest 的动物收走。
+ * 货架产物不走这里 —— 那是 CollectProduce 的活，见 performCollectShelves。
+ */
 async function performHarvest(analysis) {
     const ranchIds = [...new Set(analysis.harvestable.map(a => a.ranchInstId))];
     if (!ranchIds.length) return 0;
@@ -100,21 +103,58 @@ async function performHarvest(analysis) {
     return { reply, count: analysis.harvestable.length };
 }
 
-/** 收割货架（产物寄存处） */
+/**
+ * 货架产物（副产品）。
+ *
+ * 官方文档「牧场操作 RPC」把两件事分得很清楚：
+ *   CollectProduce —— 收取副产品（货架上的蛋/奶）
+ *   HarvestRanch   —— 一键收获，把动物整个收出栏
+ *
+ * 这里曾经误用 HarvestRanch 来「收货架」，结果一收货架就把三只鸡全收出栏了
+ * （真机复现：日志「收货架 3 个」之后栏位从 3/3 变 0/3）。
+ *
+ * CollectProduce 的请求体目前没有抓包样本，按项目规矩不猜 proto，
+ * 所以这里只如实记录待收数量，不发请求 —— 宁可货架堆着，
+ * 也不能再把动物误收了。等抓到 CollectProduce 样本再补上。
+ */
 async function performCollectShelves(analysis) {
-    const ranchIds = [...new Set(analysis.collectableShelves.map(s => s.ranchInstId))];
-    if (!ranchIds.length) return 0;
-    const reply = await harvestRanch(ranchIds);
+    const count = (analysis.collectableShelves || []).length;
+    if (!count) return 0;
     const lots = analysis.collectableShelves.reduce((sum, s) => sum + s.lots.length, 0);
-    logPasture(`收货架 ${analysis.collectableShelves.length} 个（${lots} 项）`, {
-        event: '牧场收货架',
-        count: analysis.collectableShelves.length,
+    logPasture(`货架有 ${count} 个待收（${lots} 项）：需要 CollectProduce，暂无协议样本，跳过`, {
+        event: '牧场货架待收',
+        count,
+        lots,
     });
-    noteEvent('info', `牧场收货架 ${lots} 项`);
-    return { reply, count: analysis.collectableShelves.length };
+    return 0;
 }
 
 /** 投喂：can_feed 的动物 */
+/**
+ * TriggerProduce —— 不要自动调用。
+ *
+ * 文档里它标的是「开始生产」，mcboot 的 `MCOneKeyTriggerProduceOp.ts` 里
+ * 对应的注释却是「一键开轮」。真机两次复现的结果是后者：
+ * 调用后产物进了货架，同时**动物整个从栏位消失**（3/3 → 0/3）。
+ *
+ * 也就是说它不是「让鸡开始下蛋」，而是「把这个栏位的这一轮跑完并出栏」。
+ * 自动调用等于自动清空牧场，所以这里只记录，绝不发请求。
+ * 真要收产物应该用 CollectProduce（同样没有 proto 样本）。
+ */
+let lastNeedsProduceCount = -1;
+
+function noteProduceCandidates(analysis) {
+    const count = (analysis && analysis.needsProduce || []).length;
+    // 只在这批动物的数量变化时记一次，否则每 25 秒刷一条同样的日志
+    if (!count || count === lastNeedsProduceCount) return 0;
+    lastNeedsProduceCount = count;
+    logPasture(`有 ${count} 只动物未开工（TriggerProduce 会连动物一起出栏，暂不自动调用）`, {
+        event: '牧场待开工',
+        count,
+    });
+    return 0;
+}
+
 async function performFeed(analysis) {
     const targets = analysis.needFeed.map(a => ({
         ranchInstId: a.ranchInstId,
@@ -220,9 +260,19 @@ async function performRefillSlots(analysis) {
 
     try {
         const shop = await getAnimalShop();
+        // 优先动物：用户指定了就一直买它（买得起才买），否则挑最便宜且买得起的。
+        // 背包里有货时上面那一步已经用掉了，不会走到这里花钱。
+        const preferred = Math.max(0, Number(getPasturePreferredAnimal()) || 0);
         const affordable = shop.goods
             .filter(g => g.unlocked && g.price > 0 && g.price <= balance)
-            .sort((a, b) => a.price - b.price);
+            .sort((a, b) => {
+                if (preferred) {
+                    const ap = a.animalId === preferred ? 0 : 1;
+                    const bp = b.animalId === preferred ? 0 : 1;
+                    if (ap !== bp) return ap - bp;
+                }
+                return a.price - b.price;
+            });
         if (!affordable.length) {
             lastBuyAnimalFailAtMs = now;
             logPasture(`余额 ${balance} 买不到可用动物（商店 ${shop.goods.length} 种）`);
@@ -369,6 +419,9 @@ async function runPastureOperation(opType = 'all') {
             if (r) actions.push('harvest');
         }
     }
+    if (analysis.needsProduce && analysis.needsProduce.length) {
+        noteProduceCandidates(analysis);
+    }
     if (want('stroke', 'pasture_stroke') && analysis.strokable.length) {
         const n = await performStroke(analysis);
         if (n) actions.push('stroke');
@@ -457,6 +510,7 @@ function resetPastureStateForTests() {
     lastBuyAnimalAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
     strokedAtMs.clear();
+    lastNeedsProduceCount = -1;
 }
 
 module.exports = {
@@ -471,6 +525,7 @@ module.exports = {
     performFeed,
     performClean,
     performStroke,
+    noteProduceCandidates,
     performRefillSlots,
     performRefillGrass,
     STROKE_MAX_PER_ROUND,
