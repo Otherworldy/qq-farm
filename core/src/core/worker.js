@@ -240,6 +240,10 @@ function isTransientNetworkError(err) {
 let farmTaskRunning = false;
 let nextFarmRunAt = 0;
 let pastureTaskRunning = false;
+/** 预算不足跳过牧场的日志节流（60s 一条） */
+let lastPastureBudgetSkipLogAt = 0;
+/** 牧场一轮大约要的请求数：详情 + 任务 + 设施/背包，留一点余量 */
+const PASTURE_TICK_BUDGET_HEADROOM = 5;
 let nextPastureRunAt = 0;
 /** 牧场推送去抖：服务端一次状态变化可能连发几条，只接受第一条 */
 let lastPasturePushAt = 0;
@@ -440,6 +444,13 @@ function resetUnifiedSchedule() {
 async function runFarmTick(autoConfig) {
     if (farmTaskRunning || friendSyncPaused) return;
     if ((stealIsDue() || stealIsImminent(1500)) && !ownHarvestIsDue()) return;
+    // 农场巡查本身不设预算预检（它是主链路），但任务扫描排在它后面：
+    // 窗口已被好友巡查吃满时，硬发只会得到「检查任务失败: 请求被治理器拦截」。
+    // 跳过本轮即可，任务进度不受影响，下一轮会补上。
+    if (autoConfig.task && !require('../services/request-governor').hasBudget(
+        Date.now(), 2, 'gamepb.taskpb.TaskService', 'TaskInfo')) {
+        autoConfig = { ...autoConfig, task: false };
+    }
     farmTaskRunning = true;
 
     try {
@@ -494,6 +505,21 @@ async function runPastureTick(autoConfig) {
     if (!autoConfig.pasture) return;
     // 自家农场收获到点时先让路：农场抢收的时间窗更窄
     if (ownHarvestIsDue() || ownHarvestIsImminent(1500)) return;
+    // 预算不够就整轮跳过：硬发只会拿到 budget_total 拦截，把
+    // 「检查失败: 请求被治理器拦截」刷进日志，而对牧场毫无帮助。20-30 秒后
+    // 再来，那时窗口大概率已经滚动过了。
+    // 余量按一整轮算（详情 + 牧场任务 + 可能的设施刷新），让一轮要么完整
+    // 跑完、要么完全不跑，不会出现「读到了详情却领不了任务」。日志 60 秒最多一条。
+    if (!require('../services/request-governor').hasBudget(
+        Date.now(), PASTURE_TICK_BUDGET_HEADROOM, 'gamepb.animalpb.AnimalService', 'GetRanchDetail')) {
+        if (Date.now() - lastPastureBudgetSkipLogAt > 60_000) {
+            lastPastureBudgetSkipLogAt = Date.now();
+            logWarn('牧场', '本轮跳过：通信预算已被占满，等下一轮', {
+                module: 'pasture', event: 'pasture_budget_skip', result: 'warn',
+            });
+        }
+        return;
+    }
     pastureTaskRunning = true;
 
     try {

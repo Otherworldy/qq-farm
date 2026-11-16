@@ -24,6 +24,9 @@ const MAX_FRIENDS_PER_ROUND = 5;
 /** 两轮之间的最小间隔 */
 const FRIEND_STEAL_COOLDOWN_MS = 5 * 60_000;
 
+/** 好友牧场巡查至少要留这么多预算，否则整轮跳过（每个好友一次 GetRanchDetail） */
+const FRIEND_CHECK_BUDGET_HEADROOM = MAX_FRIENDS_PER_ROUND + 2;
+
 let lastRunAtMs = 0;
 let running = false;
 
@@ -62,6 +65,12 @@ async function checkFriendPastures(options = {}) {
     if (running || !userState.gid || !isConnected()) return empty;
     if (!isAutomationOn('pasture') || !isAutomationOn('pasture_steal')) return empty;
     if (now - lastRunAtMs < FRIEND_STEAL_COOLDOWN_MS) return empty;
+    // 预算不够就整轮跳过：硬发只会被治理器逐条拦下，把「读取好友牧场失败」
+    // 刷进日志。5 分钟冷却意味着等一轮的代价很小。
+    if (!require('./request-governor').hasBudget(
+        now, FRIEND_CHECK_BUDGET_HEADROOM, 'gamepb.animalpb.AnimalService', 'GetRanchDetail')) {
+        return empty;
+    }
 
     running = true;
     lastRunAtMs = now;

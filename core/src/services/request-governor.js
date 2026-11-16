@@ -9,10 +9,15 @@
  */
 
 const WINDOW_MS = 60 * 1000;
-// 预算从 40/15 放宽到 80/30：正常多账号巡查 + 收获 + ACE 上报的合理峰值
-// 不该被拦，预算只削真正的异常风暴
-const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 80;
-const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 30;
+// 预算 40/15 → 80/30 → 110/30 → 120/36 → 140/36。
+// 80 是农场单端时代的数字。现在同一账号还要跑牧场（GetRanchDetail/TaskInfo/
+// 设施）、牧场任务、仓库商店，而好友巡查本身就要「好友数 ×（GetAll + Enter
+// + Leave）」：34 个好友就是 102 次，加上每轮都要重读好友列表、农场地块和
+// 背包，实测 60s 峰值到 135。预算不够时被挤掉的是牧场和任务扫描，
+// 不是好友巡查自己。
+// 140 仍远低于异常风暴量级，配合巡查派发的余量只削真正的风暴。
+const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 140;
+const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 36;
 // 白名单：防封兜底与核心链路的关键请求不受预算限制（仍计入画像）
 // AntiData 是官方客户端固定节奏的 ACE 风控上报；心跳是 userpb.UserService.Heartbeat
 const WHITELIST = new Set([
@@ -187,14 +192,14 @@ function shortMethodName(key) {
  * 窗口占用快照：谁占满了 60s 预算。
  * 不承诺无副作用（会 prune 过期事件、读取近段计数），但不会改变任何治理决策。
  */
-function buildBudgetSnapshot(reason, now = Date.now(), limit = 3) {
+function buildBudgetSnapshot(reason, now = Date.now(), limit = 8) {
     pruneWindow(now);
     const byMethod = new Map();
     for (const e of windowEvents) byMethod.set(e.key, (byMethod.get(e.key) || 0) + 1);
     const top = [...byMethod.entries()]
         .map(([method, count]) => ({ method: shortMethodName(method), count }))
         .sort((left, right) => right.count - left.count)
-        .slice(0, Math.max(1, Number(limit) || 3));
+        .slice(0, Math.max(1, Number(limit) || 8));
     return {
         reason,
         windowCount: windowEvents.length,

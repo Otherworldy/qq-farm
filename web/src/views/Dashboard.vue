@@ -457,17 +457,49 @@ const OP_META: Record<string, { label: string, icon: string, color: string }> = 
   pastureSteal: { label: '牧场偷取', icon: 'i-carbon-run', color: 'text-orange-500' },
 }
 
-const filteredOperations = computed(() => {
+/** 牧场操作计数统一以 pasture 开头，据此分组 */
+function isPastureOp(key: string) {
+  return key.startsWith('pasture')
+}
+
+/** 农场统计：除去升级类噪音和全部牧场项 */
+const farmOperations = computed(() => {
   const operations = status.value?.operations || {}
   const result: Record<string, number> = {}
-
   for (const key of Object.keys(operations)) {
-    if (key !== 'upgrade' && key !== 'levelUp')
-      result[key] = operations[key]
+    if (key === 'upgrade' || key === 'levelUp' || isPastureOp(key))
+      continue
+    result[key] = operations[key]
   }
-
   return result
 })
+
+/** 牧场统计 */
+const pastureOperations = computed(() => {
+  const operations = status.value?.operations || {}
+  const result: Record<string, number> = {}
+  for (const key of Object.keys(operations)) {
+    if (!isPastureOp(key))
+      continue
+    result[key] = operations[key]
+  }
+  return result
+})
+
+/** 今日统计（保留旧名指向农场，模板仍在用） */
+const filteredOperations = farmOperations
+
+// ── 概览分区：全部 / 只农场 / 只牧场 ──
+const VIEW_TABS = [
+  { key: 'all', label: '全部', icon: 'i-carbon-grid' },
+  { key: 'farm', label: '农场', icon: 'i-carbon-sprout' },
+  { key: 'pasture', label: '牧场', icon: 'i-carbon-home' },
+] as const
+const viewTab = ref<'all' | 'farm' | 'pasture'>('all')
+const showFarm = computed(() => viewTab.value !== 'pasture')
+const showPasture = computed(() => viewTab.value !== 'farm')
+/** 牧场分区主体的动物实现 */
+const pastureAnimals = computed(() => pastureStore.animals)
 
 function getEventLabel(event: string) {
   return eventLabelMap[event] || event
@@ -921,8 +953,24 @@ watch(realtimeConnected, (v) => {
 
 <template>
   <div class="flex flex-col gap-5 pt-1 md:pt-2">
+    <!-- 分区切换：农场与牧场的信息、统计各自独立 -->
+    <div class="flex items-center gap-1.5">
+      <button
+        v-for="tab in VIEW_TABS"
+        :key="tab.key"
+        class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition"
+        :class="viewTab === tab.key
+          ? 'bg-blue-500 text-white shadow-sm'
+          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'"
+        @click="viewTab = tab.key"
+      >
+        <div :class="tab.icon" />
+        {{ tab.label }}
+      </button>
+    </div>
+
     <div
-      v-if="slowdownActive"
+      v-if="slowdownActive && showFarm"
       class="flex flex-wrap items-center justify-between gap-3 border border-amber-300 rounded-lg bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-900/20"
     >
       <div class="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
@@ -941,7 +989,7 @@ watch(realtimeConnected, (v) => {
         {{ slowdownClearing ? '取消中…' : '取消降速' }}
       </button>
     </div>
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3 sm:grid-cols-2">
+    <div v-if="showFarm" class="grid grid-cols-1 gap-4 lg:grid-cols-3 sm:grid-cols-2">
       <div class="ui-card metric-card min-h-[168px] flex flex-col rounded-lg p-5">
         <div class="mb-2 flex items-start justify-between">
           <div class="flex items-center gap-1.5 text-sm text-gray-500">
@@ -1124,7 +1172,7 @@ watch(realtimeConnected, (v) => {
     </div>
 
     <!-- 牧场概览 -->
-    <div class="ui-card rounded-lg p-5">
+    <div v-if="showPasture" class="ui-card rounded-lg p-5">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 class="flex items-center gap-2 text-lg font-medium">
           <div class="i-carbon-home" />
@@ -1164,9 +1212,9 @@ watch(realtimeConnected, (v) => {
       </div>
     </div>
 
-    <div class="flex flex-1 flex-col items-stretch gap-5 md:flex-row">
-      <div class="flex flex-1 flex-col gap-5 md:w-3/4">
-        <div class="ui-card-elevated flex flex-1 flex-col rounded-lg p-5 md:overflow-hidden">
+    <div class="flex flex-1 flex-col items-stretch gap-5 md:flex-row md:flex-wrap">
+      <div class="flex flex-1 flex-col gap-5 md:min-w-0 md:flex-1">
+        <div v-if="showFarm" class="ui-card-elevated flex flex-1 flex-col rounded-lg p-5 md:overflow-hidden">
           <div class="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <h3 class="flex items-center gap-2 text-lg font-medium">
               <div class="i-carbon-document" />
@@ -1242,16 +1290,47 @@ watch(realtimeConnected, (v) => {
             </div>
           </div>
         </div>
+
+        <!-- 牧场分区主体：动物栏位 -->
+        <div v-if="showPasture" class="ui-card flex flex-1 flex-col rounded-lg p-5">
+          <h3 class="mb-3 flex items-center gap-2 text-lg font-medium">
+            <div class="i-carbon-catalog" />
+            <span>动物栏位</span>
+            <span class="ml-auto text-xs text-gray-400 font-normal">
+              {{ pastureSummary.animals }} / {{ pastureSummary.capacity }}
+            </span>
+          </h3>
+          <div v-if="pastureAnimals.length" class="max-h-[460px] space-y-1.5 overflow-y-auto pr-1">
+            <div
+              v-for="a in pastureAnimals"
+              :key="a.animalInstId"
+              class="ui-subtle-panel flex items-center gap-3 rounded-lg px-3 py-2"
+            >
+              <span class="w-10 shrink-0 text-xs text-gray-400 font-mono">#{{ a.slotIndex }}</span>
+              <span class="min-w-0 flex-1 truncate text-sm text-gray-700 dark:text-gray-200">{{ a.name }}</span>
+              <span class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ a.stageName }}</span>
+              <span class="w-20 shrink-0 text-right text-xs" :class="a.canHarvest ? 'text-teal-500' : 'text-gray-400'">
+                {{ a.canHarvest ? '可收获' : a.canFeed ? '待投喂' : a.readyInSec > 0 ? formatDuration(a.readyInSec) : '—' }}
+              </span>
+            </div>
+          </div>
+          <div v-else class="ui-subtle-panel flex flex-col items-center justify-center gap-2 rounded-lg p-10 text-center">
+            <div class="i-carbon-catalog text-3xl text-gray-300" />
+            <div class="text-sm text-gray-500">
+              {{ pastureSummary.capacity === 0 ? '还没有牧场数据，进一次游戏里的牧场或到「个人 → 我的牧场」刷新' : '栏位里还没有动物' }}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="flex flex-col gap-5 md:w-1/4">
+      <div class="flex flex-col gap-5 md:w-80 md:shrink-0">
         <div class="ui-card flex flex-col rounded-lg p-5">
           <h3 class="mb-4 flex items-center gap-2 text-lg font-medium">
             <div class="i-carbon-hourglass" />
             <span>下次检查倒计时</span>
           </h3>
           <div class="flex flex-col justify-center gap-4">
-            <div class="flex items-center justify-between">
+            <div v-if="showFarm" class="flex items-center justify-between">
               <div class="flex items-center gap-2 text-gray-700 dark:text-gray-300">
                 <div class="i-carbon-sprout text-lg text-green-500" />
                 <span>农场</span>
@@ -1260,7 +1339,7 @@ watch(realtimeConnected, (v) => {
                 {{ nextFarmCheck }}
               </div>
             </div>
-            <div class="flex items-center justify-between">
+            <div v-if="showPasture" class="flex items-center justify-between">
               <div class="flex items-center gap-2 text-gray-700 dark:text-gray-300">
                 <div class="i-carbon-home text-lg text-teal-500" />
                 <span>牧场</span>
@@ -1269,7 +1348,7 @@ watch(realtimeConnected, (v) => {
                 {{ nextPastureCheck }}
               </div>
             </div>
-            <div class="flex items-center justify-between">
+            <div v-if="showFarm" class="flex items-center justify-between">
               <div class="flex items-center gap-2 text-gray-700 dark:text-gray-300">
                 <div class="i-carbon-user-multiple text-lg text-blue-500" />
                 <span>帮助</span>
@@ -1283,7 +1362,7 @@ watch(realtimeConnected, (v) => {
                 {{ nextHelpCheck }}
               </div>
             </div>
-            <div class="flex items-center justify-between">
+            <div v-if="showFarm" class="flex items-center justify-between">
               <div class="flex items-center gap-2 text-gray-700 dark:text-gray-300">
                 <div class="i-carbon-run text-lg text-orange-500" />
                 <span>偷菜</span>
@@ -1304,10 +1383,10 @@ watch(realtimeConnected, (v) => {
           </div>
         </div>
 
-        <div class="ui-card flex-1 rounded-lg p-5">
+        <div v-if="showFarm" class="ui-card flex-1 rounded-lg p-5">
           <h3 class="mb-3 flex items-center gap-2 text-lg font-medium">
-            <div class="i-carbon-chart-column" />
-            <span>今日统计</span>
+            <div class="i-carbon-sprout text-green-500" />
+            <span>今日统计 · 农场</span>
           </h3>
           <div v-if="currentAccountDisconnected" class="ui-subtle-panel flex flex-col items-center justify-center gap-4 rounded-lg p-10 text-center text-gray-500">
             <div class="i-carbon-connection-signal-off text-4xl text-gray-400" />
@@ -1331,7 +1410,52 @@ watch(realtimeConnected, (v) => {
           </div>
           <div v-else class="grid grid-cols-2 gap-2 2xl:gap-3">
             <div
-              v-for="(val, key) in filteredOperations"
+              v-for="(val, key) in farmOperations"
+              :key="key"
+              class="ui-subtle-panel flex items-center justify-between rounded-lg px-3 py-2"
+            >
+              <div class="flex items-center gap-2">
+                <div class="text-base 2xl:text-lg" :class="[getOpIcon(key), getOpColor(key)]" />
+                <div class="text-xs text-gray-500 2xl:text-sm">
+                  {{ getOpName(key) }}
+                </div>
+              </div>
+              <div class="text-sm font-bold 2xl:text-base">
+                {{ val }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 今日统计 · 牧场 -->
+        <div v-if="showPasture" class="ui-card flex-1 rounded-lg p-5">
+          <h3 class="mb-3 flex items-center gap-2 text-lg font-medium">
+            <div class="i-carbon-home text-teal-500" />
+            <span>今日统计 · 牧场</span>
+          </h3>
+          <div v-if="currentAccountDisconnected" class="ui-subtle-panel flex flex-col items-center justify-center gap-4 rounded-lg p-10 text-center text-gray-500">
+            <div class="i-carbon-connection-signal-off text-4xl text-gray-400" />
+            <div class="flex flex-col">
+              <div class="text-lg text-gray-700 font-medium dark:text-gray-300">
+                账号未登录
+              </div>
+              <div class="mt-1 text-sm text-gray-400">
+                请先运行账号或检查网络连接。
+              </div>
+            </div>
+          </div>
+          <div v-else-if="!Object.keys(pastureOperations).length" class="ui-subtle-panel flex flex-col items-center justify-center gap-3 rounded-lg p-8 text-center">
+            <div class="i-carbon-chart-column text-3xl text-gray-300" />
+            <div class="text-sm text-gray-600 font-medium dark:text-gray-300">
+              今天牧场还没有动作
+            </div>
+            <div class="text-xs text-gray-400">
+              收获、投喂、清理、抚摸、补栏、补草、偷取都会记在这里。
+            </div>
+          </div>
+          <div v-else class="grid grid-cols-2 gap-2 2xl:gap-3">
+            <div
+              v-for="(val, key) in pastureOperations"
               :key="key"
               class="ui-subtle-panel flex items-center justify-between rounded-lg px-3 py-2"
             >
@@ -1349,7 +1473,7 @@ watch(realtimeConnected, (v) => {
         </div>
       </div>
 
-      <div v-if="watchlistRipe.length" class="ui-card rounded-lg p-5">
+      <div v-if="showFarm && watchlistRipe.length" class="ui-card w-full rounded-lg p-5">
         <h3 class="mb-3 flex items-center gap-2 text-lg font-medium">
           <div class="i-carbon-star-filled text-yellow-500" />
           <span>重点监控</span>
@@ -1376,7 +1500,7 @@ watch(realtimeConnected, (v) => {
         </div>
       </div>
 
-      <div class="ui-card rounded-lg p-5">
+      <div class="ui-card w-full rounded-lg p-5">
         <h3 class="mb-3 flex items-center gap-2 text-lg font-medium">
           <div class="i-carbon-list-checked" />
           <span>今日事件</span>

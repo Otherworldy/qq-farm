@@ -43,6 +43,11 @@ const friendActivity = require('./friend-activity');
 const { isFriendActiveRecently: isFriendActiveEvidence } = friendActivity;
 const { isFriendOnlineRecently: isFriendOnlineEvidence } = friendActivity;
 const { recordEvent } = require('./daily-events');
+
+/** 好友巡查派发时给非巡查链路（牧场/任务/仓库）留的预算余量 */
+const PATROL_BUDGET_HEADROOM = 15;
+/** 偷菜派发的最小余量：比巡查低（核心收益），够牧场 tick + 任务扫描即可 */
+const STEAL_BUDGET_HEADROOM = 8;
 const { getInteractRecords } = require('./interact');
 const {
   stealIsDue,
@@ -272,7 +277,7 @@ async function dispatchDueCacheStealTargets(targets, { myGid, preEnter = null, s
       // 同时检查本目标真正首发的那条请求的单接口限值：复用哨兵预进门时不发
       // Enter，真实瓶颈变成 CheckCanOperate；新发 Enter 时才是 Enter 自身。
       const guardReusesPreEnter = !!(targetPreEnter && targetPreEnter.enterReply);
-      if (!hasBudget(Date.now(), 0,
+      if (!hasBudget(Date.now(), STEAL_BUDGET_HEADROOM,
         guardReusesPreEnter ? 'gamepb.plantpb.PlantService' : 'gamepb.visitpb.VisitService',
         guardReusesPreEnter ? 'CheckCanOperate' : 'Enter')) break;
       if (checkingPlaceholder === owner) owner.phase = 'visit';
@@ -334,6 +339,7 @@ const WATCHLIST_POLL_ONLINE_MAX_MS = 1_000;
 let lastRipeRefreshAt = 0;
 const RIPE_REFRESH_MIN_MS = 30_000;
 // 自己成熟前给收获请求预留通道，新的好友扫描/进门不得占用这段窗口。
+
 const OWN_HARVEST_RESERVE_MS = 10_000;
 
 const BAD_FAILURE_LIMIT = 3;
@@ -962,7 +968,7 @@ async function checkFriends(options = {}) {
             : null;
           // 同上：按本目标真正首发的请求检查单接口限值（复用预进门时不发 Enter）。
           const guardReusesPreEnter = !!(targetPreEnter && targetPreEnter.enterReply);
-          if (!hasBudget(Date.now(), 0,
+          if (!hasBudget(Date.now(), STEAL_BUDGET_HEADROOM,
             guardReusesPreEnter ? 'gamepb.plantpb.PlantService' : 'gamepb.visitpb.VisitService',
             guardReusesPreEnter ? 'CheckCanOperate' : 'Enter')) break;
           let result = null;
@@ -1172,7 +1178,7 @@ async function checkFriends(options = {}) {
         // 把整轮偷菜刷成 budget_method 拦截日志（实测本段 31 次）。提前退出，
         // 结果集合不变，只少了废弃往返。按目标实际首发的请求选守卫对象。
         const guardReusesPreEnter = !!(targetPreEnter && targetPreEnter.enterReply);
-        if (!hasBudget(Date.now(), 0,
+        if (!hasBudget(Date.now(), STEAL_BUDGET_HEADROOM,
           guardReusesPreEnter ? 'gamepb.plantpb.PlantService' : 'gamepb.visitpb.VisitService',
           guardReusesPreEnter ? 'CheckCanOperate' : 'Enter')) break;
         let result = null;
@@ -1202,6 +1208,10 @@ async function checkFriends(options = {}) {
     if (helpTargets.length > 0 && doHelp) {
       for (const target of helpTargets) {
         if (roundSeq !== friendReadLifecycleSeq || stealIsDue() || ownHarvestIsImminent(OWN_HARVEST_RESERVE_MS)) break;
+        // 预算留余量：硬发只会被治理器逐条拦下，还会把牧场 tick 和任务扫描挤掉。
+        // 少帮几个好友的代价远小于自家牧场/任务停摆。
+        if (!hasBudget(Date.now(), PATROL_BUDGET_HEADROOM,
+          'gamepb.visitpb.VisitService', 'Enter')) break;
         try {
           const result = await visitFriendForHelp(
             target, tally, userState.gid, userState.accountId,
@@ -1279,6 +1289,8 @@ async function checkFriends(options = {}) {
             break;
           }
 
+          if (!hasBudget(Date.now(), PATROL_BUDGET_HEADROOM,
+            'gamepb.visitpb.VisitService', 'Enter')) break;
           try {
             const result = await visitFriend(target, tally, userState.gid, userState.accountId);
             applyStealVisitResult(target.gid, result, Date.now(), { lifecycleSeq: roundSeq });
@@ -1667,6 +1679,8 @@ async function runBadOnceOnStartup(force = false) {
         }
       );
 
+      if (!hasBudget(Date.now(), PATROL_BUDGET_HEADROOM,
+        'gamepb.visitpb.VisitService', 'Enter')) break;
       try {
         const visitSeq = friendReadLifecycleSeq;
         const result = await visitFriend(target, tally, userState.gid, accountId);
@@ -2171,6 +2185,7 @@ async function watchlistPollTick() {
 }
 
 function applyStealScheduleFromFriends(rawFriends, { myGid, blacklist, partial = false, lifecycleSeq = null }) {
+
   const now = Date.now();
   lastRipeRefreshAt = now;
   const watchlistSet = new Set(getWatchlistFriendGids(process.env.FARM_ACCOUNT_ID || ''));
