@@ -504,3 +504,75 @@
   - 验证：`test/request-governor.test.js` 14 → 25 条；定向 137/137 通过，
     全量 1149 项仍是既有 28 条环境性失败（缺 `@babel/parser`、
     `getStealWhitelist`、无 git 仓库的 `git ls-files`），与改动前一致。
+- 2026-11-16 **第六次仓库文件丢失**（比前五次更彻底）：
+  `.git` 整个目录消失，`core/`、`web/`、`docs/`、`scripts/` 一并被清空，
+  只剩顶层 13 个文件（AGENTS.md / README.md / package.json / pnpm-lock.yaml /
+  progress.md / docker-compose.yml / start*.bat / stop*.sh / .env / zcode.json）。
+  - **没有丢工作**：remote 上最新是 `aa148c6`（11-11 20:09），比本地已知 HEAD
+    `2c4b057`（11-03）领先 6 个提交，11-03 之后的工作全部推送过。
+    本地 `progress.md` 与 remote 版本逐字节一致，确认无未提交内容。
+  - 恢复方式：因目录被几个 `bash.exe` 进程占用（`Device or resource busy`），
+    无法 `rm -rf` 后 clone，改为原地 `git init` + `git remote add` +
+    `git fetch origin main` + `git reset --hard origin/main`，2467 文件到位。
+    仅需保留 `.env`（gitignored）与 `.pi/picode.json` 两个本地文件。
+    `pnpm install` 746 包 4.2s。
+  - 六次模式：**成批目录被清空、git 对象库前四次从不受伤**。本次连 `.git` 一起没了，
+    但 remote 完整所以零损失。数据目录 `../data` 六年一贯幸存，验证外迁决策正确。
+- 2026-11-16 微信小游戏包更新到 **81**（目录 mtime 11-16 11:28），
+  解包产物 `D:\tmp\wx81`，**129 文件**（80 包 109 文件）。79 已被微信清理，
+  本次以 80 为对比基线。
+  - `tsdk.wasm` 161040 → **161102 B**，SHA-256
+    `8f338c01ceed85cae2eb0e2cd20815dec495f22e4b4b50fca2040fdd8a9e3cdf`；
+    `inspect:tsdk` 提取 **`v3.9.0.1794737041`**，imports(22)/exports(61)/
+    dataSegments(17) 与 80 基线一致，结构兼容三项全 true。
+  - 客户端版本 `1.16.3.8` → **`1.17.0.3`**（`assets/resources/import/27/
+    270bcfa0-….08c5a.json`），按目录 mtime 记作 `1.17.0.3_20261116`。
+  - **这是首次出现真实新玩法**：新增子包 `_subpackages_mcboot_.wxapkg`
+    （2.3M，15 文件）=「牧场（MC / Pasture）」。中文串 80: 427 → 81: **3823**，
+    排除 mcboot 后主包仅新增 58 条且全部是牧场相关（动物名 + 轮廓发光 shader 参数）。
+    动物阵容调整：移除 大象/海狗/猩猩，新增 考拉/豪猪/水牛/骆驼/蜜薯。
+  - **牧场不需要适配**：mcboot 内 `rpc`/`sendMsg`/`SendMsg`/`Sync` 全部 0 次命中，
+    主包无 `Pasture`/`Ranch`/`mcboot` 痕迹，项目 proto 7 个 service 无牧场。
+    官方开发文档 §9 明确「当前所有数据均为客户端 Mock」（地块、种子背包、作物时长、
+    种植/收获/铲除全部本地改数据）。详见 `core/docs/pasture-mc-analysis.md`。
+  - **意外收获**：9 个 CCON JSON 里打进 **10 篇官方开发文档**（约 185K 字），
+    含架构、ECS 分层、RPC 约定、时序、扩展指南。已解出到 `D:\tmp\mc-docs\`，
+    结论与提取方法记在上述 docs。
+  - 已更新 `tsdk-runtime.js`、`config.js`、`AdminSystemPanel.vue`、
+    `useAdminSystemConfig.ts`、`device-protocol.test.js` 与两份 TSDK 文档。
+    `pnpm build:web` 通过，回归 1151 项 1139 通过（12 项为既有 Windows 限制）。
+- 2026-11-16 **奶茶热销中（S4）退役归档** → `core/archive/milk-tea/`。
+  按运行时实测：营业期 10-15 ~ 11-14，结算期 11-15 ~ 11-16，
+  最终截止 `endTime = 1794844799`（11-16 23:59:59）。
+  - 移走 5 个核心文件 + 11 个奶茶测试 + 2 个依赖奶茶 store 的活动测试：
+    `services/milk-tea-activity.js`（1401 行）、
+    `controllers/admin-milk-tea-activity-routes.js`（154 行）、
+    `gameConfig/MilkTeaActivity.json`、`proto/milk-tea.proto`（513 行）、
+    `components/activity/MilkTeaActivityPanel.vue`（1111 行），
+    以及 `stores/activity.ts` 第 614 行起的活动 store（625 行，单独存为
+    `activity-store-milkTea.ts`）。合计约 −8200 行。
+  - 切断 6 处运行时引用：Worker 三个 case、provider 三个转发、
+    `activity.js` 的 require + 奶茶根专用解码 + 导出展开、`proto.js` 的
+    proto 加载与三个 `MilkTea*` 类型、admin 路由注册、`Activity.vue` 面板挂载。
+  - `stores/activity.ts` 只保留历史活动类型导出（供 9 个现存历史组件编译），
+    文件头注明「无运行态逻辑，不应再新增活动到此处」。
+  - `Activity.vue` 重写为「暂无进行中的活动」+ 保留 admin 的活动分析入口
+    —— `AdminActivityUpdatePanel` 是在线发现未适配活动的唯一工具，不能丢。
+    历史退役记录以泛称保留（测试对具体活动名有否定断言，写全名会触发失败）。
+  - `Activity.vue` / `star-activity` / `weather-activity` 三个既有测试断言
+    「已退役活动不得再出现在页面」，归档后需保留 `S3 萌宠` 字样作为退役标记，
+    已按测试意图补注释。
+  - `eslint.config.mjs` 加入 `ignores: ['archive/**']`：归档代码保留原样，
+    不参与构建也不被现行风格的 `--fix` 回溯修改。
+  - **保留未动**：`EventItems.json` 的 `1041 奶茶券` / `1042 宣传喇叭` 物品定义
+    —— 背包可能还有存量，删掉会变成未识别物品。
+  - ⚠️ 归档时发现一个**从未触发但有缺陷**的配置：`MilkTeaActivity.json` 的
+    `announceSettle.startAt` 写成 `1795795200`（11-28），而官方公告与注释都是
+    **11-15 00:00**（正确值 `1794672000`），偏差 13 天。导致 11-15~11-16
+    结算期内 `timingOf()` 仍判 `phase='open'`，营业类操作不会被拦截。
+    实测 11-16 12:02 服务端仍返回 `phase:"open"`（而规则原文写「结算期
+    11-15 — 11-16」）。归档后该代码不再运行，缺陷与修复方法记在
+    `core/archive/milk-tea/README.md`，恢复时必须先修。
+  - 账号当时的剩余状态（按用户决定不清理）：未领工资 1 笔、分享奖励 0/3 已领
+    （currentScore 105）、奶茶券 5947 张。官方规则称未领收益会在结算期结束后
+    邮件补发，奶茶券需自行出售。

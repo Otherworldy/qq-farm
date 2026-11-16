@@ -1,4 +1,4 @@
-const { registerAdminMilkTeaActivityRoutes } = require('./admin-milk-tea-activity-routes');
+// 奶茶热销中路由已于 2026-11-16 退役归档到 core/archive/milk-tea/
 const { registerAdminActivityUpdateRoutes } = require('./admin-activity-update-routes');
 const { registerAdminOfficialAnnouncementRoutes } = require('./admin-official-announcement-routes');
 const { createActivityReadCache } = require('./activity-read-cache');
@@ -24,7 +24,6 @@ function registerAdminActivityRoutes({
     activityReader: createActivityReadCache(),
   };
 
-  registerAdminMilkTeaActivityRoutes(routeContext);
   registerAdminOfficialAnnouncementRoutes(routeContext);
   registerAdminActivityUpdateRoutes({ app, provider, store, requireAdminToken });
 }

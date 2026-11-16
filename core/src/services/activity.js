@@ -19,8 +19,7 @@ const activityLogger = createModuleLogger('activity');
 const bearActivity = require('./season-bear-activity');
 const seasonWishActivities = require('./season-wish-activities');
 // 奶茶热销中（S4）只引纯标准化部分：本模块不反向依赖 activity.js 的运行期函数
-// （milk-tea-activity.js 在函数内延迟 require 本模块，避免循环依赖）。
-const milkTeaActivity = require('./milk-tea-activity');
+// （奶茶热销中服务已于 2026-11-16 退役归档到 core/archive/milk-tea/）
 // 历史活动写方法只保留解析结构上下文；即使以后被误接线，也必须在发包前失败。
 const RETIRED_ACTIVITY_WRITES_DISABLED = true;
 
@@ -405,17 +404,8 @@ async function getActivityGroupSnapshot(activityId, uid = '', options = {}) {
   if (typeof options?.onRawBody === 'function') {
     options.onRawBody(reply?.__rawBody ? Buffer.from(reply.__rawBody) : null);
   }
-  // 奶茶根（S4 2026110100）：专用解码器就地消费原始回包，把 121 店铺摘要 /
-  // 102 商城富解析（限购/费用/条件）/ 122 成长基金合并进子节点 details；
-  // 快乐值 120 由通用 share_reward 解析。解码失败保持通用兜底，不额外探测。
-  if (toNum(activityId) === milkTeaActivity.MILK_TEA_ROOT_ACTIVITY_ID) {
-    try {
-      milkTeaActivity.normalizeMilkTeaDiscovery(
-        snapshot,
-        reply?.__rawBody ? Buffer.from(reply.__rawBody) : null,
-      );
-    } catch { /* 缺少专用字段时按通用兜底展示，不触发重试或探测 */ }
-  }
+  // 奶茶根（2026110100）的专用解码器随活动退役一并移出（core/archive/milk-tea/）；
+  // 未知根一律走通用兜底，不额外探测。
   return {
     ...snapshot,
     discoveryEvidence: {
@@ -3361,7 +3351,6 @@ void [
 module.exports = {
   ...bearActivity,
   ...seasonWishActivities,
-  ...milkTeaActivity,
   getBearActivity,
   getWishActivity,
   getHappyShareActivity,

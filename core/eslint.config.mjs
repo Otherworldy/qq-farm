@@ -28,4 +28,9 @@ export default antfu(
       'unicorn/prefer-node-protocol': 'off',
     },
   },
+  {
+    // 归档目录保存退役代码原样（奶茶热销中 S4），不参与构建也不应被现行
+    // 代码风格约束回溯修改；恢复时再随恢复一并整治。
+    ignores: ['archive/**'],
+  },
 )

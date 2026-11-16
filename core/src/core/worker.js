@@ -1990,36 +1990,10 @@ async function handleApiCall(msg) {
                 result = await getActivityGroupSnapshot(args[0], args[1]);
                 break;
             }
-            case 'getMilkTeaActivity': {
-                const { getMilkTeaActivity } = require('../services/milk-tea-activity');
-                const { getBag, getBagItems } = require('../services/warehouse');
-                // 活动段入口防护：未登录就绪/连接不在位一律在触达读取前拒绝（零上游）
-                result = await getMilkTeaActivity({
-                    includeGameplay: true,
-                    deps: { getBag, getBagItems, isReady: () => loginReady && getWs()?.readyState === 1, getConnection: () => getWs() },
-                });
-                break;
-            }
-            case 'queryMilkTeaActivity': {
-                const { queryMilkTeaActivity } = require('../services/milk-tea-activity');
-                const { getBag, getBagItems } = require('../services/warehouse');
-                result = await queryMilkTeaActivity(args[0], args[1] || {}, {
-                    getBag, getBagItems,
-                    isReady: () => loginReady && getWs()?.readyState === 1,
-                    getConnection: () => getWs(),
-                });
-                break;
-            }
-            case 'operateMilkTea': {
-                const { runManualMilkTeaAction } = require('../services/milk-tea-activity');
-                const { getBag, getBagItems } = require('../services/warehouse');
-                result = await runManualMilkTeaAction(args[0], args[1] || {}, {
-                    getBag, getBagItems,
-                    isReady: () => loginReady && getWs()?.readyState === 1,
-                    getConnection: () => getWs(),
-                });
-                break;
-            }
+            // 奶茶热销中（S4，2026110100 族）已于 2026-11-16 退役归档：
+            // getMilkTeaActivity / queryMilkTeaActivity / operateMilkTea 三个 Worker
+            // case 与 provider 转发一并移除，服务/路由/proto/前端面板移至
+            // core/archive/milk-tea/。旧入口在任何读取/发包前固定拒绝。
             // S3 萌宠 / 秋祈良愿 / 快乐不独享（getBearActivity/getWishActivity/
             // getHappyShareActivity/operatePetDiary/operateSeasonWish）已随 S4 轮换
             // 下架（2026-10-15 退役）：Worker case 与 provider 转发一并移除，
