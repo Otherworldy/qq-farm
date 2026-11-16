@@ -267,6 +267,14 @@ async function performLoad() {
     resolved.StealProduceReply = newRoot.lookupType('gamepb.animalpb.StealProduceReply');
     resolved.CleanAllRanchRequest = newRoot.lookupType('gamepb.animalpb.CleanAllRanchRequest');
     resolved.CleanAllRanchReply = newRoot.lookupType('gamepb.animalpb.CleanAllRanchReply');
+    resolved.PlaceAnimalRequest = newRoot.lookupType('gamepb.animalpb.PlaceAnimalRequest');
+    resolved.PlaceAnimalReply = newRoot.lookupType('gamepb.animalpb.PlaceAnimalReply');
+    resolved.PlaceTarget = newRoot.lookupType('gamepb.animalpb.PlaceTarget');
+    resolved.AnimalRef = newRoot.lookupType('gamepb.animalpb.AnimalRef');
+    resolved.CleanRanchRequest = newRoot.lookupType('gamepb.animalpb.CleanRanchRequest');
+    resolved.CleanRanchReply = newRoot.lookupType('gamepb.animalpb.CleanRanchReply');
+    resolved.StrokeAnimalRequest = newRoot.lookupType('gamepb.animalpb.StrokeAnimalRequest');
+    resolved.StrokeAnimalReply = newRoot.lookupType('gamepb.animalpb.StrokeAnimalReply');
     resolved.GetRanchOpTimesRequest = newRoot.lookupType('gamepb.animalpb.GetRanchOpTimesRequest');
     resolved.GetRanchOpTimesReply = newRoot.lookupType('gamepb.animalpb.GetRanchOpTimesReply');
 

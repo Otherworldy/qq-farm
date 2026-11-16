@@ -29,6 +29,7 @@ function resetModules() {
     delete require.cache[require.resolve(path.join(SERVICES, 'daily-events'))];
     delete require.cache[require.resolve(path.join(__dirname, '..', 'src', 'utils', 'network'))];
     delete require.cache[require.resolve(path.join(__dirname, '..', 'src', 'models', 'store'))];
+    delete require.cache[require.resolve(path.join(SERVICES, 'warehouse'))];
 }
 
 /** 造一个可收获 + 可投喂 + 有灾害 + 草低 的牧场回包 */
@@ -64,6 +65,8 @@ function setupMocks(options = {}) {
         pasture_feed: true,
         pasture_clean: true,
         pasture_grass: true,
+        pasture_refill: true,
+        pasture_buy_animal: false,
         ...(options.auto || {}),
     };
 
@@ -89,10 +92,40 @@ function setupMocks(options = {}) {
         triggerProduce: async () => { calls.push('triggerProduce'); return { ranches: [] }; },
         stealProduce: async () => { calls.push('stealProduce'); return { ranches: [] }; },
         getRanchOpTimes: async () => { calls.push('getRanchOpTimes'); return { quotas: [] }; },
+        // 第二轮抓包新增
+        placeAnimal: async (ranchInstId, animalId) => {
+            calls.push('placeAnimal');
+            calls.push(`place:${ranchInstId}:${animalId}`);
+            return { ranches: [] };
+        },
+        cleanRanch: async (hazardIds) => {
+            calls.push('cleanRanch');
+            calls.push(`cleanRanch:${hazardIds.join(',')}`);
+            return { ranches: [] };
+        },
+        strokeAnimal: async () => { calls.push('strokeAnimal'); return { ranches: [] }; },
+        getAnimalShop: async () => {
+            calls.push('getAnimalShop');
+            return { shopId: 4, goods: (options.animalGoods || []) };
+        },
+        buyGoods: async (goodsId, num, price) => {
+            calls.push('buyGoods');
+            calls.push(`buy:${goodsId}:${num}:${price}`);
+            return { goods: {} };
+        },
+        isAnimalItemId: id => Number(id) >= 60000 && Number(id) <= 60999,
         RANCH_OP_IDS: [11003, 11008, 11009],
         FEED_MACHINE_FACILITY_ID: 7001001,
     };
     mockModule('services/pasture-api', api);
+
+    // 背包：默认空
+    mockModule('services/warehouse', {
+        getBag: async () => {
+            calls.push('getBag');
+            return { item_bag: { items: options.bagItems || [] } };
+        },
+    });
 
     const orchestrator = require(path.join(SERVICES, 'pasture-orchestrator'));
     return { orchestrator, calls, auto };
@@ -121,12 +154,14 @@ test('runPastureOperation：全开时按 收货架→收获→投喂→清理→
     assert.equal(calls[0], 'getRanchDetail');
     const harvestIdx = calls.indexOf('harvestRanch');
     const feedIdx = calls.indexOf('feedAnimal');
-    const cleanIdx = calls.indexOf('cleanAllRanch');
+    // 清理默认走定点 CleanRanch（有 hazard_id 时）
+    const cleanIdx = Math.max(calls.indexOf('cleanRanch'), calls.indexOf('cleanAllRanch'));
     const feedMachineIdx = calls.indexOf('addFeed');
     assert.ok(harvestIdx > 0, '应执行收获');
     assert.ok(feedIdx > harvestIdx, '投喂应在收获之后');
     assert.ok(cleanIdx > feedIdx, '清理应在投喂之后');
     assert.ok(feedMachineIdx > cleanIdx, '补草应在最后');
+    // fixture 有 2 个空栏但背包没动物、买动物开关关着，所以补栏不入 actions
     assert.deepEqual(result.actions, ['harvest', 'feed', 'clean', 'refill_grass']);
 });
 
@@ -152,7 +187,9 @@ test('runPastureOperation：opType 指定单项时只做那项', async () => {
 });
 
 test('runPastureOperation：空牧场不产生任何操作', async () => {
+    // 关掉补栏：空牧场必然有空栏，开着补栏会去查背包，这是正确行为但不属于本用例
     const { orchestrator, calls } = setupMocks({
+        auto: { pasture_refill: false },
         reply: { ranches: [{ ranch_inst_id: 10001, capacity: 2, animal_count: 0,
             animals: [], grass: { amount: 100 }, shelves: [], hazards: [] }] },
     });
@@ -206,4 +243,98 @@ test('RPC 抛错时 checkPasture 不抛出，只是返回 false', async () => {
     assert.equal(called, 1, '确实尝试过拉详情');
     assert.ok(orchestrator, 'sanity');
     assert.ok(Array.isArray(calls));
+});
+// ─── 第二轮抓包新增：定点清理优先 ───
+
+test('清理：有 hazard_id 时走 CleanRanch 定点，而不是一键全清', async () => {
+    const { orchestrator, calls } = setupMocks();
+    const result = await orchestrator.runPastureOperation('clean');
+    assert.deepEqual(result.actions, ['clean']);
+    assert.ok(calls.includes('cleanRanch'), '应调用定点清理');
+    assert.equal(calls.includes('cleanAllRanch'), false, '不应退回一键清理');
+    assert.ok(calls.includes('cleanRanch:501'), '应带上 hazard_id');
+});
+
+test('清理：拿不到 hazard_id 时才退回一键清理', async () => {
+    const reply = ranchReply();
+    delete reply.ranches[0].hazards[0].hazard_id;   // hazard_id 缺失
+    const { orchestrator, calls } = setupMocks({ reply });
+    const result = await orchestrator.runPastureOperation('clean');
+    assert.deepEqual(result.actions, ['clean']);
+    assert.ok(calls.includes('cleanAllRanch'), '缺 hazard_id 时用一键清理');
+    assert.equal(calls.includes('cleanRanch'), false);
+});
+
+// ─── 第二轮抓包新增：补栏 ───
+
+test('补栏：背包里有动物就直接放入空栏位', async () => {
+    const reply = ranchReply();   // capacity 4，已用 slot 1/2 → 空栏 3/4
+    const { orchestrator, calls } = setupMocks({
+        reply,
+        bagItems: [{ id: 60001, count: 2 }],
+    });
+    const result = await orchestrator.runPastureOperation('refill');
+    assert.deepEqual(result.actions, ['refill_slots']);
+    assert.ok(calls.includes('placeAnimal'));
+    // 两只库存，两个空栏，应该放两次
+    const placeCalls = calls.filter(c => String(c).startsWith('place:'));
+    assert.equal(placeCalls.length, 2, '空栏 2 个、库存 2 只，应放 2 次');
+    assert.ok(placeCalls.every(c => c.includes(':60001')), '放的是动物种类号 60001');
+    assert.equal(calls.includes('buyGoods'), false, '有库存时不该花钱');
+});
+
+test('补栏：库存不足且买动物开关关闭时不买', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [],
+        auto: { pasture_buy_animal: false },
+        animalGoods: [{ goodsId: 10002, animalId: 60001, price: 2, unlocked: true }],
+    });
+    const result = await orchestrator.runPastureOperation('refill');
+    assert.deepEqual(result.actions, []);
+    assert.equal(calls.includes('buyGoods'), false, '开关关闭时绝不花钱');
+    assert.equal(calls.includes('getAnimalShop'), false, '也不该去查商店');
+});
+
+test('补栏：开关打开且余额足够时买最便宜的一只并放入', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 5000 }],   // 牧场货币余额 5000
+        auto: { pasture_buy_animal: true },
+        animalGoods: [
+            { goodsId: 10004, animalId: 60003, price: 2712, unlocked: true },
+            { goodsId: 10002, animalId: 60001, price: 2, unlocked: true },
+        ],
+    });
+    const result = await orchestrator.runPastureOperation('refill');
+    assert.deepEqual(result.actions, ['refill_slots']);
+    const buyCall = calls.find(c => String(c).startsWith('buy:'));
+    assert.ok(buyCall, '应发起购买');
+    assert.ok(buyCall.includes(':10002:1:2'), `应买最便宜的 10002（实际 ${buyCall}）`);
+    assert.ok(calls.some(c => String(c).startsWith('place:') && c.includes('60001')),
+        '买完立刻放入对应动物');
+});
+
+test('补栏：余额不足时不买也不报错', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchReply(),
+        bagItems: [{ id: 1007, count: 1 }],      // 只有 1，买不起 1080 的
+        auto: { pasture_buy_animal: true },
+        animalGoods: [{ goodsId: 10003, animalId: 60002, price: 1080, unlocked: true }],
+    });
+    const result = await orchestrator.runPastureOperation('refill');
+    assert.deepEqual(result.actions, []);
+    assert.equal(calls.includes('buyGoods'), false);
+});
+
+test('补栏：没有空栏时完全不动', async () => {
+    const full = ranchReply();
+    full.ranches[0].capacity = 2;   // 已经有 2 只，满了
+    const { orchestrator, calls } = setupMocks({
+        reply: full,
+        bagItems: [{ id: 60001, count: 5 }],
+    });
+    const result = await orchestrator.runPastureOperation('refill');
+    assert.deepEqual(result.actions, []);
+    assert.equal(calls.includes('getBag'), false, '没空栏连背包都不查');
 });

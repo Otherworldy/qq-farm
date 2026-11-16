@@ -11,7 +11,8 @@
 
 const { sendMsgAsync, getUserState } = require('../utils/network');
 const { types, waitForProtoReady } = require('../utils/proto');
-const { toLong } = require('../utils/utils');
+const { toLong, toNum } = require('../utils/utils');
+const { getShopInfo, buyGoods } = require('./farm-api');
 
 /** 服务名常量：抓包确认的两个 service */
 const ANIMAL_SERVICE = 'gamepb.animalpb.AnimalService';
@@ -24,6 +25,22 @@ const RANCH_OP_IDS = [11003, 11008, 11009];
 
 /** 牧草机设施模板 ID（抓包实测） */
 const FEED_MACHINE_FACILITY_ID = 7001001;
+
+/**
+ * 动物类道具的 item_id 段（抓包实测：60001~60008 全部是动物）。
+ * 动物商店里 goods.goods_id 是 10002 起，goods.item_id 才是动物种类号。
+ */
+const ANIMAL_ITEM_ID_MIN = 60000;
+const ANIMAL_ITEM_ID_MAX = 60999;
+
+/** 候选动物商店 shop_id：抓包里出现过 2/4/5，实测动物在其中一个 */
+const ANIMAL_SHOP_CANDIDATES = [2, 4, 5];
+
+function isAnimalItemId(itemId) {
+    // protobufjs 解 int64 给的是 Long 对象，Number(Long) 不可靠，统一走 toNum
+    const id = toNum(itemId);
+    return id >= ANIMAL_ITEM_ID_MIN && id <= ANIMAL_ITEM_ID_MAX;
+}
 
 // ─── 内部辅助 ───
 
@@ -110,15 +127,114 @@ async function triggerProduce() {
 
 /**
  * 偷取好友牧场产物
- * @param {number} [hostGid] 不传则用自己（一般应传好友 gid）
+ * @param {number} [hostGid] 被偷者 gid（好友）；不传则用自己
+ * @param {{ranchInstId:number, animalInstId:number}} [target] 指定偷哪只；不传=全部可偷
  */
-async function stealProduce(hostGid) {
+async function stealProduce(hostGid, target) {
     const gid = hostGid || selfGid();
+    const payload = { host_gid: toLong(gid) };
+    if (target && target.animalInstId) {
+        payload.target = {
+            ranch_inst_id: toLong(target.ranchInstId),
+            animal_inst_id: toLong(target.animalInstId),
+        };
+    }
     return sendPastureRequest(
         ANIMAL_SERVICE, 'StealProduce',
         types.StealProduceRequest, types.StealProduceReply,
-        { host_gid: toLong(gid) }
+        payload
     );
+}
+
+/**
+ * 把背包里的动物放进栏舍。服务端自行分配 slot。
+ * @param {number} ranchInstId
+ * @param {number} animalId 动物种类号（60001），不是实例号
+ */
+async function placeAnimal(ranchInstId, animalId) {
+    return sendPastureRequest(
+        ANIMAL_SERVICE, 'PlaceAnimal',
+        types.PlaceAnimalRequest, types.PlaceAnimalReply,
+        { targets: [{ ranch_inst_id: toLong(ranchInstId), animal_id: toLong(animalId) }] }
+    );
+}
+
+/**
+ * 定点清理指定灾害。
+ * @param {number[]} hazardIds - RanchInfo.hazards[].hazard_id
+ * @param {number} [hostGid]
+ */
+async function cleanRanch(hazardIds, hostGid) {
+    const gid = hostGid || selfGid();
+    return sendPastureRequest(
+        RANCH_SERVICE, 'CleanRanch',
+        types.CleanRanchRequest, types.CleanRanchReply,
+        { host_gid: toLong(gid), hazard_ids: (hazardIds || []).map(id => toLong(id)) }
+    );
+}
+
+/**
+ * 抚摸动物（重量/变异交互）。
+ * @param {number} animalInstId
+ * @param {number} ranchInstId
+ * @param {number} [hostGid]
+ */
+async function strokeAnimal(animalInstId, ranchInstId, hostGid) {
+    const gid = hostGid || selfGid();
+    return sendPastureRequest(
+        RANCH_SERVICE, 'StrokeAnimal',
+        types.StrokeAnimalRequest, types.StrokeAnimalReply,
+        {
+            host_gid: toLong(gid),
+            target: {
+                ranch_inst_id: toLong(ranchInstId),
+                animal_inst_id: toLong(animalInstId),
+            },
+        }
+    );
+}
+
+/**
+ * 找动物商店并把商品列表拍平。
+ *
+ * 抓包无法确定动物店的确切 shop_id（请求体加密，读出来是随机字节），
+ * 所以按候选逐个试，返回第一个含动物商品的店。结果缓存，只探一次。
+ *
+ * @returns {Promise<{shopId:number, goods:object[]}>}
+ */
+let animalShopCache = null;
+async function getAnimalShop(force = false) {
+    if (animalShopCache && !force) return animalShopCache;
+    for (const shopId of ANIMAL_SHOP_CANDIDATES) {
+        let reply;
+        try {
+            reply = await getShopInfo(shopId);
+        } catch {
+            continue;
+        }
+        const list = (reply && reply.goods_list) || [];
+        const animals = list.filter(g => isAnimalItemId(g.item_id));
+        if (animals.length > 0) {
+            animalShopCache = {
+                shopId,
+                goods: animals.map(g => ({
+                    goodsId: toNum(g.id),
+                    animalId: toNum(g.item_id),
+                    price: toNum(g.price),
+                    count: toNum(g.item_count) || 1,
+                    unlocked: !!g.unlocked,
+                })),
+            };
+            return animalShopCache;
+        }
+    }
+    animalShopCache = { shopId: 0, goods: [] };
+    return animalShopCache;
+}
+
+/** 供测试重置商店缓存 */
+function resetAnimalShopCacheForTests() {
+    animalShopCache = null;
 }
 
 /**
@@ -192,4 +308,14 @@ module.exports = {
     getBuildingList,
     getFacilityDetail,
     addFeed,
+
+    placeAnimal,
+    cleanRanch,
+    strokeAnimal,
+    getAnimalShop,
+    resetAnimalShopCacheForTests,
+    isAnimalItemId,
+    ANIMAL_ITEM_ID_MIN,
+    ANIMAL_ITEM_ID_MAX,
+    buyGoods,
 };

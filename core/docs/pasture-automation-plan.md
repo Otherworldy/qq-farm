@@ -403,3 +403,91 @@ node --test test/pasture-api.test.js test/pasture-analyzer.test.js test/pasture-
 ```
 
 全量回归：`npm test` → 1179 项 / 1167 通过 / 12 失败（均为既有 Windows 限制）。
+
+---
+
+# 第二轮抓包结果（2026-11-16 晚）
+
+2.0MB / 用户操作覆盖：买动物→放入栏舍、单点清理、进好友牧场（催生产/偷产物/返回）、重进游戏。
+
+## 新增 3 个 RPC（补上最小闭环的缺口）
+
+| 方法 | 请求（实测解码） | 用途 |
+|---|---|---|
+| `AnimalService.PlaceAnimal` | `targets: [{ranch_inst_id:10001, animal_id:60001}]` | **补栏**，服务端自动分配 slot |
+| `RanchService.CleanRanch` | `host_gid`, `hazard_ids: [11]`（packed repeated） | **定点清理** |
+| `RanchService.StrokeAnimal` | `host_gid`, `target: {ranch_inst_id, animal_inst_id}` | 抚摸动物 |
+
+`StealProduce` 也补全了：可带 `target` 指定偷哪只（`{host_gid, target}`），
+不带时是偷全部可偷。
+
+**关键区别**：`PlaceAnimal.animal_id` 是**动物种类号**（60001），不是实例号
+（animal_inst_id）——服务端负责造实例和分配栏位。
+
+## 买动物：复用农场的 ShopService
+
+抓包确认买动物走的就是 `gamepb.shoppb.ShopService.BuyGoods`，参数与农场一致
+（`goods_id` / `num` / `price`）。
+
+动物商店的实测数据：
+
+```
+goods_id=10002  item_id=60001  price=2       ← 新手动物，几乎免费
+goods_id=10003  item_id=60002  price=1080
+goods_id=10004  item_id=60003  price=2712
+goods_id=10005  item_id=60004  price=4068
+...
+共 16 种，price 单位是 item 1007（牧场货币）
+```
+
+`shop_id` 无法从抓包确定（请求体加密，解出来是随机字节），因此
+`getAnimalShop()` 遍历候选 `[2, 4, 5]`，返回第一个含 `item_id` 落在
+60000–60999 段的商店，并缓存结果。
+
+## gid 语义确认
+
+用 `Heartbeat` 请求交叉验证（它是发给自己，一定正确）：
+
+- **自己 = 1284046759**（与 `PlayerLogin` 回包的 `basic.gid` 一致）
+- 出现过的其他 gid（`1288674344` / `1233369866` / `1285654584` / 1219347822 …）
+  都是好友，或切换过的账号
+
+因此 `host_gid` 的语义是「被操作牧场的主人」：清理/偷取/抚摸好友时传好友 gid，
+操作自己时传自己 gid。`pasture-api.selfGid()` 取的是 `getUserState().gid`，正确。
+
+> **注意**：仓库数据目录 `accounts.json` 里这个账号记录的 gid 是 `1288674344`，
+> 与登录态不符（那是好友的）。不影响运行（运行时 gid 来自登录回包），
+> 但看数据时别被误导。
+
+## 修掉一个真实 bug
+
+`isAnimalItemId()` 最初写的是 `Number(itemId)`。但 protobufjs 解 int64 给的是
+**Long 对象**，`Number(Long)` 返回 NaN，导致动物商店永远匹配不到、补栏静默失效。
+已改为 `toNum()`（能处理 Long / number / {low,high}）。测试里也补了对应断言。
+
+## 新增配置
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `pasture_refill` | `true` | 补栏：把背包里的动物放进空栏 |
+| `pasture_buy_animal` | **`false`** | 自动买动物。要花牧场货币，默认关闭 |
+
+补栏动作顺序固定为「先背包、后购买」：背包里有动物就绝不花钱。
+
+## 当前测试
+
+```bash
+cd core && node --test test/pasture-api.test.js test/pasture-analyzer.test.js test/pasture-orchestrator.test.js
+# 42 tests / 42 pass
+```
+
+全量 `npm test`：1193 项 / 1181 通过 / 12 失败（均为既有 Windows 限制）。
+
+## 仍然没做
+
+| 缺口 | 状态 |
+|---|---|
+| 好友牧场偷产物**调度** | API 已完备（`stealProduce(gid, target)`），但没并入 friend 轮次 |
+| `op_id` 语义（11003/11008/11009） | 本轮只抓到 1 次配额查询，缺对照样本 |
+| 抚摸/变异玩法 | `strokeAnimal` 已收口，未接入编排 |
+| 面板入口 | 不在当前范围 |

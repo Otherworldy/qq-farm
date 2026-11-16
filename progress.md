@@ -749,3 +749,30 @@
     Windows 限制：0600 权限、符号链接、并发抖动、`getStealWhitelist` 沙箱缺注入）。
   - **仍缺**：买动物补栏、扩建 capacity、单个灾害定点、好友牧场偷产物调度、
     面板入口、`op_id` 语义确认。详见 `core/docs/pasture-automation-plan.md`。
+- 2026-11-16 **第二轮抓包：补栏 + 定点清理落地**。
+  - 用户操作覆盖：买动物→放入栏舍、单点清理、进好友牧场（催生产/偷产物/返回）、重进游戏。
+    抓到 2.0MB / 新增 3 个 RPC。
+  - **`AnimalService.PlaceAnimal`**：`targets: [{ranch_inst_id, animal_id}]`，
+    `animal_id` 是**种类号**（60001）不是实例号，服务端自动分配 slot。
+  - **`RanchService.CleanRanch`**：`host_gid` + `hazard_ids`（packed repeated，实测 `[11]`），
+    定点清理，与一键 `CleanAllRanch` 的区别就是能指名。
+  - **`RanchService.StrokeAnimal`**：`host_gid` + `target{ranch_inst_id, animal_inst_id}`。
+  - `StealProduce` 补全：可带 `target` 指定偷某只。
+  - **买动物复用农场 `ShopService.BuyGoods`**（参数一致）。动物商店实测 16 种，
+    `goods_id=10002↔item_id=60001 price=2` … `goods_id=10011↔item_id=60008 price=12672`，
+    price 单位是 item 1007（牧场货币）。shop_id 无法从加密请求确定，
+    `getAnimalShop()` 遍历候选 `[2,4,5]` 找含 60xxx 商品的店并缓存。
+  - **gid 语义确认**：用 `Heartbeat` 交叉验证 → 自己 = `1284046759`
+    （与 `PlayerLogin` 的 `basic.gid` 一致）；`1288674344`/`1233369866`/`1285654584`
+    等都是好友。注意 `accounts.json` 里该账号记的 gid 是 `1288674344`（好友的），
+    不影响运行（运行时取自登录回包）但会误导排查。
+  - **修掉一个真 bug**：`isAnimalItemId()` 用 `Number(itemId)`，而 protobufjs 解 int64
+    给的是 Long 对象 → `Number(Long)` = NaN → 动物商店永远匹配不到、补栏静默失效。
+    改为 `toNum()`，测试补了 Long 断言。
+  - 编排更新：清理优先走定点 `CleanRanch`（拿不到 hazard_id 才退回一键）；
+    补栏固定「先背包后购买」，背包有动物绝不花钱；
+    `pasture_buy_animal` 默认 **false**（买动物要花货币）。
+  - 测试扩到 **42 项全绿**（api 17 / analyzer 8 / orchestrator 17），
+    新增 `getAnimalShop` 缓存、Long 处理、定点清理优先、补栏两条路径等用例。
+  - 全量回归 **1193 / 1181 通过 / 12 失败**（基线不变）。
+  - 抓包环境已还原：系统代理恢复 `127.0.0.1:7897`（ProxyEnable=0，与抓包前一致）。

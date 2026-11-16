@@ -15,6 +15,12 @@ const path = require('node:path');
 const SRC = path.join(__dirname, '..', 'src');
 
 const captured = [];
+/**
+ * 可替换的发送处理器。默认返回空 body；需要真实回包的用例可以临时接管。
+ * 注意不能用「替换 exports.sendMsgAsync」的方式——farm-api 在 require 时就解构了
+ * 这个函数，替换 exports 影响不到它。
+ */
+let sendHandler = null;
 
 // 拦截 network：记录每次发送的 service / method / payload
 const networkId = require.resolve(path.join(SRC, 'utils', 'network'));
@@ -28,6 +34,7 @@ require.cache[networkId] = {
         networkEvents: { on() {}, emit() {} },
         sendMsgAsync: async (service, method, payload) => {
             captured.push({ service, method, payload: Buffer.from(payload) });
+            if (sendHandler) return sendHandler(service, method, Buffer.from(payload));
             // 回一个空 reply：所有 Reply 类型都允许全空
             return { body: Buffer.alloc(0) };
         },
@@ -35,6 +42,7 @@ require.cache[networkId] = {
 };
 
 const { loadProto, types } = require(path.join(SRC, 'utils', 'proto'));
+const { toNum } = require(path.join(SRC, 'utils', 'utils'));
 const api = require(path.join(SRC, 'services', 'pasture-api'));
 
 /** 取出最近一次发送，并按给定类型解码 */
@@ -170,4 +178,102 @@ test('所有 10 个方法都用到了抓包确认过的 service 名', async () =
     assert.ok(services.has('gamepb.homesteadpb.HomesteadService'));
     assert.ok(services.has('gamepb.homesteadpb.FeedMachineService'));
     assert.equal(services.size, 4, '只应出现这四个 service');
+});
+// ─── 第二轮抓包新增的方法 ───
+
+test('placeAnimal：targets 里是 ranch_inst_id + animal_id（种类号）', async () => {
+    await api.placeAnimal(10001, 60001);
+    const { sent, decoded } = lastAs(types.PlaceAnimalRequest);
+    assert.equal(sent.service, 'gamepb.animalpb.AnimalService');
+    assert.equal(sent.method, 'PlaceAnimal');
+    const plain = toPlain(decoded);
+    assert.equal(plain.targets.length, 1);
+    assert.equal(plain.targets[0].ranch_inst_id, 10001);
+    assert.equal(plain.targets[0].animal_id, 60001, '必须落 animal_id 而不是 animal_inst_id');
+});
+
+test('cleanRanch：hazard_ids 是 packed repeated，host_gid 走 field 1', async () => {
+    await api.cleanRanch([11, 12], 1233369866);
+    const { sent, decoded } = lastAs(types.CleanRanchRequest);
+    assert.equal(sent.service, 'gamepb.animalpb.RanchService');
+    assert.equal(sent.method, 'CleanRanch');
+    const plain = toPlain(decoded);
+    assert.equal(plain.host_gid, 1233369866);
+    assert.deepEqual(plain.hazard_ids, [11, 12]);
+});
+
+test('strokeAnimal：target 是 {ranch_inst_id, animal_inst_id}', async () => {
+    await api.strokeAnimal(13, 10001, 1285654584);
+    const { sent, decoded } = lastAs(types.StrokeAnimalRequest);
+    assert.equal(sent.method, 'StrokeAnimal');
+    const plain = toPlain(decoded);
+    assert.equal(plain.host_gid, 1285654584);
+    assert.equal(plain.target.ranch_inst_id, 10001);
+    assert.equal(plain.target.animal_inst_id, 13);
+});
+
+test('stealProduce：带 target 时才写 field 2', async () => {
+    await api.stealProduce(1288674344);
+    let plain = toPlain(lastAs(types.StealProduceRequest).decoded);
+    assert.equal(plain.target, undefined, '不指定目标时不写 target');
+
+    await api.stealProduce(1288674344, { ranchInstId: 10001, animalInstId: 3 });
+    plain = toPlain(lastAs(types.StealProduceRequest).decoded);
+    assert.equal(plain.target.ranch_inst_id, 10001);
+    assert.equal(plain.target.animal_inst_id, 3);
+});
+
+test('isAnimalItemId：只认 60xxx 段', () => {
+    assert.equal(api.isAnimalItemId(60001), true);
+    assert.equal(api.isAnimalItemId(60008), true);
+    assert.equal(api.isAnimalItemId(1007), false, '牧场货币不是动物');
+    assert.equal(api.isAnimalItemId(41435), false, '果实不是动物');
+    assert.equal(api.isAnimalItemId(0), false);
+    assert.equal(api.isAnimalItemId(undefined), false);
+});
+
+test('getAnimalShop：从候选 shop 里挑出含动物商品的店并缓存', async () => {
+    api.resetAnimalShopCacheForTests();
+    let shopInfoCalls = 0;
+    sendHandler = (service, method, payload) => {
+        if (method !== 'ShopInfo') return { body: Buffer.alloc(0) };
+        shopInfoCalls += 1;
+        const shopId = toNum(types.ShopInfoRequest.decode(payload).shop_id);
+        // 只有 shop 4 有动物商品
+        const goods = shopId === 4
+            ? [{ id: 10002, item_id: 60001, price: 2, item_count: 1, unlocked: true },
+               { id: 10003, item_id: 60002, price: 1080, item_count: 1, unlocked: true }]
+            : [{ id: 9001, item_id: 20002, price: 10, item_count: 1, unlocked: true }];
+        const Reply = types.ShopInfoReply;
+        return { body: Reply.encode(Reply.create({ goods_list: goods })).finish() };
+    };
+
+    const shop = await api.getAnimalShop();
+    assert.equal(shop.shopId, 4, '应挑出含动物商品的 shop');
+    assert.equal(shop.goods.length, 2);
+    assert.equal(shop.goods[0].animalId, 60001);
+    assert.equal(shop.goods[1].price, 1080);
+
+    // 第二次应该走缓存
+    const before = shopInfoCalls;
+    await api.getAnimalShop();
+    assert.equal(shopInfoCalls, before, '缓存命中后不应再请求');
+
+    sendHandler = null;
+    api.resetAnimalShopCacheForTests();
+});
+
+test('getAnimalShop：没有动物商品时返回空结果', async () => {
+    api.resetAnimalShopCacheForTests();
+    sendHandler = () => {
+        const Reply = types.ShopInfoReply;
+        return { body: Reply.encode(Reply.create({
+            goods_list: [{ id: 9001, item_id: 20002, price: 10 }],
+        })).finish() };
+    };
+    const shop = await api.getAnimalShop();
+    assert.equal(shop.shopId, 0);
+    assert.deepEqual(shop.goods, []);
+    sendHandler = null;
+    api.resetAnimalShopCacheForTests();
 });

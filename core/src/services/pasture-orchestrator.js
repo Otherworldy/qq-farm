@@ -21,10 +21,16 @@ const {
     harvestRanch,
     feedAnimal,
     cleanAllRanch,
+    cleanRanch,
+    placeAnimal,
     getFacilityDetail,
     addFeed,
+    getAnimalShop,
+    buyGoods,
+    isAnimalItemId,
     FEED_MACHINE_FACILITY_ID,
 } = require('./pasture-api');
+const { getBag } = require('./warehouse');
 const { analyzeRanches, msUntilNextProduce, GRASS_LOW_THRESHOLD } = require('./pasture-analyzer');
 
 // ─── 模块状态 ───
@@ -39,6 +45,12 @@ let lastFeedMachineAtMs = 0;
 let feedMachineInstId = FEED_MACHINE_FACILITY_ID === 7001001 ? 10002 : 0;
 /** 补草冷却：同一台牧草机 5 分钟内不重复补 */
 const FEED_MACHINE_COOLDOWN_MS = 5 * 60_000;
+/** 牧场货币（卖产物的结算单位，抓包实测 expected_*_sells 的 id） */
+const PASTURE_CURRENCY_ID = 1007;
+/** 自动买动物的冷却：失败或余额不足后 10 分钟内不再尝试 */
+const BUY_ANIMAL_COOLDOWN_MS = 10 * 60_000;
+let lastBuyAnimalAtMs = 0;
+let lastBuyAnimalFailAtMs = 0;
 
 // ─── 辅助 ───
 
@@ -109,17 +121,126 @@ async function performFeed(analysis) {
     return { reply, count: targets.length };
 }
 
-/** 一键清理灾害 */
+/**
+ * 清理灾害。
+ *
+ * 优先用 CleanRanch 指名清理（抓包确认 field 2 是 hazard_ids 列表）：
+ * 一键 CleanAllRanch 会把整片牧场都清掉，配额消耗不可控；
+ * 拿不到 hazard_id 时才退回一键清理。
+ */
 async function performClean(analysis) {
     if (!analysis.needClean.length) return 0;
+    const hazardIds = analysis.needClean
+        .map(h => h.hazardId)
+        .filter(id => Number(id) > 0);
     const ranchIds = [...new Set(analysis.needClean.map(h => h.ranchInstId))];
-    const reply = await cleanAllRanch(ranchIds);
-    logPasture(`清理 ${analysis.needClean.length} 个灾害`, {
+
+    let reply;
+    let mode;
+    if (hazardIds.length) {
+        reply = await cleanRanch(hazardIds);
+        mode = 'point';
+    } else {
+        reply = await cleanAllRanch(ranchIds);
+        mode = 'all';
+    }
+    logPasture(`清理 ${analysis.needClean.length} 个灾害（${mode === 'point' ? '定点' : '一键'}）`, {
         event: '牧场清理',
         count: analysis.needClean.length,
+        mode,
     });
     noteEvent('info', `牧场清理 ${analysis.needClean.length} 个灾害`);
     return { reply, count: analysis.needClean.length };
+}
+
+/**
+ * 补栏：把动物放进空栏位。
+ *
+ * 两步走，顺序不能反：
+ *   1. 背包里已有的动物优先（不花钱）；
+ *   2. 背包没有、且用户显式开了 pasture_buy_animal，才去动物商店买。
+ *
+ * 买动物涉及余额，默认关闭。买入失败或余额不足后进入冷却，避免每轮重试。
+ */
+async function performRefillSlots(analysis) {
+    const empty = analysis.emptySlots || [];
+    if (!empty.length) return 0;
+
+    let bagItems = [];
+    try {
+        const bag = await getBag();
+        bagItems = (bag && bag.item_bag && bag.item_bag.items) || [];
+    } catch {
+        return 0;
+    }
+    const animals = bagItems
+        .filter(it => isAnimalItemId(it.id) && toNum(it.count) > 0)
+        .map(it => ({ id: toNum(it.id), count: toNum(it.count) }));
+
+    // —— 第一步：先用背包里的 ——
+    let placed = 0;
+    for (const slot of empty) {
+        if (!animals.length) break;
+        const animal = animals[0];
+        try {
+            await placeAnimal(slot.ranchInstId, animal.id);
+            placed += 1;
+            animal.count -= 1;
+            if (animal.count <= 0) animals.shift();
+        } catch (err) {
+            if (!isTransientNetworkError(err)) {
+                logWarn('牧场', `放入动物失败: ${err.message}`);
+            }
+            break;
+        }
+    }
+    if (placed > 0) {
+        logPasture(`补栏 ${placed} 只（用背包库存）`, { event: '牧场补栏', count: placed });
+        noteEvent('info', `牧场补栏 ${placed} 只动物`);
+        return placed;
+    }
+
+    // —— 第二步：买动物（默认关闭）——
+    const auto = getAutomation();
+    if (!auto.pasture_buy_animal) return 0;
+    const now = Date.now();
+    if (now - lastBuyAnimalAtMs < BUY_ANIMAL_COOLDOWN_MS) return 0;
+    if (now - lastBuyAnimalFailAtMs < BUY_ANIMAL_COOLDOWN_MS) return 0;
+
+    let balance = 0;
+    for (const it of bagItems) {
+        if (toNum(it.id) === PASTURE_CURRENCY_ID) balance = toNum(it.count);
+    }
+
+    try {
+        const shop = await getAnimalShop();
+        const affordable = shop.goods
+            .filter(g => g.unlocked && g.price > 0 && g.price <= balance)
+            .sort((a, b) => a.price - b.price);
+        if (!affordable.length) {
+            lastBuyAnimalFailAtMs = now;
+            logPasture(`余额 ${balance} 买不到可用动物（商店 ${shop.goods.length} 种）`);
+            return 0;
+        }
+        const pick = affordable[0];
+        await buyGoods(pick.goodsId, 1, pick.price);
+        await placeAnimal(empty[0].ranchInstId, pick.animalId);
+        lastBuyAnimalAtMs = now;
+        logPasture(`买入并补栏 1 只动物（goods ${pick.goodsId}，花费 ${pick.price}）`, {
+            event: '牧场买动物',
+            goodsId: pick.goodsId,
+            animalId: pick.animalId,
+            price: pick.price,
+        });
+        noteEvent('info', `牧场买入并补栏 1 只动物（花费 ${pick.price}）`);
+        return 1;
+    } catch (err) {
+        lastBuyAnimalFailAtMs = now;
+        if (!isTransientNetworkError(err)) {
+            logWarn('牧场', `买动物失败: ${err.message}`);
+        }
+        return 0;
+    }
 }
 
 /**
@@ -217,6 +338,10 @@ async function runPastureOperation(opType = 'all') {
         const r = await performClean(analysis);
         if (r) actions.push('clean');
     }
+    if (want('refill', 'pasture_refill') && analysis.emptySlots.length) {
+        const r = await performRefillSlots(analysis);
+        if (r) actions.push('refill_slots');
+    }
     if (want('grass', 'pasture_grass') && analysis.grassLow) {
         const r = await performRefillGrass(analysis);
         if (r) actions.push('refill_grass');
@@ -286,6 +411,8 @@ function resetPastureStateForTests() {
     isFirstPastureCheck = true;
     lastNextReadyAtMs = 0;
     lastFeedMachineAtMs = 0;
+    lastBuyAnimalAtMs = 0;
+    lastBuyAnimalFailAtMs = 0;
 }
 
 module.exports = {
@@ -299,6 +426,8 @@ module.exports = {
     performHarvest,
     performFeed,
     performClean,
+    performRefillSlots,
     performRefillGrass,
     msUntilNextProduce,
+    PASTURE_CURRENCY_ID,
 };
