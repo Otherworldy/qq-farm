@@ -11,9 +11,6 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
-// 这组测试验证动作编排顺序，不需要等 10 分钟的出栏观察期
-process.env.FARM_PASTURE_HARVEST_DEFER_MS = '0';
-
 const SRC = path.join(__dirname, '..', 'src');
 
 /** 用假实现替换模块（必须在 require 被测模块之前调用） */

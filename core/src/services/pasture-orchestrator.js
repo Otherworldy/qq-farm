@@ -76,19 +76,6 @@ let lastBuyAnimalFailAtMs = 0;
  */
 const PRODUCE_COOLDOWN_MS = 5 * 60_000;
 let lastProduceAtMs = 0;
-/**
- * 可收获动物的出栏等待期。
- *
- * 便宜动物（鸡 60001）只产一次就走完生命周期，催一次就到 stage 5，
- * 立刻出栏就会变成「90 秒一轮：买 → 催 → 收 → 买」。
- * 所以先记下它进入可收获的时刻，等够这个时长确认它确实不再产出，
- * 才收出栏腾位置。真机对比：官方那场 160 秒里 4 只动物一直是 stage 3。
- */
-const HARVEST_DEFER_MS = Number(process.env.FARM_PASTURE_HARVEST_DEFER_MS) >= 0
-    ? Number(process.env.FARM_PASTURE_HARVEST_DEFER_MS)
-    : 10 * 60_000;
-/** animalInstId -> 首次看到它可收获的时刻 */
-const harvestSeenAt = new Map();
 /** 抚摸冷却：同一只动物 10 分钟内不重复摸（抚摸能推进产出，但服务端有配额） */
 const STROKE_COOLDOWN_MS = 10 * 60_000;
 /** 单轮最多摸几只，避免一次把配额打空 */
@@ -140,35 +127,14 @@ function noteEvent(level, message) {
  * 短暂不同步时会撞到），按空操作处理，不按失败记录。
  */
 async function performHarvest(analysis, shelvesOnly = false) {
-    const harvestableAll = analysis.harvestable || [];
+    const harvestable = analysis.harvestable || [];
     const shelves = analysis.collectableShelves || [];
     const shelfLots = shelves.reduce((sum, x) => sum + x.lots.length, 0);
 
-    // 可收获动物要等够等待期才出栏；等待期内它只是待着，账算到「不动」而不是「已收」
-    const now = Date.now();
-    const dueToHarvest = [];
-    for (const a of harvestableAll) {
-        const id = toNum(a.animalInstId);
-        const seenAt = harvestSeenAt.get(id);
-        if (!seenAt) {
-            harvestSeenAt.set(id, now);
-            // 等待期为 0 时保持旧行为：看到即可收获动物就立刻出栏
-            if (HARVEST_DEFER_MS === 0) dueToHarvest.push(a);
-        } else if (now - seenAt >= HARVEST_DEFER_MS) {
-            dueToHarvest.push(a);
-        }
-    }
-    // 清掉已经不在栏里的记录，避免 Map 无限增长
-    if (harvestSeenAt.size > 64) {
-        const alive = new Set((analysis.allAnimals || []).map(a => toNum(a.animalInstId)));
-        for (const id of [...harvestSeenAt.keys()]) {
-            if (!alive.has(id)) harvestSeenAt.delete(id);
-        }
-    }
-
-    // 有产物可收 → 只收产物（动物留栏）；产物收完了、且动物已等够，才出栏
-    const harvestType = (dueToHarvest.length > 0 && shelfLots === 0) ? 1 : 2;
-    const targets = harvestType === 1 ? dueToHarvest : shelves;
+    // 有产物可收 → 只收产物（动物留栏）；没有产物才把可收获动物收出栏。
+    // 节奏由下面的催产冷却控制，而不是靠压着不收 —— 页面显示「可收获」就该收。
+    const harvestType = (harvestable.length > 0 && shelfLots === 0) ? 1 : 2;
+    const targets = harvestType === 1 ? harvestable : shelves;
     const ranchIds = [...new Set(targets.map(x => x.ranchInstId))];
     if (!ranchIds.length) return 0;
 
@@ -182,14 +148,13 @@ async function performHarvest(analysis, shelvesOnly = false) {
 
     if (harvestType === 1) {
         const gainedExp = analysis.expectedHarvestExpTotal;
-        logPasture(`收获 ${dueToHarvest.length} 只出栏（预期 +${gainedExp} 经验）`, {
+        logPasture(`收获 ${harvestable.length} 只出栏（预期 +${gainedExp} 经验）`, {
             event: '牧场收获',
-            count: dueToHarvest.length,
+            count: harvestable.length,
         });
-        noteEvent('info', `牧场收获 ${dueToHarvest.length} 只动物产物，约 +${gainedExp} 经验`);
-        recordOperation('pastureHarvest', dueToHarvest.length);
-        recordHarvest(dueToHarvest.map(a => a.animalInstId));
-        for (const a of dueToHarvest) harvestSeenAt.delete(toNum(a.animalInstId));
+        noteEvent('info', `牧场收获 ${harvestable.length} 只动物产物，约 +${gainedExp} 经验`);
+        recordOperation('pastureHarvest', harvestable.length);
+        recordHarvest(harvestable.map(a => a.animalInstId));
     } else if (shelfLots > 0) {
         logPasture(`捡蛋 ${shelfLots} 项（动物留栏）`, {
             event: '牧场捡蛋',
@@ -198,7 +163,7 @@ async function performHarvest(analysis, shelvesOnly = false) {
         recordOperation('pastureCollect', shelfLots);
     }
 
-    return { reply, count: harvestType === 1 ? dueToHarvest.length : 0, shelfLots };
+    return { reply, count: harvestType === 1 ? harvestable.length : 0, shelfLots };
 }
 
 /** 投喂：can_feed 的动物 */
