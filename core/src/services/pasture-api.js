@@ -91,6 +91,13 @@ async function getRanchOpTimes(opIds = RANCH_OP_IDS) {
  * @param {number[]} ranchIds
  * @param {number} [harvestType] 抓包实测为 1
  */
+/**
+ * 一键收获。harvest_type 的语义由真机的服务端错误码确定：
+ *   1 —— 收获（把可收获动物收出栏）
+ *   2 —— 只收产物；没有可收产物时返回业务码 1045229「当前没有可收取的产物」
+ * 所以有成熟动物时用 1，只有货架产物时用 2 —— 混用会让产物走「收获」路径，
+ * 产物不入账、只给经验，表现出来就是牧场一直在跑却在亏牧场币。
+ */
 async function harvestRanch(ranchIds, harvestType = 1) {
     return sendPastureRequest(
         ANIMAL_SERVICE, 'HarvestRanch',

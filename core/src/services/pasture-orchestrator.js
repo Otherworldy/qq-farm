@@ -121,7 +121,17 @@ async function performHarvest(analysis, shelvesOnly = false) {
         ...(analysis.collectableShelves || []).map(x => x.ranchInstId),
     ])];
     if (!ranchIds.length) return 0;
-    const reply = await harvestRanch(ranchIds);
+    // 有成熟动物 → 1（收出栏，顺带产物）；只有货架产物 → 2（专收产物）
+    const harvestType = analysis.harvestable.length > 0 ? 1 : 2;
+    let reply;
+    try {
+        reply = await harvestRanch(ranchIds, harvestType);
+    } catch (err) {
+        // 1045229 = 当前没有可收取的产物。本地 analysis 与服务端快照短暂不同步时
+        // 会撞到，属正常状态而非故障，不该按失败刷警告。
+        if (/1045229/.test(String(err && err.message))) return 0;
+        throw err;
+    }
 
     const harvested = analysis.harvestable.length;
     const shelfLots = (analysis.collectableShelves || [])
