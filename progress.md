@@ -1184,3 +1184,13 @@
     `EnterHomestead`（8 字节，只发 host_gid）—— 遵守「不猜就自动执行」。
   - 改动：5 个 proto 文件 + `utils/proto.js` 注册 16 类型 + `pasture-api` 8 个函数
     + orchestrator 接 CannelNew；新增 5 项契约测试。牧场全套 **133 项全绿**。
+- 2026-11-17 **牧场任务领取：功能本已存在，补上可见性**。
+  - 用户指出漏了 `打开任务页-领取成长任务奖励.har`。核对确认 `checkAndClaimPastureTasks`
+    + `claimTaskReward` 早已实现，抓包参数也逐条对上：
+    `TaskInfo` 空请求=农场、2 字节 `e998`=`08 02`(scene_id=2)=牧场、
+    `ClaimTaskReward` 6 字节=`{id, do_shared}`、`Task.f10`=task_type（proto 里 =10）。
+  - **实测当前状态**：`300008` growth `0/1` 未完成；`400001/2/3` daily `1/1` 但
+    `claimed=True`（服务端记已领）→ **0 可领是正确行为**。
+  - **真正的缺口**：无任务可领时完全静默，历史日志 0 条，看不出功能在跑。
+    已加 60 秒一次的低频扫描日志，实测输出
+    `牧场任务扫描：任务 4 个，可领 0 个（暂无可领）`。

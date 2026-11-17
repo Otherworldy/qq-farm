@@ -1838,3 +1838,40 @@ CompleteBuildingUpgrade   请求密文 e97375    ← 完全相同
   GetRanchWeightScoreV2 空请求）
 
 牧场全套 **133 项全绿**。
+
+## 牧场任务领取：功能本来就有，验证与可见性
+
+用户指出还漏了 `打开任务页-领取成长任务奖励.har`。核对后确认**功能早已存在**
+（`checkAndClaimPastureTasks` + `claimTaskReward`），但抓包给了三条可直接对照的证据：
+
+| 抓包 | 明文 | 代码 |
+|---|---|---|
+| `TaskInfo` 正文 0 字节 | `{}` | `getTaskInfo(0)` → 农场 |
+| `TaskInfo` 正文 2 字节 `e998` | `08 02` = `{scene_id: 2}` | `getTaskInfo(2)` → 牧场 |
+| `ClaimTaskReward` 正文 6 字节 | `{id, do_shared}` | `claimTaskReward(id, doShared)` |
+| `Task.f10 = 4 / 5` | `task_type` | proto 里 `task_type = 10` |
+
+所以参数结构是对的。
+
+实测当前状态：
+
+```
+300008   pasture_growth   0/1  claimed=False  canClaim=False   未完成
+400001   pasture_daily    1/1  claimed=True   canClaim=False   已领
+400002   pasture_daily    1/1  claimed=True   canClaim=False   已领
+400003   pasture_daily    1/1  claimed=True   canClaim=False   已领
+```
+
+三个每日任务服务端都记成已领取，成长任务进度 0/1，所以**当前 0 可领是正确行为**。
+
+### 真正修的：完全静默
+
+历史日志里 **0 条**牧场任务记录 —— 因为「扫到了但没有可领」时直接 `return 0`，
+看不出这个功能到底跑没跑。现在加了一条 60 秒最多一次的扫描日志：
+
+```
+08:01:30  牧场就绪：3/3 栏位，草 100
+08:01:30  牧场任务扫描：任务 4 个，可领 0 个（暂无可领）
+```
+
+以后有可领任务时会打出「发现 N 个可领取牧场任务」并逐个领取。

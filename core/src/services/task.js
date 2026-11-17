@@ -433,6 +433,8 @@ const PASTURE_TASK_CATEGORY = {
 };
 
 let checkingPastureTasks = false;
+// 「扫过但没有可领」的低频记录，避免每轮都静默返回、看不出功能有没有在跑
+let lastPastureTaskScanLogAt = 0;
 
 function pastureTaskCategory(taskType) {
   return PASTURE_TASK_CATEGORY[toNum(taskType)] || '';
@@ -443,6 +445,16 @@ function pastureTaskCategory(taskType) {
  * 开关是独立的 pasture_task —— 牧场任务和农场任务是两套进度，
  * 关掉农场任务不应该连带停掉牧场。
  */
+/** 牧场任务扫描的低频日志：60 秒最多一条，能看到「扫到了几个、可领几个」。 */
+function logPastureTaskScan(scanned, claimable, reason) {
+  const now = Date.now();
+  if (now - lastPastureTaskScanLogAt < 60_000) return;
+  lastPastureTaskScanLogAt = now;
+  log('牧场', `牧场任务扫描：任务 ${scanned} 个，可领 ${claimable} 个（${reason}）`, {
+    module: 'pasture', event: '牧场任务扫描', scanned, claimable, reason,
+  });
+}
+
 async function checkAndClaimPastureTasks() {
   if (checkingPastureTasks) return 0;
   if (!isAutomationOn('pasture_task')) return 0;
@@ -454,7 +466,10 @@ async function checkAndClaimPastureTasks() {
   try {
     const reply = await getTaskInfo(PASTURE_SCENE_ID);
     const taskInfo = (reply && reply.task_info) || null;
-    if (!taskInfo) return 0;
+    if (!taskInfo) {
+      logPastureTaskScan(0, 0, '回包无 task_info');
+      return 0;
+    }
 
     const raw = [
       ...(Array.isArray(taskInfo.tasks) ? taskInfo.tasks : []),
@@ -468,7 +483,10 @@ async function checkAndClaimPastureTasks() {
       claimable.push(...analyzeTaskList([task], category));
     }
 
-    if (claimable.length === 0) return 0;
+    if (claimable.length === 0) {
+      logPastureTaskScan(raw.length, 0, '暂无可领');
+      return 0;
+    }
 
     log('牧场', `发现 ${claimable.length} 个可领取牧场任务`, {
       module: 'task', event: '扫描牧场任务', result: 'ok', count: claimable.length,
