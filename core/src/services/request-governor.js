@@ -9,15 +9,17 @@
  */
 
 const WINDOW_MS = 60 * 1000;
-// 预算 40/15 → 80/30 → 110/30 → 120/36 → 140/36。
-// 80 是农场单端时代的数字。现在同一账号还要跑牧场（GetRanchDetail/TaskInfo/
-// 设施）、牧场任务、仓库商店，而好友巡查本身就要「好友数 ×（GetAll + Enter
-// + Leave）」：34 个好友就是 102 次，加上每轮都要重读好友列表、农场地块和
-// 背包，实测 60s 峰值到 135。预算不够时被挤掉的是牧场和任务扫描，
-// 不是好友巡查自己。
-// 140 仍远低于异常风暴量级，配合巡查派发的余量只削真正的风暴。
-const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 140;
-const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 36;
+// 预算 40/15 → 80/30 → 110/30 → 120/36 → 140/36 → 160/48。
+// 80 是农场单端时代的数字。现在同一账号还要跑牧场、牧场任务和仓库，
+// 而好友巡查本身就要「好友数 ×（GetAll + Enter + Leave）」：34 个好友 102 次。
+// 更关键的是偷菜快路径每 1.5-3 秒就 checkFriends 一次，而读取门的语义是
+// 「成功即重置」，所以好友列表会被高频重读 —— 实测 GetAll 60s 内 36-38 次，
+// 旧的单接口 36 正好卡在这里，每次溢出都会挤掉牧场和任务扫描。
+// 这两处频率都是既有测试保护的既有契约（每次 tick 都要尝试读取），
+// 不能为省预算而改；只能让预算容下真实需求量。
+// 160/48 仍然远低于异常风暴量级。
+const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 160;
+const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 48;
 // 白名单：防封兜底与核心链路的关键请求不受预算限制（仍计入画像）
 // AntiData 是官方客户端固定节奏的 ACE 风控上报；心跳是 userpb.UserService.Heartbeat
 const WHITELIST = new Set([

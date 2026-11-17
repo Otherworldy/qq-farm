@@ -17,9 +17,9 @@ const FRIEND_SVC = 'gamepb.friendpb.FriendService';
 const VISIT_SVC = 'gamepb.visitpb.VisitService';
 const ANIMAL_SVC = 'gamepb.animalpb.AnimalService';
 
-test('默认预算已放宽到 140/36：牧场 + 34 好友巡查都跑得下', () => {
-    assert.equal(governor.TOTAL_LIMIT, 140);
-    assert.equal(governor.PER_METHOD_LIMIT, 36);
+test('默认预算已放宽到 160/48：牧场 + 34 好友巡查 + 高频列表读取都跑得下', () => {
+    assert.equal(governor.TOTAL_LIMIT, 160);
+    assert.equal(governor.PER_METHOD_LIMIT, 48);
 });
 
 test('好友巡查吃满 66 次后，牧场仍拿得到 GetRanchDetail 预算', () => {
@@ -40,7 +40,7 @@ test('越过上限后牧场照样被拦：护栏本身不能失效', () => {
     governor.resetForTest();
     const now = Date.now();
     // 越过总量上限
-    for (let i = 0; i < 48; i++) {
+    for (let i = 0; i < 55; i++) {
         governor.recordSent(FRIEND_SVC, 'GetAll', true, now);
         governor.recordSent(VISIT_SVC, 'Enter', true, now);
         governor.recordSent(VISIT_SVC, 'Leave', true, now);
@@ -54,7 +54,7 @@ test('hasBudget 对牧场给出与 checkRequest 一致的判断', () => {
     const now = Date.now();
     assert.equal(governor.hasBudget(now, 0, ANIMAL_SVC, 'GetRanchDetail'), true);
 
-    for (let i = 0; i < 150; i++) governor.recordSent(FRIEND_SVC, 'GetAll', true, now);
+    for (let i = 0; i < 170; i++) governor.recordSent(FRIEND_SVC, 'GetAll', true, now);
     assert.equal(governor.hasBudget(now, 0, ANIMAL_SVC, 'GetRanchDetail'), false);
     assert.equal(governor.checkRequest(ANIMAL_SVC, 'GetRanchDetail', now).allowed, false);
 });

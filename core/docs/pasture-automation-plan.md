@@ -1217,3 +1217,51 @@ PlantService.AllLands×11 ItemService.Bag×6      TaskService.TaskInfo×5
 布局上有个坑：原来的 `md:flex-row` 里塞了 4 个兄弟（左 3/4、右 1/4、监控、事件），
 `flex-shrink` 把它们全压扁，「下次检查倒计时」竖排换行。改成 `md:flex-wrap` +
 左栏 `flex-1` / 右栏定宽 `w-80` + 后两个卡 `w-full`，各占各的行。
+
+
+---
+
+# 第七轮：牧场整整一晚没跑 —— 偷菜 tick 把它饿死了
+
+## 症状
+
+用户报「挂了一晚上，牧场都没有自动运行」。日志里牧场只有启动时那一条
+`牧场就绪：0/3 栏位`，之后 8 小时没有任何牧场动作。
+
+## 根因
+
+统一调度器里的偷菜分支：
+
+```js
+} else if (shouldSteal || stealIsDue()) {
+    await runStealTick(autoConfig);
+    return;                                  // ← 这里
+}
+...
+if (shouldPasture) await runPastureTick(autoConfig);   // 永远执行不到
+```
+
+`runStealTick` 的到期间隔是 **1.5-3 秒**（抢成熟窗口），所以 `shouldSteal`
+几乎恒为真 —— 每一轮 tick 都在偷菜分支里 `return` 掉，排在后面的
+`runFarmTick` / `runHelpTick` / `runPastureTick` 一次都轮不到。
+
+**这跟牧场开关无关**：`pasture_refill` / `pasture_buy_animal` 当时确实是关的
+（上一轮为阻止继续花钱关的），但即使全开，牧场也照样不会跑。
+
+## 修法
+
+删掉 `return`。三个 tick 各自都有 `xxxTaskRunning` 守卫，顺序执行不会重入，
+所以「偷菜跑完接着跑农场/帮助/牧场」是安全的。
+
+回归测试 `pasture-tick-starvation.test.js` 直接检查调度器源码：偷菜调用之后
+到下一个 `else if` 之间不得出现裸 `return`，并且三个 tick 的调用位置都在
+偷菜之后。把 `return` 加回去，测试立即失败。
+
+## 顺带：预算 140/36 → 160/48
+
+`FriendService.GetAll` 在 60s 内实测 36-38 次 —— 读取门的语义是「成功即重置」，
+所以偷菜快路径每 1.5-3 秒一次的 `checkFriends` 每次都会真的重读好友列表。
+这频率是既有测试保护的契约（`friend-summary-backoff-baseline.test.js` 断言
+`composites` 在 3-5 且 attempts 有界），试着加 15 秒节流会挂 6 项，回滚。
+
+既然频率不能改，就让预算容下真实需求量：总量 160、单接口 48。

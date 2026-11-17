@@ -973,3 +973,19 @@
   - **模板大手术的教训**：整块切分重组两次都弄坏了嵌套（未闭合标签 → vue-tsc 报
     「所有导入未使用」）。改成三步小改（Tab → v-if → 声明式卡片）+ 每步用
     `@vue/compiler-sfc` 的 `parse()` 验证 `errors.length === 0`，才一次过。
+- 2026-11-17 **牧场整晚不运行的真因：偷菜 tick 把它饿死**。
+  - **根因**：统一调度器 `} else if (shouldSteal || stealIsDue()) { await runStealTick(); return; }`
+    —— 偷菜快路径 1.5-3 秒到期一次，`shouldSteal` 几乎恒真，每轮 tick 都在这
+    `return` 掉，排在后面的 `runFarmTick`/`runHelpTick`/`runPastureTick` 一次都轮不到。
+    **与牧场开关无关**（`pasture_refill`/`pasture_buy_animal` 当时确实是上一轮为
+    阻止花钱关掉的，但全开也照样不跑）。
+  - **修法**：删掉 `return`；三个 tick 各有 `xxxTaskRunning` 守卫不会重入。
+    回归测试 `pasture-tick-starvation.test.js` 直接查源码断言「偷菜调用后到下一个
+    else-if 之间不得有裸 return」，加回 return 立即失败（已验证）。
+  - **修后真机**：`00:11:32 买入并补栏 1 只 → 00:11:39 投喂 → 00:12:19 收获 1 只
+    + 领取牧场每日任务`，完整循环跑通。
+  - **顺带预算 140/36 → 160/48**：`GetAll` 实测 36-38 次/60s（读取门「成功即重置」，
+    偷菜快路径每 1.5-3 秒重读一次），这频率是测试保护的契约，加节流挂 6 项已回滚，
+    只能让预算容下真实需求。
+  - 顺手把 `pasture_refill` / `pasture_buy_animal` 打开（之前为阻止买入关掉，
+    导致牧场一直是空栏位 0/3，没有可操作对象）。

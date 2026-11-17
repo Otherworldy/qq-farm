@@ -1220,8 +1220,11 @@ async function runUnifiedTick() {
         nextStealRunAt = now + STEAL_IDLE_MS;
         markStealDueAt(0);
     } else if (shouldSteal || stealIsDue()) {
+        // 跑完偷菜**不能 return**：偷菜快路径每 1.5-3 秒就到期一次，
+        // shouldSteal 几乎恒为真，return 会把后面的农场/帮助/牧场 tick
+        // 全部饿死 —— 牧场就是这样整整一晚上没跑过一次。
+        // 各 tick 都有自己的 running 守卫，顺序执行不会重入。
         await runStealTick(autoConfig);
-        return;
     } else if (stealIsImminent(1500)) {
         const afterSteal = nextScheduledStealAt() + 200;
         if (nextFarmRunAt <= now) nextFarmRunAt = afterSteal;
