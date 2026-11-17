@@ -20,6 +20,7 @@ const props = defineProps<{
   settings: {
     pastureBuyStrategy: string
     pasturePreferredAnimal: number
+    pastureGrassThreshold: number
     pastureStealWhitelist: number[]
   }
 }>()
@@ -167,6 +168,30 @@ onMounted(() => {
         {{ strategyHint }}
         「经验/时」「收入/时」用牧场里真实养殖出来的数据算；没养过的动物查不到档案，
         会退回按价格挑，绝不编造数值。
+      </p>
+    </div>
+
+    <!-- 牧草机补草阈值 -->
+    <div class="mb-4">
+      <label class="mb-1 block text-xs text-gray-600 dark:text-gray-300">
+        补草阈值（牧草机存量低于该比例才自动加料）
+      </label>
+      <div class="flex items-center gap-2">
+        <input
+          v-model.number="settings.pastureGrassThreshold"
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          class="flex-1"
+        >
+        <span class="w-12 text-right text-sm tabular-nums text-gray-700 dark:text-gray-200">
+          {{ settings.pastureGrassThreshold ?? 30 }}%
+        </span>
+      </div>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        低于阈值时按缺口一次补齐。抓包确认牧草机的 count 是份数（补 1 份 = +1）。
+        100% = 一有缺口就补，0% = 只在完全空时补。
       </p>
     </div>
 

@@ -1620,3 +1620,75 @@ core/src/services/pasture-api.js
 所以「添加草料」走的是不是 `AddFeed`，目前还没有直接证据（代码里是按
 `AddFeed{facility_inst_id, count}` 实现的）。需要重抓一次：抓包开着 →
 进牧场 → 开牧草机 → 添加草料 → 停止。
+
+---
+
+# 第十四轮：牧草机补草的阈值，以及一处字段错位
+
+用户要求：「牧草机补草功能设置一个阈值，到达阈值时才会自动补充」，并提供了
+`capture/牧草机补草.har`（添加草料的抓包）。
+
+## 抓包给出的三条事实
+
+### 1. `AddFeed` 的服务名确认
+
+```
+gamepb.homesteadpb.FeedMachineService.AddFeed
+请求 { 1: facility_inst_id = 10002, 2: count = 1 }
+响应 = FeedMachineState
+```
+
+和代码里的实现一致，不需要改。
+
+### 2. `FeedMachineState` 的字段绑反了（真 bug）
+
+同一设施 `10002` 的前后两次读取：
+
+```
+补草前 GetFacilityDetail:  { 1: 99,   2: 72, 4: -1, 7: 1, 8: 3 }   FacilityDetail.capacity = 100
+AddFeed(count=1) 回包:     { 1: 100,  2: 72, 4: -1, 7: 1, 8: 3 }
+                              ↑ 只有字段 1 涨了 1，字段 2 完全没动
+```
+
+`count=1` 让**字段 1** 从 99 变成 100，所以 **字段 1 才是当前草量**。
+而 proto 原来写的是：
+
+```proto
+int32 capacity = 1;   // 实际是 current
+int32 current  = 2;   // 抓包恒为 72，语义未知
+```
+
+后果很直接：代码算 `current = 72 / capacity = 99`，永远有缺口，**每轮都想补**，
+根本不看真实存量（99/100）。真实容量在 `FacilityDetail.f14 = 100`。
+
+已按证据改正：
+
+- `FeedMachineState.current = 1`（99 → 100）
+- `FeedMachineState.unknown_2 = 2`（恒 72，不猜语义）
+- 容量改读 `FacilityDetail.capacity`（f14）
+
+### 3. `count` 是份数
+
+`count = 1` 对应 `+1`，所以补齐缺口可以用一次调用完成：`count = capacity - current`。
+之前固定 `count = 1` + 5 分钟冷却，从 30% 补到满要 70 次、约 6 小时，实际等于不补。
+
+## 阈值
+
+- 新增账号配置 `pastureGrassThreshold`，默认 **30**，范围 0–100；
+- 触发条件改为 `current / capacity * 100 <= threshold`，不再用
+  `analysis.grassLow`（那是牧场草量，不是牧草机库存，两者不是一回事）；
+- 低于阈值时**一次补齐缺口**，不再一份一份加；
+- 读设施详情有 60 秒节流（`GRASS_CHECK_INTERVAL_MS`），避免每轮 tick 都发
+  `GetFacilityDetail`；
+- 设置页给了滑块，`0%` = 只在完全空时补，`100%` = 一有缺口就补。
+
+## 测试
+
+`core/test/pasture-orchestrator.test.js` 追加 4 项：
+
+- 存量高于阈值时不加料
+- 降到阈值时一次补齐
+- 阈值 0 时只有完全空才补
+- 读设施详情有节流，不会每轮都读
+
+牧场全套 **125 项全绿**。

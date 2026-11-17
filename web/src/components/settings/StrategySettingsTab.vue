@@ -26,6 +26,7 @@ interface StrategySettings {
   preferredSeedId: number
   pastureBuyStrategy: string
   pasturePreferredAnimal: number
+  pastureGrassThreshold: number
   pastureStealWhitelist: number[]
   prioritize2x2Crops: boolean
   bagSeedPriority: number[]

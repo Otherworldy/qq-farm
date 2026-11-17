@@ -40,10 +40,15 @@ message FacilityDetail {
 }
 
 // 牧草机运转状态（FacilityDetail.21，也直接作为 AddFeed 的响应）
-//   实测：{1:99 或 100, 2:72, 4:<uint64 -1>, 7:1, 8:3}
+//
+// 字段语义由抓包（capture/牧草机补草.har）确定，不是猜的：
+//   补草前 GetFacilityDetail: {1:99,  2:72, 4:-1, 7:1, 8:3}
+//   AddFeed(count=1) 回包:    {1:100, 2:72, 4:-1, 7:1, 8:3}
+// `count=1` 让字段 1 从 99 涨到 100，字段 2 完全没动 —— 所以 **字段 1 才是当前草量**。
+// 真实容量在 FacilityDetail.capacity（f14 = 100），不在这里。
 message FeedMachineState {
-    int32 capacity = 1;        // 99 / 100
-    int32 current = 2;         // 72 —— 当前草量
+    int32 current = 1;         // 当前草量：99 → 100（AddFeed count=1 加 1）
+    int32 unknown_2 = 2;       // 抓包恒为 72，两次样本都没变，语义未知
     int32 reserved = 3;
     int64 unknown_4 = 4;       // 抓包为 18446744073709552000（uint64 -1）
     int32 speed_level = 7;     // 1

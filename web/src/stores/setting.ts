@@ -112,6 +112,7 @@ export interface SettingsState {
   preferredSeedId: number
   pastureBuyStrategy?: string
   pasturePreferredAnimal?: number
+  pastureGrassThreshold?: number
   pastureStealWhitelist?: number[]
   prioritize2x2Crops: boolean
   bagSeedPriority: number[]
@@ -183,6 +184,7 @@ export const useSettingStore = defineStore('setting', () => {
     preferredSeedId: 0,
     pastureBuyStrategy: 'cheapest',
     pasturePreferredAnimal: 0,
+    pastureGrassThreshold: 30,
     pastureStealWhitelist: [],
     prioritize2x2Crops: false,
     bagSeedPriority: [],
@@ -221,6 +223,7 @@ export const useSettingStore = defineStore('setting', () => {
       plantingStrategy: 'max_exp',
       preferredSeedId: 0,
     pasturePreferredAnimal: 0,
+    pastureGrassThreshold: 30,
     pastureStealWhitelist: [],
       prioritize2x2Crops: false,
       bagSeedPriority: [],

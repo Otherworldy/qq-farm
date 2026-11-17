@@ -422,6 +422,9 @@ const DEFAULT_ACCOUNT_CONFIG = {
     // 偷好友牧场产物时只偷这些动物（按货架 lot 的 animal_id 判断）。
     // 空数组 = 不限制，与农场 stealWhitelist 语义一致。
     pastureStealWhitelist: [],
+    // 牧草机补草阈值（百分比）：设施存量降到该比例及以下才自动加料。
+    // 100 = 一有缺口就补；0 = 只在完全空时补。抓包确认 AddFeed 的 count 就是份数。
+    pastureGrassThreshold: 30,
     friendBadRetryDate: '',
     intervals: DEFAULT_INTERVALS,
     friendQuietHours: DEFAULT_QUIET_HOURS,
@@ -686,6 +689,7 @@ function cloneAccountConfig(config = DEFAULT_ACCOUNT_CONFIG) {
         pasturePreferredAnimal: Math.max(0, Number.parseInt(config.pasturePreferredAnimal, 10) || 0),
         pastureStealWhitelist: (Array.isArray(config.pastureStealWhitelist) ? config.pastureStealWhitelist : [])
             .map(Number).filter(n => Number.isFinite(n) && n > 0),
+        pastureGrassThreshold: normalizeGrassThreshold(config.pastureGrassThreshold),
         prioritize2x2Crops: config.prioritize2x2Crops === true,
         plantBlacklist: plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
         stealWhitelist: stealWhitelist.map(Number).filter(n => Number.isFinite(n) && n > 0),
@@ -812,6 +816,9 @@ function normalizeAccountConfig(raw, fallbackConfig = accountFallbackConfig) {
     if (Array.isArray(input.pastureStealWhitelist)) {
         cfg.pastureStealWhitelist = input.pastureStealWhitelist
             .map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+    if (input.pastureGrassThreshold !== undefined && input.pastureGrassThreshold !== null) {
+        cfg.pastureGrassThreshold = normalizeGrassThreshold(input.pastureGrassThreshold);
     }
     if (input.prioritize2x2Crops !== undefined && input.prioritize2x2Crops !== null) {
         cfg.prioritize2x2Crops = input.prioritize2x2Crops === true;
@@ -1885,6 +1892,17 @@ function setPlantBlacklist(accountId, blacklist) {
     return [...cfg.plantBlacklist];
 }
 
+/** 补草阈值：0-100 的整数百分比，非法值回落到默认 30。 */
+function normalizeGrassThreshold(value) {
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n)) return DEFAULT_ACCOUNT_CONFIG.pastureGrassThreshold;
+    return Math.min(100, Math.max(0, n));
+}
+
+function getPastureGrassThreshold(accountId) {
+    return getAccountConfigSnapshot(accountId).pastureGrassThreshold;
+}
+
 function getPastureBuyStrategy(accountId) {
     return getAccountConfigSnapshot(accountId).pastureBuyStrategy;
 }
@@ -2531,6 +2549,7 @@ module.exports = {
     setPlantBlacklist,
     getStealWhitelist,
     getPastureBuyStrategy,
+    getPastureGrassThreshold,
     getPasturePreferredAnimal,
     getPastureStealWhitelist,
     setStealWhitelist,

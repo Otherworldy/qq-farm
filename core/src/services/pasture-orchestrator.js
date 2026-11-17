@@ -14,7 +14,7 @@
 
 const { getUserState, isConnected } = require('../utils/network');
 const { toNum, log, logWarn } = require('../utils/utils');
-const { isAutomationOn, getAutomation, getPasturePreferredAnimal, getPastureBuyStrategy } = require('../models/store');
+const { isAutomationOn, getAutomation, getPasturePreferredAnimal, getPastureBuyStrategy, getPastureGrassThreshold } = require('../models/store');
 const { recordEvent } = require('./daily-events');
 const {
     getRanchDetail,
@@ -54,6 +54,9 @@ let lastFeedMachineAtMs = 0;
 let feedMachineInstId = FEED_MACHINE_FACILITY_ID === 7001001 ? 10002 : 0;
 /** 补草冷却：同一台牧草机 5 分钟内不重复补 */
 const FEED_MACHINE_COOLDOWN_MS = 5 * 60_000;
+// 牧草机存量检查间隔：阈值判断需要读设施详情，不能每轮 tick 都读
+const GRASS_CHECK_INTERVAL_MS = 60_000;
+let lastGrassCheckAtMs = 0;
 /** 牧场货币（卖产物的结算单位，抓包实测 expected_*_sells 的 id） */
 const PASTURE_CURRENCY_ID = 1007;
 /**
@@ -388,9 +391,10 @@ async function performRefillSlots(analysis) {
  * 分两步：先确认设施实例（拿当前草量），再按缺口补。
  */
 async function performRefillGrass(analysis) {
-    if (!analysis.grassLow) return 0;
     const now = Date.now();
+    if (now - lastGrassCheckAtMs < GRASS_CHECK_INTERVAL_MS) return 0;
     if (now - lastFeedMachineAtMs < FEED_MACHINE_COOLDOWN_MS) return 0;
+    lastGrassCheckAtMs = now;
 
     // 第一次不知道实例 ID 时，从建筑列表里找
     if (!feedMachineInstId) {
@@ -408,22 +412,30 @@ async function performRefillGrass(analysis) {
 
     try {
         const detail = await getFacilityDetail(feedMachineInstId);
-        const state = detail && detail.detail && detail.detail.feed_machine;
+        const facility = detail && detail.detail;
+        const state = facility && facility.feed_machine;
+        // 抓包（牧草机补草.har）确认：FeedMachineState.f1 是当前草量
+        //（AddFeed count=1 让它 99 → 100），真实容量在 FacilityDetail.f14。
         const current = toNum(state && state.current);
-        const capacity = toNum(state && state.capacity) || 100;
+        const capacity = toNum(facility && facility.capacity) || 100;
         const gap = Math.max(0, capacity - current);
         if (gap <= 0) return 0;
-        // 一次只补 1 份（抓包里 count=1 对应一批），避免把库存打空
-        await addFeed(feedMachineInstId, 1);
+
+        // 阈值：存量百分比高于阈值就不补，避免一有缺口就加料
+        const threshold = getPastureGrassThreshold();
+        const percent = capacity > 0 ? Math.round((current / capacity) * 100) : 0;
+        if (percent > threshold) return 0;
+
+        // 补满：AddFeed 的 count 是份数（抓包 count=1 → +1），一次补齐缺口
+        await addFeed(feedMachineInstId, gap);
         lastFeedMachineAtMs = now;
-        logPasture(`牧草机补草 1 份（当前 ${current}/${capacity}）`, {
-            event: '牧场补草',
-            current,
-            capacity,
-        });
-        noteEvent('info', `牧场牧草机补草（${current}/${capacity}）`);
-        recordOperation('pastureGrass', 1);
-        return 1;
+        logPasture(
+            `牧草机补草 ${gap} 份（${current}/${capacity} = ${percent}%，阈值 ${threshold}%）`,
+            { event: '牧场补草', current, capacity, gap, percent, threshold }
+        );
+        noteEvent('info', `牧场牧草机补草 ${gap} 份（${percent}% → 满）`);
+        recordOperation('pastureGrass', gap);
+        return gap;
     } catch (err) {
         if (!isTransientNetworkError(err)) {
             logWarn('牧场', `补草失败: ${err.message}`);
@@ -524,7 +536,9 @@ async function runPastureOperation(opType = 'all') {
         const r = await performRefillSlots(analysis);
         if (r) actions.push('refill_slots');
     }
-    if (want('grass', 'pasture_grass') && analysis.grassLow) {
+    // 触发条件在 performRefillGrass 内部按牧草机存量百分比判断（阈值可配），
+    // 不能再用 analysis.grassLow —— 那是牧场草量，不是牧草机库存。
+    if (want('grass', 'pasture_grass')) {
         const r = await performRefillGrass(analysis);
         if (r) actions.push('refill_grass');
     }
@@ -593,6 +607,7 @@ function resetPastureStateForTests() {
     isFirstPastureCheck = true;
     lastNextReadyAtMs = 0;
     lastFeedMachineAtMs = 0;
+    lastGrassCheckAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
     lastProduceAtMs = 0;
     strokedAtMs.clear();

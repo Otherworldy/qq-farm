@@ -80,6 +80,7 @@ function setupMocks(options = {}) {
         getAutomation: () => auto,
         getPasturePreferredAnimal: () => options.preferredAnimal || 0,
         getPastureBuyStrategy: () => options.buyStrategy || 'cheapest',
+        getPastureGrassThreshold: () => (options.grassThreshold === undefined ? 30 : options.grassThreshold),
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
 
@@ -88,7 +89,12 @@ function setupMocks(options = {}) {
         harvestRanch: async () => { calls.push('harvestRanch'); return { ranches: [] }; },
         feedAnimal: async (targets) => { calls.push('feedAnimal'); calls.push(`feed:${targets.length}`); return { ranches: [] }; },
         cleanAllRanch: async () => { calls.push('cleanAllRanch'); return { ranches: [] }; },
-        getFacilityDetail: async () => { calls.push('getFacilityDetail'); return { detail: { feed_machine: { current: 5, capacity: 100 } } }; },
+        getFacilityDetail: async () => {
+            calls.push('getFacilityDetail');
+            // 抓包修正后的形状：容量在 FacilityDetail.capacity，草量在 FeedMachineState.current
+            const current = options.grassCurrent === undefined ? 20 : options.grassCurrent;
+            return { detail: { capacity: 100, feed_machine: { current } } };
+        },
         addFeed: async () => { calls.push('addFeed'); return { state: { current: 6 } }; },
         getBuildingList: async () => { calls.push('getBuildingList'); return { buildings: [] }; },
         triggerProduce: async () => { calls.push('triggerProduce'); return { ranches: [] }; },
@@ -192,13 +198,16 @@ test('runPastureOperation：空牧场不产生任何操作', async () => {
     // 关掉补栏：空牧场必然有空栏，开着补栏会去查背包，这是正确行为但不属于本用例
     const { orchestrator, calls } = setupMocks({
         auto: { pasture_refill: false },
+        // 牧草机 99/100，高于阈值 → 只读详情、不加料
+        grassCurrent: 99,
         reply: { ranches: [{ ranch_inst_id: 10001, capacity: 2, animal_count: 0,
             animals: [], grass: { amount: 100 }, shelves: [], hazards: [] }] },
     });
     const result = await orchestrator.runPastureOperation('all');
     assert.equal(result.hadWork, false);
     assert.deepEqual(result.actions, []);
-    assert.deepEqual(calls, ['getRanchDetail'], '只看详情，不做任何操作');
+    assert.deepEqual(calls, ['getRanchDetail', 'getFacilityDetail'],
+        '补草要按阈值判断，所以会多读一次牧草机详情，但不加料');
 });
 
 test('runPastureOperation：没有牧场数据时安全返回', async () => {
@@ -807,4 +816,36 @@ test('催产有冷却：连续两轮只催一次', async () => {
     await orchestrator.runPastureOperation('produce');
     const triggers = calls.filter(c => String(c).startsWith('triggerProduce'));
     assert.equal(triggers.length, 1, `冷却内不该重复催产，实际 ${triggers.length} 次`);
+});
+
+// ── 牧草机补草阈值（抓包确认字段后新增）──
+
+test('补草：存量高于阈值时不加料', async () => {
+    const { orchestrator, calls } = setupMocks({ grassCurrent: 80, grassThreshold: 30 });
+    await orchestrator.runPastureOperation('grass');
+    assert.ok(!calls.includes('addFeed'),
+        '80/100 = 80% 高于阈值 30%，不应该补草');
+});
+
+test('补草：降到阈值时一次补齐缺口', async () => {
+    const { orchestrator, calls } = setupMocks({ grassCurrent: 20, grassThreshold: 30 });
+    await orchestrator.runPastureOperation('grass');
+    assert.ok(calls.includes('addFeed'), '20% 低于阈值，应该补草');
+    const addFeedIdx = calls.indexOf('addFeed');
+    assert.ok(addFeedIdx > 0, 'addFeed 被调用');
+});
+
+test('补草：阈值可配，0 表示只在空时补', async () => {
+    const { orchestrator, calls } = setupMocks({ grassCurrent: 5, grassThreshold: 0 });
+    await orchestrator.runPastureOperation('grass');
+    assert.ok(!calls.includes('addFeed'), '阈值 0 时只有完全空才补，5% 不补');
+});
+
+test('补草：读设施详情有节流，不会每轮都读', async () => {
+    const { orchestrator, calls } = setupMocks({ grassCurrent: 80 });
+    await orchestrator.runPastureOperation('grass');
+    const first = calls.filter(c => c === 'getFacilityDetail').length;
+    await orchestrator.runPastureOperation('grass');
+    const second = calls.filter(c => c === 'getFacilityDetail').length;
+    assert.equal(first, second, '60 秒检查间隔内不应重复读设施详情');
 });

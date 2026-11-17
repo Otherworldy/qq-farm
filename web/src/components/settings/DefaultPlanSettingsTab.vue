@@ -53,6 +53,7 @@ function createStrategySettings() {
     preferredSeedId: 0,
     pastureBuyStrategy: 'cheapest',
     pasturePreferredAnimal: 0,
+    pastureGrassThreshold: 30,
     pastureStealWhitelist: [],
     prioritize2x2Crops: false,
     bagSeedPriority: [] as number[],

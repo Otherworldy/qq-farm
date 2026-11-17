@@ -1136,3 +1136,17 @@
   - **待补**：`capture/…_14_03_16.har`（添加草料）只有 3820 字节，`log.entries`
     仅 1 条 telemetry POST、`_webSocketMessages` 为 0 —— **没抓到游戏 WS 帧**，
     需要重抓才能确认「添加草料」走的是 `AddFeed`。
+- 2026-11-17 **牧草机补草阈值 + 修正 `FeedMachineState` 字段错位**。
+  - 用户要求「到阈值才自动补充」，并提供 `capture/牧草机补草.har`。
+  - **抓包确认服务名**：`gamepb.homesteadpb.FeedMachineService.AddFeed`，
+    请求 `{1:facility_inst_id=10002, 2:count=1}`，响应 `FeedMachineState` —— 与代码一致。
+  - **抓出一处真 bug**：补草前 `{1:99, 2:72}`，`AddFeed(count=1)` 后 `{1:100, 2:72}`，
+    **只有字段 1 涨了 1** → 字段 1 才是当前草量；proto 原来把 `capacity=1 / current=2`
+    写反了，导致代码算 `72/99` 永远有缺口、**每轮都想补**。容量实际在
+    `FacilityDetail.f14 = 100`。已改正为 `current=1`、`unknown_2=2`（不猜语义）。
+  - **`count` 是份数**（count=1 → +1），所以补齐缺口可一次完成 `count = capacity - current`；
+    原来固定 count=1 + 5 分钟冷却，从 30% 补满要 ~6 小时，等于不补。
+  - **阈值**：新增账号配置 `pastureGrassThreshold`（默认 30，0–100），触发条件改为
+    `current/capacity*100 <= threshold`，不再用 `analysis.grassLow`（那是牧场草量，
+    不是牧草机库存）。读设施详情加 60 秒节流。设置页给滑块。
+  - 测试追加 4 项（高于阈值不补 / 降到阈值补齐 / 阈值 0 / 读取节流），牧场全套 **125 项全绿**。
