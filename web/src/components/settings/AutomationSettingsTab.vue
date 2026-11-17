@@ -182,7 +182,7 @@ const mysteryShopSettingsVisible = ref(false)
         <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
           <BaseSwitch v-model="settings.automation.pasture" label="牧场巡查" />
           <BaseSwitch v-model="settings.automation.pasture_harvest" label="自动收获（含货架）" />
-          <BaseSwitch v-model="settings.automation.pasture_feed" label="自动投喂" />
+          <BaseSwitch v-model="settings.automation.pasture_feed" label="自动投喂（feed_type 未经验证，可能消耗道具）" />
           <BaseSwitch v-model="settings.automation.pasture_clean" label="自动清理灾害" />
           <BaseSwitch v-model="settings.automation.pasture_produce" label="自动开工生产（消耗催产罐头）" />
           <BaseSwitch v-model="settings.automation.pasture_stroke" label="自动抚摸（推进产出）" />

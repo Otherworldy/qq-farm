@@ -131,7 +131,9 @@ message FeedAnimalTarget {
 }
 message FeedAnimalRequest {
     repeated FeedAnimalTarget targets = 1;
-    int32 feed_type = 2;      // 抓到的取值 1 / 2（草料 vs 道具，未定）
+    int32 feed_type = 2;      // 未验证：官方 HAR 里 FeedAnimal 出现 0 次，1/2 哪个是草料
+                              // 哪个是消耗道具没有证据。代码默认传 1 只是沿用早期猜测，
+                              // 在抓到一次正常投喂之前不要开自动投喂。
 }
 message FeedAnimalReply {
     repeated RanchInfo ranches = 1;

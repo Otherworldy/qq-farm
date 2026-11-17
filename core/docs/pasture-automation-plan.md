@@ -1546,3 +1546,46 @@ stage 5 → 出栏 → 补栏 → 再催）。
 
 关掉之后动物仍会自然成长（`stage 2 → stage 3`），只是不会主动催熟。要产蛋就得
 自己按，或者打开这个开关。
+
+---
+
+# 第十三轮：feed_type 是猜的，自动投喂默认关
+
+用户反馈「自动喂罐头了」，并直接问接口是不是搞错了。查证结果：**是。**
+
+```
+core/src/proto/pasturepb.proto
+    int32 feed_type = 2;   // 早期注释就写着「抓到的取值 1 / 2（草料 vs 道具，未定）」
+
+core/src/services/pasture-api.js
+    async function feedAnimal(targets, feedType = 1)   // 猜了 1
+```
+
+- 两份官方 HAR（`galileotelemetry…08_21_50.har`、`api.anticheatexpert…09_14_54.har`）
+  里 **`FeedAnimal` 出现 0 次**，没有任何样本可以参考；
+- 背包 `7004` 以约 **-35/100s** 的速度减少，当天投喂累计 **470 次**；
+- 也就是说如果 `1` 落在「道具」那一侧，投喂一直在花玩家的资源。
+
+这和 `TriggerProduce` 是同一类错误：**没有证据就选了参数**。
+
+## 改动
+
+- `pasture_feed` 默认 `true → false`（`store.js`、`useAutomationSettings.ts`、
+  `DefaultPlanSettingsTab.vue`），设置页文案改成
+  「自动投喂（feed_type 未经验证，可能消耗道具）」；
+- `proto` 注释改成明确的未验证警告，不再用「未定」这种模糊说法；
+- 账号侧已通过 `POST /api/automation` 推送 `pasture_feed: false`、
+  `pasture_produce: false`，日志确认两者均为 0 次。
+
+## 现在牧场还保留什么
+
+不花资源的动作照旧：收获 / 捡蛋、清理灾害、抚摸、补栏（补栏花的是牧场币，
+不是道具）。动物仍会自然成长（`stage 2 → stage 3`），只是不会主动催熟或投喂。
+
+## 要恢复投喂，需要一次抓包
+
+在游戏里手动投喂一次，抓下 `FeedAnimal` 的请求与响应：
+
+1. 确认 `feed_type` 取 1 还是 2 才是免费草料；
+2. 对比投喂前后背包，确认到底扣的是哪个物品（`7004`？还是别的）；
+3. 拿到样本再决定默认值，不再靠猜。

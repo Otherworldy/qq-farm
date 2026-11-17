@@ -1109,3 +1109,18 @@
     跑 `chkdsk /f` 并重启后再删孤立目录。
   - 账号一度是 `autoLogin: false`（「已设为不登录」），已用
     `POST /api/accounts/1/relogin` 直接登录恢复，牧场 3/3 栏位正常。
+- 2026-11-17 **`feed_type` 是猜的：自动投喂默认关**。
+  - 用户反馈「自动喂罐头」并问接口是不是搞错 —— **是**。`pasture-api.js` 的
+    `feedAnimal(targets, feedType = 1)` 默认值来自早期猜测，`proto` 注释自己写着
+    「1 / 2（草料 vs 道具，未定）」；两份官方 HAR 里 **`FeedAnimal` 出现 0 次**，
+    完全没有依据。
+  - 旁证：背包 `7004` 约 **-35/100s** 在掉，当天投喂 **470 次** —— 若 `1` 是道具
+    那一侧，就是一直在花玩家资源。与 `TriggerProduce` 同类错误：没证据就选参数。
+  - `pasture_feed` 默认 `true → false`（store.js / useAutomationSettings.ts /
+    DefaultPlanSettingsTab.vue），文案改「自动投喂（feed_type 未经验证，可能消耗道具）」；
+    proto 注释改成明确的未验证警告。账号侧已推 `pasture_feed:false` + `pasture_produce:false`，
+    日志确认均为 0 次。
+  - 牧场仍保留不花资源的动作：收获/捡蛋、清理、抚摸、补栏（花牧场币）。动物仍会
+    自然成长（stage 2 → stage 3），只是不主动催熟/投喂。
+  - **恢复投喂需要一次「手动投喂」抓包**：确认 `feed_type` 哪个值是免费草料，并对比
+    投喂前后背包确认扣的是哪个物品。

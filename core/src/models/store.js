@@ -277,7 +277,9 @@ const DEFAULT_AUTOMATION = {
     // 触发生产：让到了生产阶段的动物进入产出周期（实测动物会留在栏位）
     // TriggerProduce 是催产，要消耗催产罐头 —— 默认不自动花，需要的人自己开
     pasture_produce: false,
-    pasture_feed: true,
+    // FeedAnimal 的 feed_type 无抓包依据（官方 HAR 里 0 次调用），可能是消耗道具
+    // 而不是免费草料。在有证据前不自动投喂，避免替玩家花资源。
+    pasture_feed: false,
     pasture_clean: true,
     pasture_stroke: true,
     pasture_refill: true,
