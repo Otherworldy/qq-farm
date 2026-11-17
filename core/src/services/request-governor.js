@@ -9,17 +9,28 @@
  */
 
 const WINDOW_MS = 60 * 1000;
-// 预算 40/15 → 80/30 → 110/30 → 120/36 → 140/36 → 160/48。
-// 80 是农场单端时代的数字。现在同一账号还要跑牧场、牧场任务和仓库，
-// 而好友巡查本身就要「好友数 ×（GetAll + Enter + Leave）」：34 个好友 102 次。
-// 更关键的是偷菜快路径每 1.5-3 秒就 checkFriends 一次，而读取门的语义是
-// 「成功即重置」，所以好友列表会被高频重读 —— 实测 GetAll 60s 内 36-38 次，
-// 旧的单接口 36 正好卡在这里，每次溢出都会挤掉牧场和任务扫描。
-// 这两处频率都是既有测试保护的既有契约（每次 tick 都要尝试读取），
-// 不能为省预算而改；只能让预算容下真实需求量。
-// 160/48 仍然远低于异常风暴量级。
-const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 160;
-const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 48;
+// 预算基准来自官方客户端实测，不再是「撞到就调高」拍出来的数字。
+//
+// 用 core/scripts/analyze-har-rate.js 分析一份官方客户端 HAR（Windows 微信
+// 小游戏 1.17.0.3_20261117，正常游玩 160 秒），游戏 WebSocket 的实数是：
+//
+//   启动 30s 内   123 次 = 246 次/分钟
+//   30s 后稳态    246 次 = 113 次/分钟
+//   60s 窗口峰值  278 次
+//   单接口峰值    PutWeeds 55、PutInsects 45、GetGameFriends 20、
+//                 Enter/Leave 各 16、GetRanchDetail 9
+//
+// 也就是说官方自己就能在一分钟内发出 278 个请求，且账号没有任何异常。
+// 所以护栏的上限只要不显著超过这个量级就是安全的；反过来，把上限压到
+// 官方稳态（113）以下会拦掉我们自己的正常业务。
+//
+// 取值：总量 200 = 官方稳态的 1.8 倍、官方峰值的 72%；
+//       单接口 55 = 官方实测最高单接口峰值。
+//
+// 历史沿革（都是没有基准时拍的，保留只为说明为什么现在不这么干）：
+//   40/15 → 80/30 → 110/30 → 120/36 → 140/36 → 160/48 → 200/55
+const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 200;
+const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 55;
 // 白名单：防封兜底与核心链路的关键请求不受预算限制（仍计入画像）
 // AntiData 是官方客户端固定节奏的 ACE 风控上报；心跳是 userpb.UserService.Heartbeat
 const WHITELIST = new Set([

@@ -38,3 +38,4 @@ private-config.json
 *.key
 *.p12
 *.pfx
+capture/
