@@ -100,3 +100,57 @@ HAR 含登录 code 和 gid，**不提交**。只提交 `analyze-har-rate.js`、
 `CollectProduce` 服务端始终返回 `1020002`（已穷举字段组合同样结果），
 所以货架产物只能留给用户进游戏手动收。日志已改为「数量变化才记一条」，
 否则 7-10 秒一轮会把它刷满。
+
+---
+
+# 单接口限额也要有基准：好友巡查独占预算的教训
+
+上一轮把总量定成 200 / 单接口 55 之后，真机日志仍然持续报拦截：
+
+```
+FriendService.GetAll×55
+VisitService.Enter×49
+VisitService.Leave×49
+PlantService.AllLands×12   ← 农场读地块
+TaskService.TaskInfo×11
+AnimalService.GetRanchDetail×7
+```
+
+三件套合计 **153/200，占掉七成六**，实际后果是：
+
+- `农场常规施肥：获取土地信息失败…请求被治理器拦截(budget_total): AllLands`
+- `任务检查任务失败: 请求被治理器拦截(budget_total): TaskInfo`
+- `系统获取全农场地块失败: 请求被治理器拦截(budget_total): AllLands`
+
+## 原因
+
+`PER_METHOD_LIMIT = 55` 是**所有方法共用一个上限**。55 这个值来自官方最高单接口
+峰值 `PutWeeds` 55/60s，但官方那个 55 只属于除草。好友巡查在官方客户端里是：
+
+| 接口 | 官方实测 | 我们允许 | 实际发出 |
+|---|---|---|---|
+| `GetGameFriends`（我们的 `GetAll`）| **20** | 55 | 55 |
+| `Enter` | **16** | 55 | 49 |
+| `Leave` | **16** | 55 | 49 |
+
+**我们给了好友巡查近三倍于官方的额度**，它自然就吃满了。
+
+## 修法
+
+`core/src/services/request-governor.js` 增加按方法限额表：
+
+```js
+const METHOD_LIMITS = new Map([
+    ['gamepb.friendpb.FriendService.GetAll', 20],
+    ['gamepb.visitpb.VisitService.Enter', 16],
+    ['gamepb.visitpb.VisitService.Leave', 16],
+]);
+```
+
+其余接口仍用 `PER_METHOD_LIMIT`（55）。施肥 HOT 窗口的 ×3 放宽保留，
+作用在各自的基础限额上。
+
+重算总量：好友巡查最高 52，总预算 200 还剩 148 给农场 + 牧场，而它们的实际
+用量是 `AllLands 12 + TaskInfo 11 + GetRanchDetail 7 + Bag 8 ≈ 40`，宽裕。
+
+测试 `core/test/har-rate-baseline.test.js` 里锁住这三个值，改动必须同步改测试。

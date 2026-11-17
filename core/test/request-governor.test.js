@@ -15,9 +15,10 @@ const activityRouteSrc = fs.readFileSync(
 
 test('total budget drops non-whitelisted requests beyond the 60s limit', () => {
     governor.resetForTest();
+    // 轮换 8 个方法名：200/8 = 25 次，低于单接口限额，确保先撞的是总预算而不是单接口
     for (let i = 0; i < governor.TOTAL_LIMIT; i++) {
-        assert.equal(governor.checkRequest('svc.Farm', `Do${i % 3}`, T0).allowed, true);
-        governor.recordSent('svc.Farm', `Do${i % 3}`, true, T0);
+        assert.equal(governor.checkRequest('svc.Farm', `Do${i % 8}`, T0).allowed, true);
+        governor.recordSent('svc.Farm', `Do${i % 8}`, true, T0);
     }
     const over = governor.checkRequest('svc.Farm', 'Extra', T0 + 1000);
     assert.equal(over.allowed, false);
@@ -197,8 +198,10 @@ test('repeated failures activate advisory slowdown without rejecting requests', 
 
 test('watch mode boosts Enter/AllLands per-method limit inside the window only', () => {
     governor.resetForTest();
-    // 填满普通单接口限值
-    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+    // 填满 Enter 自己的基础限额（按官方基准 16，不等于通用单接口上限 55）
+    const enterLimit = governor.methodLimitBase('gamepb.visitpb.VisitService.Enter');
+    assert.equal(enterLimit, 16, 'Enter 按官方基准 16/60s');
+    for (let i = 0; i < enterLimit; i++) {
         governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
     }
     assert.equal(governor.checkRequest('gamepb.visitpb.VisitService', 'Enter', T0 + 500).allowed, false);
@@ -324,7 +327,8 @@ test('hasBudget keeps whitelist, urgent and watch-mode semantics', () => {
     assert.equal(governor.hasBudget(T0, 0, 'gamepb.plantpb.PlantService', 'Harvest'), true, '偷菜白名单不受单接口限值');
 
     governor.resetForTest();
-    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+    const enterCap = governor.methodLimitBase('gamepb.visitpb.VisitService.Enter');
+    for (let i = 0; i < enterCap; i++) {
         governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
     }
     governor.setUrgentMode(true, T0 + 15_000);
@@ -332,7 +336,7 @@ test('hasBudget keeps whitelist, urgent and watch-mode semantics', () => {
     governor.setUrgentMode(false);
 
     governor.resetForTest();
-    for (let i = 0; i < governor.PER_METHOD_LIMIT; i++) {
+    for (let i = 0; i < enterCap; i++) {
         governor.recordSent('gamepb.visitpb.VisitService', 'Enter', true, T0);
     }
     governor.setWatchMode(true, T0 + 600_000);
@@ -431,7 +435,8 @@ test('budget drop diagnostics emit once per window and accumulate between emits'
 test('dispatch guards pair each method with its real service', () => {
     const src = fs.readFileSync(
         path.join(__dirname, '..', 'src', 'services', 'friend-orchestrator.js'), 'utf8');
-    const guards = [...src.matchAll(/hasBudget\(Date\.now\(\), 0,\s*\n?\s*(guardReusesPreEnter \? '([^']+)' : '([^']+)'),\s*\n?\s*(guardReusesPreEnter \? '([^']+)' : '([^']+)')\)/g)];
+    // headroom 由字面量 0 改成了 STEAL_/PATROL_BUDGET_HEADROOM，正则要跟着放宽
+    const guards = [...src.matchAll(/hasBudget\(Date\.now\(\), [A-Z_]+,\s*\n?\s*(guardReusesPreEnter \? '([^']+)' : '([^']+)'),\s*\n?\s*(guardReusesPreEnter \? '([^']+)' : '([^']+)')\)/g)];
     assert.equal(guards.length, 3, '两处偷菜派发 + 抢收快路径 + 摘要后主循环，共 3 处');
     for (const guard of guards) {
         assert.equal(guard[2], 'gamepb.plantpb.PlantService', 'CheckCanOperate 的服务名');

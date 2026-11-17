@@ -31,6 +31,29 @@ const WINDOW_MS = 60 * 1000;
 //   40/15 → 80/30 → 110/30 → 120/36 → 140/36 → 160/48 → 200/55
 const TOTAL_LIMIT = Number(process.env.FARM_REQUEST_LIMIT_60S) || 200;
 const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 55;
+
+/**
+ * 单接口限额（按官方实测基准，见 core/docs/request-governor-baseline.md）。
+ *
+ * 用一个统一的 55 会让好友巡查三件套同时吃满 55 + 55 + 55 = 165，把总预算 200
+ * 的八成占掉 —— 农场的 AllLands / TaskInfo 和牧场的 GetRanchDetail 就全被
+ * `budget_total` / `budget_method` 拒掉，表现出来是施肥跳过、任务检查失败、
+ * 牧场详情读不到。
+ *
+ * 官方客户端自己不是这么发的：GetGameFriends 只有 20/60s、Enter/Leave 各
+ * 16/60s，真正高频的是除草除虫（PutWeeds 55 是全场最高峰值）。所以只把
+ * 好友巡查压回官方量级，其余接口仍按 55 的通用上限。
+ */
+const METHOD_LIMITS = new Map([
+    ['gamepb.friendpb.FriendService.GetAll', 20],
+    ['gamepb.visitpb.VisitService.Enter', 16],
+    ['gamepb.visitpb.VisitService.Leave', 16],
+]);
+
+/** 该接口的基础限额：优先按方法表，否则用通用单接口上限。 */
+function methodLimitBase(key) {
+    return METHOD_LIMITS.get(key) || PER_METHOD_LIMIT;
+}
 // 白名单：防封兜底与核心链路的关键请求不受预算限制（仍计入画像）
 // AntiData 是官方客户端固定节奏的 ACE 风控上报；心跳是 userpb.UserService.Heartbeat
 const WHITELIST = new Set([
@@ -152,8 +175,8 @@ function checkRequest(serviceName, methodName, now = Date.now()) {
     }
     // 施肥 HOT 内的进门/读地块放宽单接口限值。
     const methodLimit = WATCHMODE_METHODS.has(key) && watchModeActive(now)
-        ? PER_METHOD_LIMIT * WATCHMODE_BOOST
-        : PER_METHOD_LIMIT;
+        ? methodLimitBase(key) * WATCHMODE_BOOST
+        : methodLimitBase(key);
     const methodCount = windowEvents.filter(e => e.key === key).length;
     if (methodCount >= methodLimit) {
         droppedTotal++;
@@ -191,8 +214,8 @@ function hasBudget(now = Date.now(), headroom = 0, serviceName = '', methodName 
     if (windowEvents.length >= Math.max(1, totalLimit - reserve)) return false;
     if (!key) return true;
     const methodLimit = WATCHMODE_METHODS.has(key) && watchModeActive(now)
-        ? PER_METHOD_LIMIT * WATCHMODE_BOOST
-        : PER_METHOD_LIMIT;
+        ? methodLimitBase(key) * WATCHMODE_BOOST
+        : methodLimitBase(key);
     return windowEvents.filter(e => e.key === key).length < methodLimit;
 }
 
@@ -386,4 +409,6 @@ module.exports = {
     WINDOW_MS,
     TOTAL_LIMIT,
     PER_METHOD_LIMIT,
+    METHOD_LIMITS,
+    methodLimitBase,
 };
