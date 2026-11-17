@@ -226,10 +226,19 @@ message GetRanchOpTimesReply {
 }
 
 // 收取副产品（货架上的蛋/奶）。
+//
 // 官方文档「牧场操作 RPC」给出方法名 collectProduce → CollectProduce，
 // 但请求体至今没有抓包样本，mcboot 与主包里也只有混淆后的调用。
 // 这里先按空消息定义，只用来做一次可验证实验：发出去看服务端是成功还是报错。
-// 一旦拿到真实样本，把字段补到 CollectProduceRequest 上。
+//
+// 2026-11-17 更新：对一份 369 帧的官方客户端 HAR（Windows 微信 1.17.0.3，
+// 160 秒正常游玩）做过完整扫描，**没有出现 CollectProduce**，也没有
+// HarvestRanch / TriggerProduce / FeedAnimal / PlaceAnimal —— 那次游玩在牧场
+// 只做了「查看、清理、抚摸、放灾害、给喂食机加草料」。
+// 同一份抓包确认了服务归类的实际分工：
+//   animalpb.AnimalService  → GetRanchDetail
+//   animalpb.RanchService   → CleanAllRanch / StrokeAnimal / PutHazard / GetRanchOpTimes
+// 所以真的要收产物时，需要一次明确点了「收取副产品」的抓包。
 message CollectProduceRequest {
     // 实验：参照 HarvestRanch / GetRanchDetail 都用 ranch_inst_ids，先试字段 1
     repeated int64 ranch_inst_ids = 1;
