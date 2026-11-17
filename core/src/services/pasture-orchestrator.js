@@ -64,6 +64,31 @@ const PASTURE_CURRENCY_ID = 1007;
  */
 const BUY_ANIMAL_FAIL_COOLDOWN_MS = 10 * 60_000;
 let lastBuyAnimalFailAtMs = 0;
+/**
+ * 催产冷却。
+ *
+ * `TriggerProduce` 不是「开始生产」而是**催熟**：真机实测催一次之后动物很快
+ * 从 stage 3 走到 stage 5（可收获），于是立刻被收出栏、栏位变空、又要买新的 ——
+ * 40-90 秒就重复一次「买 → 催 → 收 → 买」，看起来就是「一直在买动物」。
+ *
+ * 官方客户端 160 秒的正常游玩里只按了 2 次催产，动物从头到尾停在 stage 3。
+ * 所以这里加冷却，让动物在产出生阶段待够时间，而不是被反复催熟。
+ */
+const PRODUCE_COOLDOWN_MS = 5 * 60_000;
+let lastProduceAtMs = 0;
+/**
+ * 可收获动物的出栏等待期。
+ *
+ * 便宜动物（鸡 60001）只产一次就走完生命周期，催一次就到 stage 5，
+ * 立刻出栏就会变成「90 秒一轮：买 → 催 → 收 → 买」。
+ * 所以先记下它进入可收获的时刻，等够这个时长确认它确实不再产出，
+ * 才收出栏腾位置。真机对比：官方那场 160 秒里 4 只动物一直是 stage 3。
+ */
+const HARVEST_DEFER_MS = Number(process.env.FARM_PASTURE_HARVEST_DEFER_MS) >= 0
+    ? Number(process.env.FARM_PASTURE_HARVEST_DEFER_MS)
+    : 10 * 60_000;
+/** animalInstId -> 首次看到它可收获的时刻 */
+const harvestSeenAt = new Map();
 /** 抚摸冷却：同一只动物 10 分钟内不重复摸（抚摸能推进产出，但服务端有配额） */
 const STROKE_COOLDOWN_MS = 10 * 60_000;
 /** 单轮最多摸几只，避免一次把配额打空 */
@@ -100,66 +125,80 @@ function noteEvent(level, message) {
 /**
  * 一键收获（HarvestRanch）。
  *
- * 2026-11-17 抓包修正：**这个接口同时负责收货架产物**，不存在单独的
- * CollectProduce。官方客户端 HAR 里玩家点「催产」和「捡蛋」各两次，
- * 抓到的正是 TriggerProduce 与 HarvestRanch 交替出现，而服务端回包里
- * `animal_count` 始终是 4 —— 捡蛋之后动物一只都没少。
+ * 官方客户端抓包确认：捡蛋之后 `animal_count` 始终不变，动物一只都没出栏 ——
+ * 常态玩法是「**只收产物，动物留栏**」。所以这里默认只用 `harvest_type = 2`
+ * （专收货架产物）。
  *
- * 它按动物自身状态决定行为：生产中(stage 3)的只交产物、留在栏里，
- * 可收获(stage 5)的才收出栏。早先「收货架把三只鸡全收出栏」的原因是
- * 那三只当时就处于可收获状态，不是接口用错了。
+ * 之前一律用 `harvest_type = 1`（收获出栏），结果每轮把 3 只动物全收走，
+ * 栏位立刻变 0/3，下一轮又得重新买 3 只 —— 表现出来就是「一直在买动物」，
+ * 而反复买入的成本远高于产物收益。
  *
- * 之前一直找不到的 CollectProduce 因此根本不存在 —— 这也是它无论
- * 发什么字段都返回 1020002 的原因。
+ * 只有一种情况仍需要出栏：动物已可收获、`producing` 为假，又没有任何产物可收，
+ * 说明它占着栏位不再产出。这时用 `harvest_type = 1` 腾出位置。
  *
- * @param {object} analysis
- * @param {boolean} [shelvesOnly] 只因为货架有产物而调用时置 true（日志用）
+ * `1045229 当前没有可收取的产物` 属于正常状态（本地 analysis 与服务端快照
+ * 短暂不同步时会撞到），按空操作处理，不按失败记录。
  */
 async function performHarvest(analysis, shelvesOnly = false) {
-    const ranchIds = [...new Set([
-        ...analysis.harvestable.map(a => a.ranchInstId),
-        ...(analysis.collectableShelves || []).map(x => x.ranchInstId),
-    ])];
+    const harvestableAll = analysis.harvestable || [];
+    const shelves = analysis.collectableShelves || [];
+    const shelfLots = shelves.reduce((sum, x) => sum + x.lots.length, 0);
+
+    // 可收获动物要等够等待期才出栏；等待期内它只是待着，账算到「不动」而不是「已收」
+    const now = Date.now();
+    const dueToHarvest = [];
+    for (const a of harvestableAll) {
+        const id = toNum(a.animalInstId);
+        const seenAt = harvestSeenAt.get(id);
+        if (!seenAt) {
+            harvestSeenAt.set(id, now);
+            // 等待期为 0 时保持旧行为：看到即可收获动物就立刻出栏
+            if (HARVEST_DEFER_MS === 0) dueToHarvest.push(a);
+        } else if (now - seenAt >= HARVEST_DEFER_MS) {
+            dueToHarvest.push(a);
+        }
+    }
+    // 清掉已经不在栏里的记录，避免 Map 无限增长
+    if (harvestSeenAt.size > 64) {
+        const alive = new Set((analysis.allAnimals || []).map(a => toNum(a.animalInstId)));
+        for (const id of [...harvestSeenAt.keys()]) {
+            if (!alive.has(id)) harvestSeenAt.delete(id);
+        }
+    }
+
+    // 有产物可收 → 只收产物（动物留栏）；产物收完了、且动物已等够，才出栏
+    const harvestType = (dueToHarvest.length > 0 && shelfLots === 0) ? 1 : 2;
+    const targets = harvestType === 1 ? dueToHarvest : shelves;
+    const ranchIds = [...new Set(targets.map(x => x.ranchInstId))];
     if (!ranchIds.length) return 0;
-    // 有成熟动物 → 1（收出栏，顺带产物）；只有货架产物 → 2（专收产物）
-    const harvestType = analysis.harvestable.length > 0 ? 1 : 2;
+
     let reply;
     try {
         reply = await harvestRanch(ranchIds, harvestType);
     } catch (err) {
-        // 1045229 = 当前没有可收取的产物。本地 analysis 与服务端快照短暂不同步时
-        // 会撞到，属正常状态而非故障，不该按失败刷警告。
         if (/1045229/.test(String(err && err.message))) return 0;
         throw err;
     }
 
-    const harvested = analysis.harvestable.length;
-    const shelfLots = (analysis.collectableShelves || [])
-        .reduce((sum, x) => sum + x.lots.length, 0);
-
-    if (harvested) {
+    if (harvestType === 1) {
         const gainedExp = analysis.expectedHarvestExpTotal;
-        logPasture(`收获 ${harvested} 只（预期 +${gainedExp} 经验）`, {
+        logPasture(`收获 ${dueToHarvest.length} 只出栏（预期 +${gainedExp} 经验）`, {
             event: '牧场收获',
-            count: harvested,
+            count: dueToHarvest.length,
         });
-        noteEvent('info', `牧场收获 ${harvested} 只动物产物，约 +${gainedExp} 经验`);
-        recordOperation('pastureHarvest', harvested);
-        // 结算本轮养殖周期，给「经验/时、收入/时」攒样本
-        recordHarvest(analysis.harvestable.map(a => a.animalInstId));
-    }
-    if (shelfLots && !harvested) {
+        noteEvent('info', `牧场收获 ${dueToHarvest.length} 只动物产物，约 +${gainedExp} 经验`);
+        recordOperation('pastureHarvest', dueToHarvest.length);
+        recordHarvest(dueToHarvest.map(a => a.animalInstId));
+        for (const a of dueToHarvest) harvestSeenAt.delete(toNum(a.animalInstId));
+    } else if (shelfLots > 0) {
         logPasture(`捡蛋 ${shelfLots} 项（动物留栏）`, {
             event: '牧场捡蛋',
             lots: shelfLots,
         });
         recordOperation('pastureCollect', shelfLots);
-    } else if (shelfLots) {
-        logPasture(`顺带收走 ${shelfLots} 项货架产物`, { event: '牧场捡蛋', lots: shelfLots });
-        recordOperation('pastureCollect', shelfLots);
     }
-    // 回包带最新 RanchInfo，后续判断用它而不是再拉一次
-    return { reply, count: harvested, shelfLots };
+
+    return { reply, count: harvestType === 1 ? dueToHarvest.length : 0, shelfLots };
 }
 
 /** 投喂：can_feed 的动物 */
@@ -175,6 +214,9 @@ async function performHarvest(analysis, shelvesOnly = false) {
  */
 async function performTriggerProduce(analysis) {
     if (!analysis || !(analysis.needsProduce || []).length) return 0;
+    // 催熟有代价：冷却没到就不催，让动物自然待在产出阶段
+    if (Date.now() - lastProduceAtMs < PRODUCE_COOLDOWN_MS) return 0;
+    lastProduceAtMs = Date.now();
     const count = analysis.needsProduce.length;
     try {
         await triggerProduce();
@@ -492,8 +534,9 @@ async function runPastureOperation(opType = 'all') {
         const hasShelves = analysis.collectableShelves.length > 0;
         const hasAnimals = analysis.harvestable.length > 0;
         if (hasShelves || hasAnimals) {
-            const r = await performHarvest(analysis, !hasAnimals);
-            if (r) actions.push(hasAnimals ? 'harvest' : 'collect_shelves');
+            const r = await performHarvest(analysis);
+            if (r.shelfLots > 0) actions.push('collect_shelves');
+            if (r.count > 0) actions.push('harvest');
         }
     }
     if (want('produce', 'pasture_produce') && analysis.needsProduce.length) {
@@ -586,6 +629,7 @@ function resetPastureStateForTests() {
     lastNextReadyAtMs = 0;
     lastFeedMachineAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
+    lastProduceAtMs = 0;
     strokedAtMs.clear();
 }
 

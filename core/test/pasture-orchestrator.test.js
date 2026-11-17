@@ -11,6 +11,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
+// 这组测试验证动作编排顺序，不需要等 10 分钟的出栏观察期
+process.env.FARM_PASTURE_HARVEST_DEFER_MS = '0';
+
 const SRC = path.join(__dirname, '..', 'src');
 
 /** 用假实现替换模块（必须在 require 被测模块之前调用） */
@@ -680,7 +683,7 @@ test('只有货架有产物时也要发 HarvestRanch（官方抓包：捡蛋就�
     assert.ok(result.actions.includes('collect_shelves'), '动作记为捡蛋');
 });
 
-test('成熟动物与货架产物并存时只发一次 HarvestRanch', async () => {
+test('有货架产物时只收产物（type=2），动物不出栏', async () => {
     const reply = {
         ranches: [{
             ranch_inst_id: 10001,
@@ -704,9 +707,29 @@ test('成熟动物与货架产物并存时只发一次 HarvestRanch', async () =
     });
 
     const result = await orchestrator.runPastureOperation('harvest');
-    assert.equal(calls.filter(c => String(c).startsWith('harvestRanch')).length, 1,
-        '收获与捡蛋合并成一次请求');
-    assert.ok(result.actions.includes('harvest'));
+    const harvestCalls = calls.filter(c => String(c).startsWith('harvestRanch'));
+    assert.equal(harvestCalls.length, 1, '仍只发一次');
+    assert.ok(result.actions.includes('collect_shelves'), '动作记为捡蛋');
+    assert.ok(!result.actions.includes('harvest'), '有产物时不该把动物收出栏');
+});
+
+test('没有货架产物但有可收获动物时才出栏（type=1）', async () => {
+    const reply = {
+        ranches: [{
+            ranch_inst_id: 10001, capacity: 4, animal_count: 1, grass: { count: 100 },
+            animals: [{ ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 17, animal_id: 60003, stage: 5, can_harvest: true }],
+            shelves: [],
+        }],
+    };
+    const { orchestrator, calls } = setupMocks({
+        reply,
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_harvest: true },
+    });
+
+    const result = await orchestrator.runPastureOperation('harvest');
+    assert.equal(calls.filter(c => String(c).startsWith('harvestRanch')).length, 1);
+    assert.ok(result.actions.includes('harvest'), '无可收产物时才出栏腾位');
 });
 
 test('货架没有产物、动物也不可收时一次都不发', async () => {
@@ -765,4 +788,26 @@ test('买动物：余额只够一只时买一只就停', async () => {
 
     await orchestrator.runPastureOperation('refill');
     assert.equal(calls.filter(c => String(c).startsWith('buy:')).length, 1);
+});
+
+// ── 催产冷却：TriggerProduce 是催熟，不能每轮都按 ──
+
+test('催产有冷却：连续两轮只催一次', async () => {
+    const reply = {
+        ranches: [{
+            ranch_inst_id: 10001, capacity: 4, animal_count: 1, grass: { count: 100 },
+            animals: [{ ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 17, animal_id: 60001, stage: 3, producing: false }],
+            shelves: [],
+        }],
+    };
+    const { orchestrator, calls } = setupMocks({
+        reply,
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_produce: true },
+    });
+
+    await orchestrator.runPastureOperation('produce');
+    await orchestrator.runPastureOperation('produce');
+    const triggers = calls.filter(c => String(c).startsWith('triggerProduce'));
+    assert.equal(triggers.length, 1, `冷却内不该重复催产，实际 ${triggers.length} 次`);
 });
