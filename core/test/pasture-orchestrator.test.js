@@ -864,7 +864,7 @@ test('收获后把产物卖掉换牧场币', async () => {
     // 让回包带上 HarvestRanchReply.f5（这次收获的产物）
     const reply = {
         ...base,
-        produces: [{ ranchInstId: 10001, items: [{ itemId: 1060001, count: 3 }] }],
+        produces: [{ ranch_inst_id: 10001, items: [{ item_id: 1060001, count: 3 }] }],
     };
     const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces } });
     await orchestrator.runPastureOperation('harvest');
@@ -876,7 +876,7 @@ test('出售开关关闭时不动产物', async () => {
     const base = ranchReply();
     const reply = {
         ...base,
-        produces: [{ ranchInstId: 10001, items: [{ itemId: 1060001, count: 2 }] }],
+        produces: [{ ranch_inst_id: 10001, items: [{ item_id: 1060001, count: 2 }] }],
     };
     const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces }, auto: { pasture_sell_produce: false } });
     await orchestrator.runPastureOperation('harvest');
@@ -887,9 +887,9 @@ test('非牧场产物不卖（只卖 106xxxx）', async () => {
     const base = ranchReply();
     const reply = {
         ...base,
-        produces: [{ ranchInstId: 10001, items: [
-            { itemId: 1060001, count: 1 },
-            { itemId: 46032, count: 99 },   // 作物果实，不归牧场卖
+        produces: [{ ranch_inst_id: 10001, items: [
+            { item_id: 1060001, count: 1 },
+            { item_id: 46032, count: 99 },   // 作物果实，不归牧场卖
         ] }],
     };
     const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces } });

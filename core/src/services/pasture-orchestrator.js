@@ -70,16 +70,18 @@ const PASTURE_CURRENCY_ID = 1007;
 const BUY_ANIMAL_FAIL_COOLDOWN_MS = 10 * 60_000;
 let lastBuyAnimalFailAtMs = 0;
 /**
- * 催产冷却。
+ * 一键生产（TriggerProduce）的冷却。
  *
- * `TriggerProduce` 不是「开始生产」而是**催熟**：真机实测催一次之后动物很快
- * 从 stage 3 走到 stage 5（可收获），于是立刻被收出栏、栏位变空、又要买新的 ——
- * 40-90 秒就重复一次「买 → 催 → 收 → 买」，看起来就是「一直在买动物」。
+ * 它的作用是**让动物开始下蛋**：不调用它，动物只成长、不下产物，牧场就没有
+ * 副产品可捡、可卖。抓包（使用有机罐头.har / 14_02_01.har）里操作顺序是
+ * 「喂罐头 → 一键生产 → 收获鸡蛋」，所以它不等于喂罐头 —— 消耗道具的是
+ * FeedAnimal，TriggerProduce 本身不花罐头。
  *
- * 官方客户端 160 秒的正常游玩里只按了 2 次催产，动物从头到尾停在 stage 3。
- * 所以这里加冷却，让动物在产出生阶段待够时间，而不是被反复催熟。
+ * 触发条件由 `analysis.needsProduce` 决定（已到生产阶段、未在产出、产量仍为 0），
+ * 天然幂等，所以冷却只用来防止同一批动物被连刷，30 秒足够；
+ * 之前按「催熟」理解设成 5 分钟，会把下蛋拖慢一个数量级。
  */
-const PRODUCE_COOLDOWN_MS = 5 * 60_000;
+const PRODUCE_COOLDOWN_MS = 30_000;
 let lastProduceAtMs = 0;
 /** 抚摸冷却：同一只动物 10 分钟内不重复摸（抚摸能推进产出，但服务端有配额） */
 const STROKE_COOLDOWN_MS = 10 * 60_000;
@@ -145,10 +147,13 @@ function noteEvent(level, message) {
  */
 async function sellHarvestProduce(reply) {
     if (!isAutomationOn('pasture_sell_produce')) return 0;
+    // 注意：utils/proto 用 keepCase: true 加载，字段名保持 snake_case
+    //（item_id / ranch_inst_id），写成 camelCase 会一直拿到 undefined，
+    // 结果是「什么都没卖」却不报错。
     const items = [];
     for (const produce of (reply && reply.produces) || []) {
         for (const it of produce.items || []) {
-            const id = toNum(it.itemId);
+            const id = toNum(it.item_id);
             const count = toNum(it.count);
             if (id > 0 && count > 0 && isPastureProduceItemId(id)) {
                 items.push({ id, count });

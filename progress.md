@@ -1194,3 +1194,17 @@
   - **真正的缺口**：无任务可领时完全静默，历史日志 0 条，看不出功能在跑。
     已加 60 秒一次的低频扫描日志，实测输出
     `牧场任务扫描：任务 4 个，可领 0 个（暂无可领）`。
+- 2026-11-17 **一键生产（TriggerProduce）是下蛋前提，之前被我误关**。
+  - 用户指出「一键生产了，才会下蛋，才有副产品」。核对确认功能早已实现
+    （`pasture-orchestrator.js:581`，`want('produce','pasture_produce')`），
+    但我在前几轮把它和 `FeedAnimal`（喂罐头）一起默认关掉了 —— 两者不是一回事：
+    **TriggerProduce 让动物开始产蛋、不花罐头；FeedAnimal 才是消耗罐头的喂食**。
+  - `pasture_produce` 默认改回 `true`（store / useAutomationSettings /
+    DefaultPlanSettingsTab），UI 文案改为「自动一键生产（下蛋前提，不消耗罐头）」。
+  - 催产冷却按新理解从 **5 分钟改成 30 秒**（触发条件 `needsProduce` 本身幂等，
+    5 分钟会把下蛋拖慢一个数量级）。
+  - **抓到一个真 bug**：`utils/proto` 用 `keepCase: true` 加载，解码出来的字段名是
+    snake_case（`item_id` / `ranch_inst_id`），而 `sellHarvestProduce` 写的是
+    `it.itemId` → 永远是 undefined → **产物一次都没卖出去过**，且不报错。
+    已改用 `it.item_id`，测试 fixture 同步对齐。
+  - 真机验证：`trigger_produce` 已在跑；牧场 133 项测试全绿。
