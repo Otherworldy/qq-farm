@@ -1770,3 +1770,71 @@ f2 { f1 = 1007,    f2 = 2 }     得到 牧场币 ×2
 
 `core/test/pasture-orchestrator.test.js` 追加 3 项（收获后出售 / 开关关闭不出售 /
 只卖牧场产物），`pasture-api.test.js` 更新 Reply 字段断言。牧场全套 **128 项全绿**。
+
+---
+
+# 第十六轮：补齐剩余 6 个接口
+
+新抓包里出现、但代码里完全没有引用的接口，逐个按证据补齐。方法统一是
+**密文长度比对**：TSDK 加密是确定性的且不改变长度，所以「密文相同 → 明文相同」、
+「密文长度 → 明文 protobuf 长度」。
+
+## 一、有直接证据的（参数已确定）
+
+### `HomesteadService.UpgradeBuilding` / `CompleteBuildingUpgrade`
+
+```
+GetFacilityDetail         请求密文 e97375    ← 参数已知 {1: facility_inst_id=10002}
+UpgradeBuilding           请求密文 e97375    ← 完全相同
+CompleteBuildingUpgrade   请求密文 e97375    ← 完全相同
+```
+
+三个请求密文一模一样，而 `GetFacilityDetail` 的参数是确知的，因此
+两者的参数就是 `{1: facility_inst_id}`。
+
+### `ItemService.CannelNew`（清「新物品」标记）
+
+抓包在批量出售前对每个产物各调一次（`1060001` / `1065002` / `1065003`）：
+
+```
+1065002 → varint AA 80 41
+1065003 → varint AB 80 41        只差 1
+密文   e900b8f1 / e926b8f1       只有第 2 字节不同
+```
+
+长度（4 字节 = `08` + 3 字节 varint）与差异位置都对得上 → 参数 `{1: item_id}`。
+已按抓包顺序接入：**出售前先清标记，再 Sell**。
+
+### `IllustratedService.GetRanchWeightScoreV2`
+
+请求正文 **0 字节** → 空请求。回包 `{1:score 2:threshold}`。
+
+## 二、读类接口（参数按最简形式发送，实测确认）
+
+| 接口 | 请求体 | 处理 |
+|---|---|---|
+| `GetIllustratedLevelListV2` | 2 字节 | 按 `{1: illustrated_type}` 发送 |
+| `RotationShopInfo` | 2 字节 | 按 `{1: shop_type}` 发送 |
+
+回包结构已按抓包写好（图鉴等级 `{等级, 权重阈值, 奖励[]}`；兑换集市
+`{分类[], 商品[{goods_id, 消耗物品, 限购}]}`）。
+
+## 三、只提供能力、不接入自动流程的
+
+- `RotationBuyGoods`（兑换购买）：请求体 12 字节，字段名**没有明文证据**，
+  按 `BuyGoods` 的同类结构声明；不自动调用，需要人工实测。
+- `EnterHomestead`（进好友牧场）：请求体 8 字节，只发已知的 `host_gid`。
+
+这两项遵守「不猜就自动执行」的约定 —— 函数可用，但不接进 tick。
+
+## 四、改动清单
+
+- `core/src/proto/{homesteadpb,itempb,illustratedpb,shoppb,visitpb}.proto`：新增 16 个消息
+- `core/src/utils/proto.js`：注册这 16 个类型
+- `core/src/services/pasture-api.js`：新增 8 个调用函数
+- `core/src/services/pasture-orchestrator.js`：出售前接入 `CannelNew`
+- `core/test/pasture-api.test.js`：新增 5 项契约测试
+  （类型齐全 / 函数导出 / 升级与 GetFacilityDetail 同参 / CannelNew 只带 item_id /
+  GetRanchWeightScoreV2 空请求）
+
+牧场全套 **133 项全绿**。

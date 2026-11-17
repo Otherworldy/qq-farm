@@ -48,3 +48,13 @@ message LeaveRequest {
 message LeaveReply {
     // 空消息
 }
+
+// ============ 进入好友牧场 ============
+// 抓包正文 8 字节；好友 gid 在 10 位量级时 varint 占 5 字节，加 tag 共 6 字节，
+// 余下 2 字节可能是第二个小字段。这里只声明已知的 host_gid。
+message EnterHomesteadRequest {
+    int64 host_gid = 1;
+}
+message EnterHomesteadReply {
+    // 空消息
+}

@@ -34,6 +34,7 @@ const {
     FEED_MACHINE_FACILITY_ID,
 } = require('./pasture-api');
 const { getBag, sellItems } = require('./warehouse');
+const { cannelNew } = require('./pasture-api');
 const { recordOperation } = require('./stats');
 const {
     recordPlacement,
@@ -155,6 +156,16 @@ async function sellHarvestProduce(reply) {
         }
     }
     if (!items.length) return 0;
+
+    // 抓包顺序：批量出售前先对每个产物调一次 CannelNew（清「新物品」红点）。
+    // 失败不影响出售本身，所以放在独立的 try 里。
+    for (const it of items) {
+        try {
+            await cannelNew(it.id);
+        } catch {
+            // 清标记失败无所谓，继续卖
+        }
+    }
 
     try {
         await sellItems(items);

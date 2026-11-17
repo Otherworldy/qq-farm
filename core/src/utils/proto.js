@@ -112,6 +112,8 @@ async function performLoad() {
     resolved.BagReply = newRoot.lookupType('gamepb.itempb.BagReply');
     resolved.SellRequest = newRoot.lookupType('gamepb.itempb.SellRequest');
     resolved.SellReply = newRoot.lookupType('gamepb.itempb.SellReply');
+    resolved.CannelNewRequest = newRoot.lookupType('gamepb.itempb.CannelNewRequest');
+    resolved.CannelNewReply = newRoot.lookupType('gamepb.itempb.CannelNewReply');
     resolved.UseRequest = newRoot.lookupType('gamepb.itempb.UseRequest');
     resolved.UseReply = newRoot.lookupType('gamepb.itempb.UseReply');
     resolved.BatchUseRequest = newRoot.lookupType('gamepb.itempb.BatchUseRequest');
@@ -125,6 +127,12 @@ async function performLoad() {
     resolved.ShopProfilesReply = newRoot.lookupType('gamepb.shoppb.ShopProfilesReply');
     resolved.ShopInfoRequest = newRoot.lookupType('gamepb.shoppb.ShopInfoRequest');
     resolved.ShopInfoReply = newRoot.lookupType('gamepb.shoppb.ShopInfoReply');
+    resolved.RotationShopInfoRequest = newRoot.lookupType('gamepb.shoppb.RotationShopInfoRequest');
+    resolved.RotationShopInfoReply = newRoot.lookupType('gamepb.shoppb.RotationShopInfoReply');
+    resolved.RotationShopCategory = newRoot.lookupType('gamepb.shoppb.RotationShopCategory');
+    resolved.RotationGoods = newRoot.lookupType('gamepb.shoppb.RotationGoods');
+    resolved.RotationBuyGoodsRequest = newRoot.lookupType('gamepb.shoppb.RotationBuyGoodsRequest');
+    resolved.RotationBuyGoodsReply = newRoot.lookupType('gamepb.shoppb.RotationBuyGoodsReply');
     resolved.BuyGoodsRequest = newRoot.lookupType('gamepb.shoppb.BuyGoodsRequest');
     resolved.BuyGoodsReply = newRoot.lookupType('gamepb.shoppb.BuyGoodsReply');
     resolved.GetMonthCardInfosRequest = newRoot.lookupType('gamepb.mallpb.GetMonthCardInfosRequest');
@@ -162,6 +170,12 @@ async function performLoad() {
     resolved.GetIllustratedListV2Reply = newRoot.lookupType('gamepb.illustratedpb.GetIllustratedListV2Reply');
     resolved.ClaimAllRewardsV2Request = newRoot.lookupType('gamepb.illustratedpb.ClaimAllRewardsV2Request');
     resolved.ClaimAllRewardsV2Reply = newRoot.lookupType('gamepb.illustratedpb.ClaimAllRewardsV2Reply');
+    resolved.GetRanchWeightScoreV2Request = newRoot.lookupType('gamepb.illustratedpb.GetRanchWeightScoreV2Request');
+    resolved.GetRanchWeightScoreV2Reply = newRoot.lookupType('gamepb.illustratedpb.GetRanchWeightScoreV2Reply');
+    resolved.GetIllustratedLevelListV2Request = newRoot.lookupType('gamepb.illustratedpb.GetIllustratedLevelListV2Request');
+    resolved.GetIllustratedLevelListV2Reply = newRoot.lookupType('gamepb.illustratedpb.GetIllustratedLevelListV2Reply');
+    resolved.IllustratedLevelEntry = newRoot.lookupType('gamepb.illustratedpb.IllustratedLevelEntry');
+    resolved.IllustratedLevelReward = newRoot.lookupType('gamepb.illustratedpb.IllustratedLevelReward');
     resolved.CoreItem = newRoot.lookupType('corepb.Item');
 
     // 活动
@@ -211,6 +225,8 @@ async function performLoad() {
     // 访问
     resolved.VisitEnterRequest = newRoot.lookupType('gamepb.visitpb.EnterRequest');
     resolved.VisitEnterReply = newRoot.lookupType('gamepb.visitpb.EnterReply');
+    resolved.EnterHomesteadRequest = newRoot.lookupType('gamepb.visitpb.EnterHomesteadRequest');
+    resolved.EnterHomesteadReply = newRoot.lookupType('gamepb.visitpb.EnterHomesteadReply');
     resolved.VisitLeaveRequest = newRoot.lookupType('gamepb.visitpb.LeaveRequest');
     resolved.VisitLeaveReply = newRoot.lookupType('gamepb.visitpb.LeaveReply');
     resolved.BriefDogInfo = newRoot.lookupType('gamepb.visitpb.BriefDogInfo');
@@ -290,6 +306,10 @@ async function performLoad() {
     resolved.AddFeedRequest = newRoot.lookupType('gamepb.homesteadpb.AddFeedRequest');
     resolved.AddFeedReply = newRoot.lookupType('gamepb.homesteadpb.AddFeedReply');
     resolved.FacilitiesNotify = newRoot.lookupType('gamepb.homesteadpb.FacilitiesNotify');
+    resolved.UpgradeBuildingRequest = newRoot.lookupType('gamepb.homesteadpb.UpgradeBuildingRequest');
+    resolved.UpgradeBuildingReply = newRoot.lookupType('gamepb.homesteadpb.UpgradeBuildingReply');
+    resolved.CompleteBuildingUpgradeRequest = newRoot.lookupType('gamepb.homesteadpb.CompleteBuildingUpgradeRequest');
+    resolved.CompleteBuildingUpgradeReply = newRoot.lookupType('gamepb.homesteadpb.CompleteBuildingUpgradeReply');
 
     // 完整加载与类型解析成功，才发布就绪：root 发布、types 原地填充（引用稳定）
     for (const key of Object.keys(resolved)) {

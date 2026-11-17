@@ -324,3 +324,49 @@ test('Reply 只定义 ranches（HarvestRanch 例外：f5 已由抓包确认为�
     assert.deepEqual(harvestFields.sort(), ['produces', 'ranches'],
         `HarvestRanchReply 应定义 ranches + produces，实际 ${harvestFields.join(',')}`);
 });
+
+// ── 新增补的 6 个接口：proto 与调用能力 ──
+
+test('新增接口的 proto 类型都已定义', () => {
+    const names = [
+        'CannelNewRequest', 'CannelNewReply',
+        'UpgradeBuildingRequest', 'UpgradeBuildingReply',
+        'CompleteBuildingUpgradeRequest', 'CompleteBuildingUpgradeReply',
+        'GetRanchWeightScoreV2Request', 'GetRanchWeightScoreV2Reply',
+        'GetIllustratedLevelListV2Request', 'GetIllustratedLevelListV2Reply',
+        'RotationShopInfoRequest', 'RotationShopInfoReply',
+        'RotationBuyGoodsRequest', 'RotationBuyGoodsReply',
+        'EnterHomesteadRequest', 'EnterHomesteadReply',
+    ];
+    for (const name of names) {
+        assert.ok(types[name], `缺少 ${name}`);
+    }
+});
+
+test('新增接口的调用函数都已导出', () => {
+    // 文件顶部已经 require 过 api，直接复用
+    for (const fn of ['cannelNew', 'upgradeBuilding', 'completeBuildingUpgrade',
+        'getRanchWeightScore', 'getIllustratedLevelList', 'getRotationShopInfo',
+        'rotationBuyGoods', 'enterHomestead']) {
+        assert.equal(typeof api[fn], 'function', `${fn} 应已导出`);
+    }
+});
+
+test('升级建筑与 GetFacilityDetail 共用 facility_inst_id 参数', () => {
+    // 证据：两者请求密文完全相同（e97375），而 GetFacilityDetail 的参数已知
+    for (const name of ['UpgradeBuildingRequest', 'CompleteBuildingUpgradeRequest',
+        'GetFacilityDetailRequest']) {
+        const fields = Object.keys(types[name].fields || {});
+        assert.deepEqual(fields, ['facility_inst_id'], `${name} 参数应为 facility_inst_id`);
+    }
+});
+
+test('CannelNew 只带 item_id', () => {
+    const fields = Object.keys(types.CannelNewRequest.fields || {});
+    assert.deepEqual(fields, ['item_id']);
+});
+
+test('GetRanchWeightScoreV2 是空请求', () => {
+    const fields = Object.keys(types.GetRanchWeightScoreV2Request.fields || {});
+    assert.deepEqual(fields, []);
+});

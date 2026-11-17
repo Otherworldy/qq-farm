@@ -72,3 +72,52 @@ message BuyGoodsReply {
 message GoodsUnlockNotify {
     repeated GoodsInfo goods_list = 1;
 }
+
+// ============ 兑换集市（轮换商店） ============
+
+// 轮换商店信息。抓包正文 2 字节，按 {1: <varint>} 发送。
+// 回包：
+//   {1:1 2:1 3:1794844800(截止时间) 4:1
+//    5:{1:1 2:'便便特惠' 3:10}  5:{1:2 2:'农场精选' 3:20}
+//    6:{商品...}}
+message RotationShopInfoRequest {
+    int32 shop_type = 1;
+}
+message RotationShopCategory {
+    int32 id = 1;
+    string name = 2;
+    int32 sort = 3;
+}
+message RotationGoods {
+    int32 id = 1;
+    int32 shop_id = 2;
+    int64 goods_id = 3;          // 80011
+    int32 state = 4;
+    int32 cost_item_id = 5;      // 7002
+    int32 cost_count = 6;        // 3
+    int32 limit = 10;
+    int32 bought = 11;
+    string condition = 12;       // {1:'最低等级' 2:'5'}
+    int32 category = 13;
+}
+message RotationShopInfoReply {
+    int32 shop_type = 1;
+    int32 shop_id = 2;
+    int64 expire_at = 3;
+    int32 state = 4;
+    repeated RotationShopCategory categories = 5;
+    repeated RotationGoods goods = 6;
+}
+
+// 兑换购买。请求体 12 字节，字段按 BuyGoods 的同类结构发送；
+// 该结构尚未取得明文证据，调用前需实测确认（服务端会明确报错）。
+message RotationBuyGoodsRequest {
+    int64 goods_id = 1;
+    int64 num = 2;
+    int64 price = 3;
+}
+message RotationBuyGoodsReply {
+    RotationGoods goods = 1;
+    repeated corepb.Item get_items = 2;
+    repeated corepb.Item cost_items = 3;
+}

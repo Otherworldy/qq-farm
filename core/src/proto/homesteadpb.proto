@@ -84,9 +84,30 @@ message FacilitiesNotify {
     int64 host_gid = 2;
 }
 
+// 升级建筑（牧草机等）。参数由密文比对确定：
+//   UpgradeBuilding / CompleteBuildingUpgrade 的请求密文与 GetFacilityDetail 完全相同
+//   （都是 3 字节 e97375），而 GetFacilityDetail 的参数已知是 {1: facility_inst_id}，
+//   TSDK 加密又是确定性的 —— 所以两者参数就是 {1: facility_inst_id}。
+message UpgradeBuildingRequest {
+    int64 facility_inst_id = 1;   // 10002
+}
+message UpgradeBuildingReply {
+    FacilityDetail detail = 1;
+}
+
+// 升级耗时结束时调用，参数同样是 facility_inst_id
+message CompleteBuildingUpgradeRequest {
+    int64 facility_inst_id = 1;
+}
+message CompleteBuildingUpgradeReply {
+    FacilityDetail detail = 1;
+}
+
 service HomesteadService {
     rpc GetBuildingList(GetBuildingListRequest) returns (GetBuildingListReply);
     rpc GetFacilityDetail(GetFacilityDetailRequest) returns (GetFacilityDetailReply);
+    rpc UpgradeBuilding(UpgradeBuildingRequest) returns (UpgradeBuildingReply);
+    rpc CompleteBuildingUpgrade(CompleteBuildingUpgradeRequest) returns (CompleteBuildingUpgradeReply);
 }
 
 service FeedMachineService {

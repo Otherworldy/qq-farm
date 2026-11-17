@@ -45,3 +45,15 @@ message BatchUseReply {
     repeated corepb.Item used_items = 1;
     repeated corepb.Item items = 2;
 }
+
+// ============ 清除「新物品」标记 ============
+// 抓包：仓库里批量出售前会先对每个产物调一次（1060001 / 1065002 / 1065003）。
+// 参数由长度+差异模式确定：密文 4 字节，1065002 与 1065003 只差 1，
+// 对应 varint 只有最低 7 位不同，与观测到的「仅第 2 字节不同」一致。
+// 回包 f1 = 同一个 item_id。
+message CannelNewRequest {
+    int64 item_id = 1;
+}
+message CannelNewReply {
+    int64 item_id = 1;
+}

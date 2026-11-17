@@ -1170,3 +1170,17 @@
     （容器拿到 `Reqable CA` 签的证书）。合并 Mozilla bundle + 本机抓包 CA 为
     `data/ca-bundle.pem`，compose 加 `NODE_EXTRA_CA_CERTS`，容器恢复登录。
   - 测试：新增 3 项（收获后出售 / 开关关闭 / 只卖牧场产物），牧场全套 **128 项全绿**。
+- 2026-11-17 **补齐剩余 6 个接口**（方法：密文长度比对）。
+  - **直接证据**：`UpgradeBuilding` / `CompleteBuildingUpgrade` 的请求密文
+    与 `GetFacilityDetail` **完全相同**（都是 `e97375`），而后者参数已知是
+    `{1: facility_inst_id}` → 两者参数确定。
+  - `CannelNew`：密文 4 字节 = `08` + 3 字节 varint；`1065002`/`1065003` 只差 1
+    （varint `AA 80 41` vs `AB 80 41`），密文也只有第 2 字节不同 → 参数 `{1: item_id}`。
+    已按抓包顺序接入：**出售前先清标记再 Sell**。
+  - `GetRanchWeightScoreV2` 请求正文 0 字节 → 空请求。
+  - 读类 `GetIllustratedLevelListV2` / `RotationShopInfo` 按 2 字节最简形式发送，
+    回包结构已按抓包写好。
+  - **只提供能力、不自动调用**：`RotationBuyGoods`（12 字节，字段无明文证据）、
+    `EnterHomestead`（8 字节，只发 host_gid）—— 遵守「不猜就自动执行」。
+  - 改动：5 个 proto 文件 + `utils/proto.js` 注册 16 类型 + `pasture-api` 8 个函数
+    + orchestrator 接 CannelNew；新增 5 项契约测试。牧场全套 **133 项全绿**。

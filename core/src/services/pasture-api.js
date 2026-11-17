@@ -332,12 +332,125 @@ async function addFeed(facilityInstId, count = 1) {
     );
 }
 
+
+const ITEM_SERVICE = 'gamepb.itempb.ItemService';
+const SHOP_SERVICE = 'gamepb.shoppb.ShopService';
+const ILLUSTRATED_SERVICE = 'gamepb.illustratedpb.IllustratedService';
+const VISIT_SERVICE = 'gamepb.visitpb.VisitService';
+
+/**
+ * 清除「新物品」标记。
+ *
+ * 抓包（查看牧场仓库-出售鸡蛋-批量出售.har）里，批量出售前会对每个产物先调一次
+ * （1060001 / 1065002 / 1065003）。参数由长度与差异模式确定：密文 4 字节，
+ * 1065002 与 1065003 只差 1，对应 varint 只有最低 7 位不同，与观测到的
+ * 「仅第 2 字节不同」吻合；回包 f1 原样回传同一个 item_id。
+ */
+async function cannelNew(itemId) {
+    return sendPastureRequest(
+        ITEM_SERVICE, 'CannelNew',
+        types.CannelNewRequest, types.CannelNewReply,
+        { item_id: toLong(itemId) }
+    );
+}
+
+/**
+ * 升级建筑（牧草机等）。
+ *
+ * 参数由密文比对确定：UpgradeBuilding 与 CompleteBuildingUpgrade 的请求密文
+ * 与 GetFacilityDetail 完全相同（都是 3 字节 e97375），而 GetFacilityDetail
+ * 的参数已知是 {1: facility_inst_id}；TSDK 加密是确定性的，所以参数就是
+ * {1: facility_inst_id}。
+ */
+async function upgradeBuilding(facilityInstId) {
+    return sendPastureRequest(
+        HOMESTEAD_SERVICE, 'UpgradeBuilding',
+        types.UpgradeBuildingRequest, types.UpgradeBuildingReply,
+        { facility_inst_id: toLong(facilityInstId) }
+    );
+}
+
+/** 升级完成（耗时结束后调用），参数同 UpgradeBuilding。 */
+async function completeBuildingUpgrade(facilityInstId) {
+    return sendPastureRequest(
+        HOMESTEAD_SERVICE, 'CompleteBuildingUpgrade',
+        types.CompleteBuildingUpgradeRequest, types.CompleteBuildingUpgradeReply,
+        { facility_inst_id: toLong(facilityInstId) }
+    );
+}
+
+/**
+ * 牧场权重分。抓包确认请求体为空。
+ * 回包 {1:<score> 2:<threshold>}，图鉴等级奖励按这个分数解锁。
+ */
+async function getRanchWeightScore() {
+    return sendPastureRequest(
+        ILLUSTRATED_SERVICE, 'GetRanchWeightScoreV2',
+        types.GetRanchWeightScoreV2Request, types.GetRanchWeightScoreV2Reply,
+        {}
+    );
+}
+
+/**
+ * 牧场图鉴等级奖励列表。抓包正文 2 字节，按 {1: illustrated_type} 发送
+ * （类型值尚未取得明文证据，调用方需实测）。
+ */
+async function getIllustratedLevelList(illustratedType = 1) {
+    return sendPastureRequest(
+        ILLUSTRATED_SERVICE, 'GetIllustratedLevelListV2',
+        types.GetIllustratedLevelListV2Request, types.GetIllustratedLevelListV2Reply,
+        { illustrated_type: illustratedType }
+    );
+}
+
+/**
+ * 兑换集市（轮换商店）。抓包正文 2 字节，按 {1: shop_type} 发送。
+ * 回包含分类 5、商品 6（goods_id / 消耗物品 / 限购）。
+ */
+async function getRotationShopInfo(shopType = 1) {
+    return sendPastureRequest(
+        SHOP_SERVICE, 'RotationShopInfo',
+        types.RotationShopInfoRequest, types.RotationShopInfoReply,
+        { shop_type: shopType }
+    );
+}
+
+/**
+ * 兑换购买。
+ *
+ * 请求体 12 字节，字段按 BuyGoods 的同类结构发送；这份结构**还没有明文证据**
+ * （请求体是 TSDK 加密的），所以只提供能力，不接入自动流程，需要人工实测确认。
+ */
+async function rotationBuyGoods(goodsId, num = 1, price = 0) {
+    return sendPastureRequest(
+        SHOP_SERVICE, 'RotationBuyGoods',
+        types.RotationBuyGoodsRequest, types.RotationBuyGoodsReply,
+        { goods_id: toLong(goodsId), num: toLong(num), price: toLong(price) }
+    );
+}
+
+/**
+ * 进入好友牧场。抓包正文 8 字节，这里只发送已知的 host_gid；
+ * 若服务端要求额外字段会明确报错。
+ */
+async function enterHomestead(hostGid) {
+    return sendPastureRequest(
+        VISIT_SERVICE, 'EnterHomestead',
+        types.EnterHomesteadRequest, types.EnterHomesteadReply,
+        { host_gid: toLong(hostGid) }
+    );
+}
+
 module.exports = {
     collectProduce,
     ANIMAL_SERVICE,
     RANCH_SERVICE,
     HOMESTEAD_SERVICE,
     FEED_MACHINE_SERVICE,
+    ITEM_SERVICE,
+    SHOP_SERVICE,
+    ILLUSTRATED_SERVICE,
+    VISIT_SERVICE,
     RANCH_OP_IDS,
     FEED_MACHINE_FACILITY_ID,
 
@@ -351,6 +464,15 @@ module.exports = {
     getBuildingList,
     getFacilityDetail,
     addFeed,
+
+    cannelNew,
+    upgradeBuilding,
+    completeBuildingUpgrade,
+    getRanchWeightScore,
+    getIllustratedLevelList,
+    getRotationShopInfo,
+    rotationBuyGoods,
+    enterHomestead,
 
     placeAnimal,
     cleanRanch,

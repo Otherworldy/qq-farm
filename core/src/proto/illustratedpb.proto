@@ -8,6 +8,36 @@ import "corepb.proto";
 service IllustratedService {
   rpc GetIllustratedListV2(GetIllustratedListV2Request) returns (GetIllustratedListV2Reply);
   rpc ClaimAllRewardsV2(ClaimAllRewardsV2Request) returns (ClaimAllRewardsV2Reply);
+  rpc GetRanchWeightScoreV2(GetRanchWeightScoreV2Request) returns (GetRanchWeightScoreV2Reply);
+  rpc GetIllustratedLevelListV2(GetIllustratedLevelListV2Request) returns (GetIllustratedLevelListV2Reply);
+}
+
+// 牧场权重分。抓包确认请求体为空（正文 0 字节）。
+message GetRanchWeightScoreV2Request {}
+message GetRanchWeightScoreV2Reply {
+    int32 score = 1;              // 抓包：1
+    int32 threshold = 2;          // 抓包：30
+}
+
+// 牧场图鉴等级奖励列表。抓包正文 2 字节，按 {1: <varint>} 发送。
+// 回包：{1:1 2:30 3:{1:等级 2:权重阈值 3:{1:1002 2:200} 5:1} ...}
+message GetIllustratedLevelListV2Request {
+    int32 illustrated_type = 1;   // 牧场图鉴
+}
+message IllustratedLevelReward {
+    int64 item_id = 1;            // 1002
+    int32 count = 2;              // 200
+}
+message IllustratedLevelEntry {
+    int32 level = 1;              // 1,2,3...
+    int32 weight_threshold = 2;   // 20 / 40 / 60
+    repeated IllustratedLevelReward rewards = 3;
+    int32 state = 5;              // 1 = 可领？
+}
+message GetIllustratedLevelListV2Reply {
+    int32 illustrated_type = 1;
+    int32 current_weight = 2;
+    repeated IllustratedLevelEntry levels = 3;
 }
 
 message GetIllustratedListV2Request {
