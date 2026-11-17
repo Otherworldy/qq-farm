@@ -449,6 +449,7 @@ const OP_META: Record<string, { label: string, icon: string, color: string }> = 
   tongQiGift: { label: '同气礼包', icon: 'i-carbon-gift', color: 'text-rose-500' },
   // 牧场
   pastureHarvest: { label: '牧场收获', icon: 'i-carbon-home', color: 'text-teal-500' },
+  pastureCollect: { label: '牧场捡蛋', icon: 'i-carbon-egg', color: 'text-amber-400' },
   pastureFeed: { label: '牧场投喂', icon: 'i-carbon-wheat', color: 'text-amber-500' },
   pastureClean: { label: '牧场清理', icon: 'i-carbon-clean', color: 'text-rose-400' },
   pastureStroke: { label: '牧场抚摸', icon: 'i-carbon-touch-1', color: 'text-violet-500' },

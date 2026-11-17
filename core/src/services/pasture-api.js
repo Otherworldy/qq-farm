@@ -131,12 +131,16 @@ async function triggerProduce() {
 /**
  * 收取副产品（货架上的蛋/奶）。
  *
- * ⚠️ 服务端目前对这个方法一律返回 1020002（网络繁忙）。
- * 已实验排除：AnimalService / RanchService 两个 service、空 body、
- * ranch_inst_ids 在字段 1/2/3 的 varint 与 packed 形态、以及嵌套 message 形态，
- * 全部同一个错误码；同期 TriggerProduce 能返回业务码 1045232，说明不是限流。
- * 结论：要么方法未实现，要么请求体结构比现有猜测复杂得多 —— 需要真实抓包才能定。
- * 保留这个函数是为了将来补上字段后直接接线，**当前不要调用**。
+ * ❌ 已确认此方法不存在，**不要调用**。
+ *
+ * 2026-11-17 用两份官方客户端 HAR 全量扫描后定案：160 秒正常游玩抓到 70 种
+ * 接口、以及一次明确「催产 + 捡蛋」的操作，都没有 CollectProduce。捡蛋走的是
+ * `harvestRanch` —— 服务端回包里 `animal_count` 不变、`produce_count` 变化，
+ * 说明它按动物状态自己决定是「只交产物」还是「收出栏」。
+ *
+ * 之前穷举 AnimalService / RanchService × 空 body × 字段 1/2/3 ×
+ * varint/packed/嵌套 message 全部返回 1020002，现在有了原因：网关没有这个方法。
+ * 保留函数与 proto 定义仅作记录，货架收取已并入 performHarvest。
  */
 async function collectProduce(ranchIds) {
     const ids = Array.isArray(ranchIds) && ranchIds.length ? ranchIds : [10001];

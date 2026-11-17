@@ -94,61 +94,58 @@ function noteEvent(level, message) {
 // ─── 单个操作 ───
 
 /**
- * 收获出栏：一键收获（HarvestRanch），把 can_harvest 的动物收走。
- * 货架产物不走这里 —— 那是 CollectProduce 的活，见 performCollectShelves。
+ * 一键收获（HarvestRanch）。
+ *
+ * 2026-11-17 抓包修正：**这个接口同时负责收货架产物**，不存在单独的
+ * CollectProduce。官方客户端 HAR 里玩家点「催产」和「捡蛋」各两次，
+ * 抓到的正是 TriggerProduce 与 HarvestRanch 交替出现，而服务端回包里
+ * `animal_count` 始终是 4 —— 捡蛋之后动物一只都没少。
+ *
+ * 它按动物自身状态决定行为：生产中(stage 3)的只交产物、留在栏里，
+ * 可收获(stage 5)的才收出栏。早先「收货架把三只鸡全收出栏」的原因是
+ * 那三只当时就处于可收获状态，不是接口用错了。
+ *
+ * 之前一直找不到的 CollectProduce 因此根本不存在 —— 这也是它无论
+ * 发什么字段都返回 1020002 的原因。
+ *
+ * @param {object} analysis
+ * @param {boolean} [shelvesOnly] 只因为货架有产物而调用时置 true（日志用）
  */
-async function performHarvest(analysis) {
-    const ranchIds = [...new Set(analysis.harvestable.map(a => a.ranchInstId))];
+async function performHarvest(analysis, shelvesOnly = false) {
+    const ranchIds = [...new Set([
+        ...analysis.harvestable.map(a => a.ranchInstId),
+        ...(analysis.collectableShelves || []).map(x => x.ranchInstId),
+    ])];
     if (!ranchIds.length) return 0;
     const reply = await harvestRanch(ranchIds);
-    const gainedExp = analysis.expectedHarvestExpTotal;
-    logPasture(`收获 ${analysis.harvestable.length} 只（预期 +${gainedExp} 经验）`, {
-        event: '牧场收获',
-        count: analysis.harvestable.length,
-    });
-    noteEvent('info', `牧场收获 ${analysis.harvestable.length} 只动物产物，约 +${gainedExp} 经验`);
-    recordOperation('pastureHarvest', analysis.harvestable.length);
-    // 结算本轮养殖周期，给「经验/时、收入/时」攒样本
-    recordHarvest(analysis.harvestable.map(a => a.animalInstId));
-    // 收获回包带最新 RanchInfo，后续判断用它而不是再拉一次
-    return { reply, count: analysis.harvestable.length };
-}
 
-/**
- * 货架产物（副产品）。
- *
- * 官方文档「牧场操作 RPC」把两件事分得很清楚：
- *   CollectProduce —— 收取副产品（货架上的蛋/奶）
- *   HarvestRanch   —— 一键收获，把动物整个收出栏
- *
- * 这里曾经误用 HarvestRanch 来「收货架」，结果一收货架就把三只鸡全收出栏了
- * （真机复现：日志「收货架 3 个」之后栏位从 3/3 变 0/3）。
- *
- * CollectProduce 的请求体目前没有抓包样本，按项目规矩不猜 proto，
- * 所以这里只如实记录待收数量，不发请求 —— 宁可货架堆着，
- * 也不能再把动物误收了。等抓到 CollectProduce 样本再补上。
- */
-/** 上次报告的货架待收签名：状态不变就不再重复记日志 */
-let lastShelfReportKey = '';
+    const harvested = analysis.harvestable.length;
+    const shelfLots = (analysis.collectableShelves || [])
+        .reduce((sum, x) => sum + x.lots.length, 0);
 
-async function performCollectShelves(analysis) {
-    const count = (analysis.collectableShelves || []).length;
-    if (!count) {
-        lastShelfReportKey = '';
-        return 0;
+    if (harvested) {
+        const gainedExp = analysis.expectedHarvestExpTotal;
+        logPasture(`收获 ${harvested} 只（预期 +${gainedExp} 经验）`, {
+            event: '牧场收获',
+            count: harvested,
+        });
+        noteEvent('info', `牧场收获 ${harvested} 只动物产物，约 +${gainedExp} 经验`);
+        recordOperation('pastureHarvest', harvested);
+        // 结算本轮养殖周期，给「经验/时、收入/时」攒样本
+        recordHarvest(analysis.harvestable.map(a => a.animalInstId));
     }
-    const lots = analysis.collectableShelves.reduce((sum, s) => sum + s.lots.length, 0);
-    // 牧场现在 7-10 秒一轮，同一条待收提示每轮刷一次会把日志淹掉。
-    // 只在数量变化时记一条，用户仍然知道货架在堆。
-    const key = `${count}:${lots}`;
-    if (key === lastShelfReportKey) return 0;
-    lastShelfReportKey = key;
-    logPasture(`货架有 ${count} 个待收（${lots} 项）：需要 CollectProduce，暂无协议样本，跳过`, {
-        event: '牧场货架待收',
-        count,
-        lots,
-    });
-    return 0;
+    if (shelfLots && !harvested) {
+        logPasture(`捡蛋 ${shelfLots} 项（动物留栏）`, {
+            event: '牧场捡蛋',
+            lots: shelfLots,
+        });
+        recordOperation('pastureCollect', shelfLots);
+    } else if (shelfLots) {
+        logPasture(`顺带收走 ${shelfLots} 项货架产物`, { event: '牧场捡蛋', lots: shelfLots });
+        recordOperation('pastureCollect', shelfLots);
+    }
+    // 回包带最新 RanchInfo，后续判断用它而不是再拉一次
+    return { reply, count: harvested, shelfLots };
 }
 
 /** 投喂：can_feed 的动物 */
@@ -450,16 +447,14 @@ async function runPastureOperation(opType = 'all') {
         ? auto[switchKey] !== false
         : opType === name);
 
-    // 顺序：收货架 → 收获 → 投喂 → 清理 → 补草
-    // 货架先收，因为它可能因为动物产出而被填满，越早收越不浪费
+    // 顺序：收获/捡蛋 → 生产 → 投喂 → 清理 → 补草
+    // HarvestRanch 一次同时处理「成熟动物出栏」和「货架产物」，所以只发一次。
     if (want('harvest', 'pasture_harvest')) {
-        if (analysis.collectableShelves.length) {
-            const r = await performCollectShelves(analysis);
-            if (r) actions.push('collect_shelves');
-        }
-        if (analysis.harvestable.length) {
-            const r = await performHarvest(analysis);
-            if (r) actions.push('harvest');
+        const hasShelves = analysis.collectableShelves.length > 0;
+        const hasAnimals = analysis.harvestable.length > 0;
+        if (hasShelves || hasAnimals) {
+            const r = await performHarvest(analysis, !hasAnimals);
+            if (r) actions.push(hasAnimals ? 'harvest' : 'collect_shelves');
         }
     }
     if (want('produce', 'pasture_produce') && analysis.needsProduce.length) {

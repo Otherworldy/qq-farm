@@ -645,3 +645,83 @@ test('购买策略 preferred：优先指定动物', async () => {
     const buy = calls.find(c => String(c).startsWith('buy:'));
     assert.ok(buy && buy.includes(':10010:'), `应买指定的 60009（实际 ${buy}）`);
 });
+
+// ── HarvestRanch 同时负责收获与捡蛋（2026-11-17 抓包修正） ──
+
+function ranchWithShelves() {
+    return {
+        ranches: [{
+            ranch_inst_id: 10001,
+            capacity: 4,
+            animal_count: 1,
+            grass: { count: 100 },
+            animals: [{
+                ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 17,
+                animal_id: 60003, stage: 3, produce_count: 1,
+            }],
+            shelves: [{
+                slot_index: 1, total_remain: 3, can_collect: true,
+                lots: [{ item_id: 1007, base_num: 3, remain_num: 3, animal_id: 60003 }],
+            }],
+        }],
+    };
+}
+
+test('只有货架有产物时也要发 HarvestRanch（官方抓包：捡蛋就是它）', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: ranchWithShelves(),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_harvest: true },
+    });
+
+    const result = await orchestrator.runPastureOperation('harvest');
+    const harvestCalls = calls.filter(c => String(c).startsWith('harvestRanch'));
+    assert.equal(harvestCalls.length, 1, `应发一次 HarvestRanch，实际 ${JSON.stringify(calls.filter(c => /harvest/i.test(String(c))))}`);
+    assert.ok(result.actions.includes('collect_shelves'), '动作记为捡蛋');
+});
+
+test('成熟动物与货架产物并存时只发一次 HarvestRanch', async () => {
+    const reply = {
+        ranches: [{
+            ranch_inst_id: 10001,
+            capacity: 4,
+            animal_count: 2,
+            grass: { count: 100 },
+            animals: [
+                { ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 17, animal_id: 60003, stage: 5, can_harvest: true, produce_count: 2 },
+                { ranch_inst_id: 10001, slot_index: 2, animal_inst_id: 18, animal_id: 60003, stage: 3, produce_count: 1 },
+            ],
+            shelves: [{
+                slot_index: 1, total_remain: 3, can_collect: true,
+                lots: [{ item_id: 1007, base_num: 3, remain_num: 3, animal_id: 60003 }],
+            }],
+        }],
+    };
+    const { orchestrator, calls } = setupMocks({
+        reply,
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_harvest: true },
+    });
+
+    const result = await orchestrator.runPastureOperation('harvest');
+    assert.equal(calls.filter(c => String(c).startsWith('harvestRanch')).length, 1,
+        '收获与捡蛋合并成一次请求');
+    assert.ok(result.actions.includes('harvest'));
+});
+
+test('货架没有产物、动物也不可收时一次都不发', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: {
+            ranches: [{
+                ranch_inst_id: 10001, capacity: 4, animal_count: 1, grass: { count: 100 },
+                animals: [{ ranch_inst_id: 10001, slot_index: 1, animal_inst_id: 17, animal_id: 60003, stage: 3 }],
+                shelves: [],
+            }],
+        },
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_harvest: true },
+    });
+
+    await orchestrator.runPastureOperation('harvest');
+    assert.equal(calls.filter(c => String(c).startsWith('harvestRanch')).length, 0);
+});

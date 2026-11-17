@@ -55,6 +55,7 @@ const operations = {
   tongQiGift: 0,
   // 牧场（与农场的分项平行，面板「今日统计」里看得见）
   pastureHarvest: 0,
+  pastureCollect: 0,
   pastureFeed: 0,
   pastureClean: 0,
   pastureStroke: 0,

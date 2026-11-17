@@ -1265,3 +1265,66 @@ if (shouldPasture) await runPastureTick(autoConfig);   // 永远执行不到
 `composites` 在 3-5 且 attempts 有界），试着加 15 秒节流会挂 6 项，回滚。
 
 既然频率不能改，就让预算容下真实需求量：总量 160、单接口 48。
+
+---
+
+# 第八轮：捡蛋就是 HarvestRanch，CollectProduce 根本不存在
+
+## 抓到证据了
+
+用官方客户端 HAR（Windows 微信 1.17.0.3）做了两次全量扫描：
+
+1. **160 秒正常游玩** —— 368/369 帧解析成功、70 种接口，无 `CollectProduce`
+2. **明确操作「催产」+「捡蛋」各两次** —— 抓到 `TriggerProduce` 与 `HarvestRanch`
+   交替出现，**仍然没有 `CollectProduce`**
+
+第二份抓包的服务端回包是决定性的：
+
+```
+33.9s (催产后)       animal_count=4  slot3 produce=None
+36.7s (HarvestRanch)  animal_count=4  slot3 produce=1     ← 动物一只没少
+44.7s (催产后)       animal_count=4  slot3 produce=1
+47.6s (HarvestRanch)  animal_count=4  slot1 produce=1     ← 动物一只没少
+```
+
+**`HarvestRanch` 之后 `animal_count` 始终是 4，`produce_count` 却变了。**
+
+## 结论
+
+**`HarvestRanch` 自己就负责捡蛋**，它按动物状态决定行为：
+
+| 动物状态 | HarvestRanch 的行为 |
+|---|---|
+| 生产中（stage 3） | 只交产物，**动物留栏** |
+| 可收获（stage 5） | 收出栏 |
+
+早先「收货架把三只鸡全收出栏」是因为**那三只当时正处于可收获状态**，
+不是接口用错了。这个误判让我们白白堆了几个月的货架产物。
+
+`CollectProduce` 也不是「字段猜错」——**网关没有这个方法**，这才是它无论发
+`AnimalService` / `RanchService` × 空 body × 字段 1/2/3 × varint/packed/嵌套
+message 都返回 `1020002` 的原因。
+
+## 改动
+
+`performCollectShelves` 删除，货架收取并入 `performHarvest`：
+只要「有成熟动物」**或**「货架有产物」就发**一次** `HarvestRanch`，两者同时处理。
+日志区分「捡蛋 N 项（动物留栏）」与「收获 N 只」，统计新增 `pastureCollect`。
+
+真机验证（01:23 前后连续四轮）：
+
+```
+01:23:27  捡蛋 1 项（动物留栏）
+01:23:37  收获 1 只（预期 +1 经验）
+01:23:46  捡蛋 1 项（动物留栏）
+01:23:54  收获 1 只
+```
+
+货架待收从「一直堆着」变成 **0**。
+
+## 查证方法上的教训
+
+第一轮我曾用 `grep CollectProduce HAR` 得到 0 次就下结论 —— **那是无效方法**，
+HAR 里 payload 是 base64，grep 原文永远找不到任何方法名。正确做法是解码帧
+再匹配服务名/方法名（`core/scripts/analyze-har-rate.js` 就是这么做的）。
+第二轮抓到 `TriggerProduce`/`HarvestRanch` 说明解析链路是可靠的。

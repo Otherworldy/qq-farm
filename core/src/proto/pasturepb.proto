@@ -227,20 +227,24 @@ message GetRanchOpTimesReply {
 
 // 收取副产品（货架上的蛋/奶）。
 //
-// 官方文档「牧场操作 RPC」给出方法名 collectProduce → CollectProduce，
-// 但请求体至今没有抓包样本，mcboot 与主包里也只有混淆后的调用。
-// 这里先按空消息定义，只用来做一次可验证实验：发出去看服务端是成功还是报错。
+// 2026-11-17 结论：**这个方法不存在，CollectProduce 不是官方接口。**
 //
-// 2026-11-17 更新：对一份 369 帧的官方客户端 HAR（Windows 微信 1.17.0.3，
-// 160 秒正常游玩）做过完整扫描，**没有出现 CollectProduce**，也没有
-// HarvestRanch / TriggerProduce / FeedAnimal / PlaceAnimal —— 那次游玩在牧场
-// 只做了「查看、清理、抚摸、放灾害、给喂食机加草料」。
-// 同一份抓包确认了服务归类的实际分工：
-//   animalpb.AnimalService  → GetRanchDetail
-//   animalpb.RanchService   → CleanAllRanch / StrokeAnimal / PutHazard / GetRanchOpTimes
-// 所以真的要收产物时，需要一次明确点了「收取副产品」的抓包。
+// 两次官方客户端 HAR 全量扫描（Windows 微信 1.17.0.3）：
+//   1. 160 秒正常游玩 → 368/369 帧解析成功、70 种接口，无 CollectProduce
+//   2. 明确操作「催产」+「捡蛋」各两次 → 抓到 TriggerProduce 与 HarvestRanch
+//      交替出现，仍然没有 CollectProduce
+//
+// 第二份抓包的服务端回包说明了一切：HarvestRanch 之后 `animal_count` 始终是 4，
+// 动物一只没少，而 `produce_count` 变成了 1。也就是说
+// **HarvestRanch 自己就负责捡蛋**，它按动物状态决定行为：
+//   生产中(stage 3) → 只交产物，动物留栏
+//   可收获(stage 5) → 收出栏
+// 早先「收货架把三只鸡全收出栏」是因为那三只当时正处于可收获状态，
+// 不是接口用错了。
+//
+// 这也解释了为什么 CollectProduce 无论发什么字段组合都返回 1020002 ——
+// 网关根本没有这个方法。定义先保留（无调用点），仅作为记录。
 message CollectProduceRequest {
-    // 实验：参照 HarvestRanch / GetRanchDetail 都用 ranch_inst_ids，先试字段 1
     repeated int64 ranch_inst_ids = 1;
 }
 message CollectProduceReply {
