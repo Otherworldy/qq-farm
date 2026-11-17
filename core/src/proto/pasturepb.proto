@@ -131,9 +131,12 @@ message FeedAnimalTarget {
 }
 message FeedAnimalRequest {
     repeated FeedAnimalTarget targets = 1;
-    int32 feed_type = 2;      // 未验证：官方 HAR 里 FeedAnimal 出现 0 次，1/2 哪个是草料
-                              // 哪个是消耗道具没有证据。代码默认传 1 只是沿用早期猜测，
-                              // 在抓到一次正常投喂之前不要开自动投喂。
+    int32 feed_type = 2;      // 1/2 的具体分工仍未验证，但整体语义已经抓包确认：
+                              // FeedAnimal 就是「喂罐头」本身。用户操作录像对应关系
+                              // 7.83s FeedAnimal → 11.88s TriggerProduce → 14.92s HarvestRanch
+                              // 与「喂罐头 → 催生产 → 收获鸡蛋」完全一致。
+                              // 所以这个 RPC 不是免费投喂，自动调用等于花玩家的罐头。
+                              // 免费路径是牧草机（homesteadpb.AddFeed），见 pasture_grass。
 }
 message FeedAnimalReply {
     repeated RanchInfo ranches = 1;

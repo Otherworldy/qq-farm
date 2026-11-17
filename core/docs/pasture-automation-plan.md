@@ -1589,3 +1589,34 @@ core/src/services/pasture-api.js
 1. 确认 `feed_type` 取 1 还是 2 才是免费草料；
 2. 对比投喂前后背包，确认到底扣的是哪个物品（`7004`？还是别的）；
 3. 拿到样本再决定默认值，不再靠猜。
+
+## 抓包定论：`FeedAnimal` 就是「喂罐头」
+
+用户提供了操作录像对应的 HAR（`capture/galileotelemetry.tencent.com_2026_11_17_14_02_01.har`，
+动作顺序：喂罐头 → 催生产 → 收获鸡蛋）。客户端实际发出的请求：
+
+```
+  7.83s  FeedAnimal      ← 喂罐头
+ 11.88s  TriggerProduce  ← 催生产
+ 14.92s  HarvestRanch    ← 收获鸡蛋
+ 17.22s  GetFacilityDetail
+```
+
+**时间线逐条对应**，所以 `FeedAnimal` 整个 RPC 就是「喂罐头」这个动作本身，
+不是「投喂类型」的开关。之前纠结的 `feed_type = 1 还是 2` 属于次要问题 ——
+不管传哪个，调用它都在花玩家的罐头。
+
+**免费路径是牧草机**：`homesteadpb.AddFeed`（我们代码里的 `addFeed()`，
+对应开关 `pasture_grass` 补草）。牧草机存量足够时动物会自己吃，不需要喂罐头。
+
+当前配置（已按此定）：`pasture_feed: false`、`pasture_grass: true`。
+
+## 待补：添加草料的抓包是空的
+
+`capture/galileotelemetry.tencent.com_2026_11_17_14_03_16.har` 只有 3820 字节，
+`log.entries` 里仅 1 条 `galileotelemetry.tencent.com/collect` 的 telemetry 上报，
+`_webSocketMessages` 为 0 —— **没有抓到游戏的 WS 帧**。
+
+所以「添加草料」走的是不是 `AddFeed`，目前还没有直接证据（代码里是按
+`AddFeed{facility_inst_id, count}` 实现的）。需要重抓一次：抓包开着 →
+进牧场 → 开牧草机 → 添加草料 → 停止。

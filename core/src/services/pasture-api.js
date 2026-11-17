@@ -110,9 +110,17 @@ async function harvestRanch(ranchIds, harvestType = 1) {
 }
 
 /**
- * 投喂。targets 是 {ranch_inst_id, animal_inst_id} 列表。
+ * 喂罐头。targets 是 {ranch_inst_id, animal_inst_id} 列表。
+ *
+ * 抓包确认（capture 14_02_01）：这个 RPC 就是游戏里的「喂罐头」本身 ——
+ * 用户操作「喂罐头 → 催生产 → 收获鸡蛋」对应 7.83s FeedAnimal、
+ * 11.88s TriggerProduce、14.92s HarvestRanch。它不是免费投喂，
+ * 自动调用等于替玩家消耗罐头。默认因此关闭（`pasture_feed: false`）。
+ *
+ * 免费的牧草路径是牧草机：`addFeed()`（homesteadpb.AddFeed）。
+ *
  * @param {{ranchInstId:number, animalInstId:number}[]} targets
- * @param {number} [feedType] 抓包实测出现过 1 和 2
+ * @param {number} [feedType] 1 / 2 的分工仍未确定
  */
 async function feedAnimal(targets, feedType = 1) {
     const list = (targets || []).map(t => ({

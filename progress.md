@@ -1124,3 +1124,15 @@
     自然成长（stage 2 → stage 3），只是不主动催熟/投喂。
   - **恢复投喂需要一次「手动投喂」抓包**：确认 `feed_type` 哪个值是免费草料，并对比
     投喂前后背包确认扣的是哪个物品。
+- 2026-11-17 **抓包定论：`FeedAnimal` 就是「喂罐头」本身**。
+  - 用户提供操作录像对应的 HAR
+    （`capture/galileotelemetry.tencent.com_2026_11_17_14_02_01.har`，动作：
+    喂罐头 → 催生产 → 收获鸡蛋），客户端实际请求时间线逐条吻合：
+    `7.83s FeedAnimal → 11.88s TriggerProduce → 14.92s HarvestRanch`。
+  - 所以不需要再纠结 `feed_type = 1 还是 2` —— **整个 RPC 就是罐头路径**，
+    调用它就在花玩家的罐头。免费路是牧草机 `homesteadpb.AddFeed`
+    （代码 `addFeed()`，对应开关 `pasture_grass`）。
+  - 当前配置：`pasture_feed: false`、`pasture_grass: true`。
+  - **待补**：`capture/…_14_03_16.har`（添加草料）只有 3820 字节，`log.entries`
+    仅 1 条 telemetry POST、`_webSocketMessages` 为 0 —— **没抓到游戏 WS 帧**，
+    需要重抓才能确认「添加草料」走的是 `AddFeed`。
