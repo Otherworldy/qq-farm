@@ -26,6 +26,10 @@ services:
       NODE_ENV: production
       ADMIN_PORT: "3007"
       FARM_DATA_DIR: /app/core/data
+      # 容器自带的 CA bundle 缺 DigiCert 根证书；而且本机抓包工具（Reqable）
+      # 会对出网流量做中间人，它的根证书也不在容器信任库里。这里挂一份由
+      # Mozilla bundle + 本机抓包 CA 合并的信任列表，文件放在数据目录内。
+      NODE_EXTRA_CA_CERTS: /app/core/data/ca-bundle.pem
       CAPTURE_ADVERTISE_IPS: "${CAPTURE_ADVERTISE_IPS:-auto}"
       # 管理员首次初始化（可选）：默认空值，未设置时正常启动，已有管理员数据不受影响
       FARM_ADMIN_USERNAME: "${FARM_ADMIN_USERNAME:-}"

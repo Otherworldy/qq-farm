@@ -29,6 +29,7 @@ interface AutomationSettings {
     pasture_stroke: boolean
     pasture_refill: boolean
     pasture_grass: boolean
+    pasture_sell_produce: boolean
     pasture_buy_animal: boolean
     pasture_steal: boolean
     pasture_task: boolean
@@ -188,6 +189,7 @@ const mysteryShopSettingsVisible = ref(false)
           <BaseSwitch v-model="settings.automation.pasture_stroke" label="自动抚摸（推进产出）" />
           <BaseSwitch v-model="settings.automation.pasture_refill" label="自动补栏（用背包动物）" />
           <BaseSwitch v-model="settings.automation.pasture_grass" label="自动给牧草机补草" />
+          <BaseSwitch v-model="settings.automation.pasture_sell_produce" label="自动出售牧场产物（换牧场币）" />
           <BaseSwitch v-model="settings.automation.pasture_buy_animal" label="自动买动物（花牧场币）" />
           <BaseSwitch v-model="settings.automation.pasture_steal" label="偷好友牧场产物" />
           <BaseSwitch v-model="settings.automation.pasture_task" label="自动领牧场任务" />

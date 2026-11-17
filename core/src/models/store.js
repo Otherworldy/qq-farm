@@ -284,6 +284,10 @@ const DEFAULT_AUTOMATION = {
     pasture_stroke: true,
     pasture_refill: true,
     pasture_grass: true,
+    // 收获/捡蛋得到的产物（106xxxx）自动卖成牧场币（1007）。
+    // 抓包（出售鸡蛋.har）证实 ItemService.Sell 能把 1060001 → 1007；
+    // 不卖就是纯亏 —— 产物堆在背包里，买动物却一直在花牧场币。
+    pasture_sell_produce: true,
     // 买动物要花牧场货币（item 1007）。默认关闭，让用户显式开启。
     pasture_buy_animal: false,
     // 好友牧场偷产物。默认关闭：会给每个好友多发一次请求，预算要先让农场。

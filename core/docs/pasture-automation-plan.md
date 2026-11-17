@@ -1692,3 +1692,81 @@ int32 current  = 2;   // 抓包恒为 72，语义未知
 - 读设施详情有节流，不会每轮都读
 
 牧场全套 **125 项全绿**。
+
+---
+
+# 第十五轮：产物明细 + 自动出售（牧场终于能回血）
+
+用户补充了 13 份新抓包（`capture/` 下 15:02–15:12），逐份解析后确认了两个此前一直
+没打通的环节。
+
+## 一、`HarvestRanchReply` 有产物明细，我们只解析了一半
+
+抓包（`收获鸡蛋-一键收获.har`）的原始字节：
+
+```
+HarvestRanchReply
+  f1 = RanchInfo { ... }                     ← 我们只解析了这个
+  f5 = {                                     ← 一直当成未知字段跳过
+    f1 = 10001          ranch_inst_id
+    f2 = 2
+    f3 = 4
+    f10 = { f1 = 1060001, f2 = 4 }           产物：鸡蛋 ×4
+  }
+```
+
+同批抓包里 `HarvestRanch` 响应的 `RanchInfo.f7` 还带着本次操作明细
+（`{f1=1060001, f2=5, f5=60001}` —— 产物 + 动物 id），进一步印证 `1060001` 是鸡蛋。
+
+**后果**：收获完永远不知道拿到了什么，也就没法记账、没法卖。
+
+已补 `RanchProduce` / `RanchProduceItem`，`HarvestRanchReply` 现在同时解析 `ranches`
+和 `produces`。
+
+## 二、牧场产物必须手动出售才变成牧场币
+
+`查看牧场仓库-出售鸡蛋-批量出售.har` 里的 `ItemService.Sell` 回包：
+
+```
+f1 { f1 = 1060001, f2 = 2 }     卖出 鸡蛋 ×2
+f2 { f1 = 1007,    f2 = 2 }     得到 牧场币 ×2
+```
+
+而代码里的 `sellAllFruits` 走 `isFruitItemId`，只认作物果实，牧场产物根本不在其中
+—— **产物一直躺在背包里，买动物却持续花牧场币，所以牧场长期净亏**。
+
+## 三、产物 ID 规律（可推导）
+
+抓包里 `1060001` 对应 `60001`（鸡），`CannelNew` 出现 `1065002`/`1065003` 对应棚类
+`70002`/`70003`。规律：
+
+```
+窝类 60001-60016 → 1060001-1060016
+棚类 70001-70012 → 1065001-1065012
+```
+
+已实现 `getPastureProduceItemId()` / `getPastureAnimalIdByProduceItem()` /
+`isPastureProduceItemId()`，正反向都能换算。
+
+## 四、自动出售
+
+新增开关 `pasture_sell_produce`（默认开）。收获/捡蛋后直接用回包里的产物列表
+调 `ItemService.Sell`，不读背包 —— 避免本地与服务端短暂不同步时卖出不存在的东西。
+只卖 `106xxxx`，作物果实不碰。
+
+## 五、顺手修掉的阻塞问题
+
+容器一度完全连不上（`unable to verify the first certificate`）。查明不是代码问题：
+
+1. 镜像自带的 CA bundle 缺 DigiCert 根证书；
+2. 本机抓包工具 Reqable 会对出网流量做中间人，它的根证书也不在容器信任库里
+   （抓包确认：容器拿到的证书 issuer 是 `Reqable CA`，宿主机拿到的是真
+   `DigiCert Secure Site OV G2`）。
+
+修法：把 Mozilla bundle + 本机抓包 CA 合并成 `data/ca-bundle.pem`，
+`docker-compose.yml` 加 `NODE_EXTRA_CA_CERTS` 指向它。容器恢复登录。
+
+## 测试
+
+`core/test/pasture-orchestrator.test.js` 追加 3 项（收获后出售 / 开关关闭不出售 /
+只卖牧场产物），`pasture-api.test.js` 更新 Reply 字段断言。牧场全套 **128 项全绿**。

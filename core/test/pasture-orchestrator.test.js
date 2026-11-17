@@ -65,6 +65,7 @@ function setupMocks(options = {}) {
         pasture_feed: true,
         pasture_clean: true,
         pasture_grass: true,
+        pasture_sell_produce: true,
         pasture_refill: true,
         pasture_buy_animal: false,
         ...(options.auto || {}),
@@ -86,7 +87,7 @@ function setupMocks(options = {}) {
 
     const api = {
         getRanchDetail: async () => { calls.push('getRanchDetail'); return options.reply || ranchReply(); },
-        harvestRanch: async () => { calls.push('harvestRanch'); return { ranches: [] }; },
+        harvestRanch: async () => { calls.push('harvestRanch'); return options.harvestReply || { ranches: [] }; },
         feedAnimal: async (targets) => { calls.push('feedAnimal'); calls.push(`feed:${targets.length}`); return { ranches: [] }; },
         cleanAllRanch: async () => { calls.push('cleanAllRanch'); return { ranches: [] }; },
         getFacilityDetail: async () => {
@@ -132,6 +133,12 @@ function setupMocks(options = {}) {
         getBag: async () => {
             calls.push('getBag');
             return { item_bag: { items: options.bagItems || [] } };
+        },
+        // 收获后把产物卖成牧场币；测试里只记录调用参数
+        sellItems: async (items) => {
+            calls.push('sellItems');
+            calls.push(`sell:${items.map(x => `${x.id}x${x.count}`).join(',')}`);
+            return { sell_items: items, get_items: [] };
         },
     });
 
@@ -848,4 +855,45 @@ test('补草：读设施详情有节流，不会每轮都读', async () => {
     await orchestrator.runPastureOperation('grass');
     const second = calls.filter(c => c === 'getFacilityDetail').length;
     assert.equal(first, second, '60 秒检查间隔内不应重复读设施详情');
+});
+
+// ── 产物出售：牧场唯一的收入来源 ──
+
+test('收获后把产物卖掉换牧场币', async () => {
+    const base = ranchReply();
+    // 让回包带上 HarvestRanchReply.f5（这次收获的产物）
+    const reply = {
+        ...base,
+        produces: [{ ranchInstId: 10001, items: [{ itemId: 1060001, count: 3 }] }],
+    };
+    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces } });
+    await orchestrator.runPastureOperation('harvest');
+    assert.ok(calls.includes('sellItems'), '应调用出售');
+    assert.ok(calls.includes('sell:1060001x3'), `应卖出 1060001x3，实际 ${calls.filter(c => String(c).startsWith('sell:')).join('|')}`);
+});
+
+test('出售开关关闭时不动产物', async () => {
+    const base = ranchReply();
+    const reply = {
+        ...base,
+        produces: [{ ranchInstId: 10001, items: [{ itemId: 1060001, count: 2 }] }],
+    };
+    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces }, auto: { pasture_sell_produce: false } });
+    await orchestrator.runPastureOperation('harvest');
+    assert.ok(!calls.includes('sellItems'), '关掉开关就不该出售');
+});
+
+test('非牧场产物不卖（只卖 106xxxx）', async () => {
+    const base = ranchReply();
+    const reply = {
+        ...base,
+        produces: [{ ranchInstId: 10001, items: [
+            { itemId: 1060001, count: 1 },
+            { itemId: 46032, count: 99 },   // 作物果实，不归牧场卖
+        ] }],
+    };
+    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces } });
+    await orchestrator.runPastureOperation('harvest');
+    const sold = calls.find(c => String(c).startsWith('sell:'));
+    assert.ok(sold === 'sell:1060001x1', `只应卖牧场产物，实际 ${sold}`);
 });

@@ -15,6 +15,7 @@
 const { getUserState, isConnected } = require('../utils/network');
 const { toNum, log, logWarn } = require('../utils/utils');
 const { isAutomationOn, getAutomation, getPasturePreferredAnimal, getPastureBuyStrategy, getPastureGrassThreshold } = require('../models/store');
+const { isPastureProduceItemId } = require('../config/gameConfig');
 const { recordEvent } = require('./daily-events');
 const {
     getRanchDetail,
@@ -32,7 +33,7 @@ const {
     isAnimalItemId,
     FEED_MACHINE_FACILITY_ID,
 } = require('./pasture-api');
-const { getBag } = require('./warehouse');
+const { getBag, sellItems } = require('./warehouse');
 const { recordOperation } = require('./stats');
 const {
     recordPlacement,
@@ -129,6 +130,53 @@ function noteEvent(level, message) {
  * `1045229 当前没有可收取的产物` 属于正常状态（本地 analysis 与服务端快照
  * 短暂不同步时会撞到），按空操作处理，不按失败记录。
  */
+/**
+ * 把一次收获/捡蛋拿到的产物卖掉，换牧场币（1007）。
+ *
+ * 抓包（capture/查看牧场仓库-出售鸡蛋-批量出售.har）确认：
+ *   ItemService.Sell 回包
+ *     { f1: 1060001, f2: 2 }   ← 卖出 鸡蛋 ×2
+ *     { f1: 1007,    f2: 2 }   ← 得到 牧场币 ×2
+ * 不卖的话产物只是躺在背包里，而买动物一直在花牧场币 —— 牧场会持续净亏。
+ *
+ * 产物列表直接取自 `HarvestRanchReply.produces`（这次实际拿到的），
+ * 不去猜背包状态，避免本地与服务端短暂不同步时卖出不存在的东西。
+ */
+async function sellHarvestProduce(reply) {
+    if (!isAutomationOn('pasture_sell_produce')) return 0;
+    const items = [];
+    for (const produce of (reply && reply.produces) || []) {
+        for (const it of produce.items || []) {
+            const id = toNum(it.itemId);
+            const count = toNum(it.count);
+            if (id > 0 && count > 0 && isPastureProduceItemId(id)) {
+                items.push({ id, count });
+            }
+        }
+    }
+    if (!items.length) return 0;
+
+    try {
+        await sellItems(items);
+    } catch (err) {
+        if (!isTransientNetworkError(err)) {
+            logWarn('牧场', `产物出售失败: ${err.message}`);
+        }
+        return 0;
+    }
+
+    const total = items.reduce((sum, x) => sum + x.count, 0);
+    const detail = items.map(x => `${x.id}x${x.count}`).join(', ');
+    logPasture(`出售牧场产物 ${detail}`, {
+        event: '牧场出售产物',
+        count: total,
+        items,
+    });
+    noteEvent('info', `牧场产物出售：${detail}`);
+    recordOperation('pastureSellProduce', total);
+    return total;
+}
+
 async function performHarvest(analysis, shelvesOnly = false) {
     const harvestable = analysis.harvestable || [];
     const shelves = analysis.collectableShelves || [];
@@ -165,6 +213,9 @@ async function performHarvest(analysis, shelvesOnly = false) {
         });
         recordOperation('pastureCollect', shelfLots);
     }
+
+    // 产物卖掉换牧场币：这是牧场唯一的收入来源
+    await sellHarvestProduce(reply);
 
     return { reply, count: harvestType === 1 ? harvestable.length : 0, shelfLots };
 }

@@ -1150,3 +1150,23 @@
     `current/capacity*100 <= threshold`，不再用 `analysis.grassLow`（那是牧场草量，
     不是牧草机库存）。读设施详情加 60 秒节流。设置页给滑块。
   - 测试追加 4 项（高于阈值不补 / 降到阈值补齐 / 阈值 0 / 读取节流），牧场全套 **125 项全绿**。
+- 2026-11-17 **产物明细 + 自动出售：牧场终于能回血**。
+  - 用户补了 13 份抓包（`capture/` 15:02–15:12）。逐份解析出的两个关键结论：
+  - **① `HarvestRanchReply.f5` 一直是产物明细，我们当成未知字段跳过了**：
+    抓包 `{1:10001 2:2 3:4 10:{1:1060001 2:4}}` → 产物 `1060001`（鸡蛋）×4。
+    同批 `RanchInfo.f7` 还带本次操作明细（`{f1:1060001, f2:5, f5:60001}`）。
+    已补 `RanchProduce` / `RanchProduceItem`，`HarvestRanchReply` 同时解析
+    `ranches` + `produces`。
+  - **② 牧场产物必须手动卖才变牧场币**：`ItemService.Sell` 回包
+    `{1060001×2} → {1007×2}`。而 `sellAllFruits` 只认 `isFruitItemId`，
+    牧场产物不在其中 → 产物堆背包、买动物花牧场币 → 长期净亏。
+  - **③ 产物 ID 规律**：`1060001↔60001`（窝类 1060000+n）、
+    `1065002/1065003↔70002/70003`（棚类 1065000+n）。已实现正反向换算。
+  - **新增开关 `pasture_sell_produce`（默认开）**：收获/捡蛋后直接用回包里的
+    产物列表调 `ItemService.Sell`（不读背包，避免不同步时卖不存在的东西），
+    只卖 `106xxxx`。
+  - **顺手修掉阻塞**：容器 `unable to verify the first certificate` ——
+    镜像 CA bundle 缺 DigiCert，且本机 Reqable 抓包工具对出网流量做中间人
+    （容器拿到 `Reqable CA` 签的证书）。合并 Mozilla bundle + 本机抓包 CA 为
+    `data/ca-bundle.pem`，compose 加 `NODE_EXTRA_CA_CERTS`，容器恢复登录。
+  - 测试：新增 3 项（收获后出售 / 开关关闭 / 只卖牧场产物），牧场全套 **128 项全绿**。

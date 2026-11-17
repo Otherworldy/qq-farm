@@ -31,6 +31,7 @@ const defaultAutomation = {
   pasture_stroke: true,
   pasture_refill: true,
   pasture_grass: true,
+  pasture_sell_produce: true,
   pasture_buy_animal: false,
   pasture_steal: false,
   pasture_task: true,

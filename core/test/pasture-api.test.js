@@ -308,12 +308,19 @@ test('HarvestRanch 响应含「收获明细」字段时不再解码错位', () =
     assert.equal(obj.ranches[0].grass.amount, 98);
 });
 
-test('三个 Reply 都不再把明细字段当成 op_results', () => {
-    // 定义层面：这些 Reply 只保留 ranches，其余交给未知字段跳过
-    for (const name of ['HarvestRanchReply', 'TriggerProduceReply', 'CleanRanchReply',
+test('Reply 只定义 ranches（HarvestRanch 例外：f5 已由抓包确认为产物明细）', () => {
+    // 这些 Reply 只保留 ranches，其余交给未知字段跳过
+    for (const name of ['TriggerProduceReply', 'CleanRanchReply',
         'CleanAllRanchReply', 'FeedAnimalReply', 'PlaceAnimalReply', 'StealProduceReply',
         'StrokeAnimalReply', 'GetRanchDetailReply']) {
         const fields = Object.keys(types[name].fields || {});
         assert.deepEqual(fields, ['ranches'], `${name} 应只定义 ranches，实际 ${fields.join(',')}`);
     }
+
+    // HarvestRanchReply 的 f5 不再是未知字段：抓包（收获鸡蛋-一键收获.har）
+    // 明确带 {1:ranch_inst_id 2:2 3:4 10:{1:1060001 2:4}}，就是这次收获的产物。
+    // 不解析它，牧场就永远不知道自己拿到了什么，也没法把产物卖成牧场币。
+    const harvestFields = Object.keys(types.HarvestRanchReply.fields || {});
+    assert.deepEqual(harvestFields.sort(), ['produces', 'ranches'],
+        `HarvestRanchReply 应定义 ranches + produces，实际 ${harvestFields.join(',')}`);
 });

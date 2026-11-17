@@ -150,8 +150,26 @@ message HarvestRanchRequest {
 // field 5 实测是「本次收获明细」的重复消息（{1:ranch_inst_id, 2:?, 3:animal_inst_id, 10:{...}}），
 // 内部结构未完全确认。这里不定义，交给 protobufjs 按未知字段跳过，
 // 否则会被误当成 op_results 而错位（实测 invalid wire type 6）。
+// 单次收获产出的物品（HarvestRanchReply.5.f10）
+message RanchProduceItem {
+    int64 item_id = 1;        // 1060001 = 鸡蛋（窝类 60001），1065001+ = 棚类产物
+    int32 count = 2;          // 4
+}
+
+// 一次收获的产物汇总（HarvestRanchReply.5）
+//   抓包：{1:10001(ranch_inst_id) 2:2 3:4 10:{1:1060001 2:4}}
+message RanchProduce {
+    int64 ranch_inst_id = 1;
+    int32 unknown_2 = 2;
+    int32 unknown_3 = 3;
+    repeated RanchProduceItem items = 10;
+}
+
 message HarvestRanchReply {
     repeated RanchInfo ranches = 1;
+    // 这次收获 / 捡蛋实际拿到的产物。之前只解析 1，导致永远不知道收获得到什么，
+    // 也就无法出售、无法记账 —— 牧场余额只出不进的一半原因在这里。
+    repeated RanchProduce produces = 5;
 }
 
 // TriggerProduce —— 请求空，响应 RanchInfo

@@ -761,6 +761,37 @@ function getPastureFacilityName(facilityId) {
     return mapped || `设施 #${id}`;
 }
 
+/**
+ * 牧场产物 item_id ← 动物 id。
+ *
+ * 抓包（capture/收获鸡蛋-一键收获.har）确认：`HarvestRanchReply.5.f10` 里
+ * `item_id = 1060001` 对应的动物是 `60001`（鸡）。同批抓包的另一处
+ * `CannelNew` 出现 `1065002` / `1065003`，与棚类 `70002` / `70003` 对齐。
+ *
+ * 因此规律是「窝类 1060000 + 序号，棚类 1065000 + 序号」：
+ *   60001 → 1060001，70002 → 1065002
+ * 目前只在这几个 ID 上有直接样本，其余按同一规律推导。
+ */
+function getPastureProduceItemId(animalId) {
+    const id = Number(animalId) || 0;
+    if (id >= 60001 && id <= 60999) return 1060000 + (id - 60000);
+    if (id >= 70001 && id <= 70999) return 1065000 + (id - 70000);
+    return 0;
+}
+
+/** 反向：产物 item_id → 动物 id。非牧场产物返回 0。 */
+function getPastureAnimalIdByProduceItem(itemId) {
+    const id = Number(itemId) || 0;
+    if (id >= 1060001 && id <= 1060999) return 60000 + (id - 1060000);
+    if (id >= 1065001 && id <= 1065999) return 70000 + (id - 1065000);
+    return 0;
+}
+
+/** 是否牧场产物（决定能不能进自动出售）。 */
+function isPastureProduceItemId(itemId) {
+    return getPastureAnimalIdByProduceItem(itemId) > 0;
+}
+
 function getItemById(itemId) {
     const id = Number(itemId) || 0;
     // 保持未命中时返回 undefined（推导函数用 null 表示“不适用”）。
@@ -912,6 +943,9 @@ module.exports = {
     getPastureAnimalName,
     listPastureAnimals,
     getPastureFacilityName,
+    getPastureProduceItemId,
+    getPastureAnimalIdByProduceItem,
+    isPastureProduceItemId,
     registerRuntimeItem,
     getItemImageById,
     getGenericFallbackItemIds,
