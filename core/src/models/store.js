@@ -302,8 +302,8 @@ const DEFAULT_INTERVALS = {
     stealMin: 300,
     stealMax: 480,
     // 牧场：动物动作少、周期长，比农场稀疏。默认 20-30 秒。
-    pastureMin: 20,
-    pastureMax: 30
+    pastureMin: 7,
+    pastureMax: 10
 };
 
 /** 默认静默时段 */

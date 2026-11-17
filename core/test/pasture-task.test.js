@@ -190,6 +190,7 @@ test('store 默认：牧场任务默认开，牧场间隔可配', () => {
     const fs = require('node:fs');
     const src = fs.readFileSync(path.join(ROOT, 'src/models/store.js'), 'utf8');
     assert.match(src, /pasture_task:\s*true/, '牧场任务默认开');
-    assert.match(src, /pastureMin:\s*20/, '牧场间隔默认 20 秒起');
-    assert.match(src, /pastureMax:\s*30/, '牧场间隔默认 30 秒止');
+    // 官方 GetRanchDetail 实测峰值 9 次/60s（约 6.7 秒一次），默认间隔对齐它
+    assert.match(src, /pastureMin:\s*7/, '牧场间隔默认 7 秒起');
+    assert.match(src, /pastureMax:\s*10/, '牧场间隔默认 10 秒止');
 });

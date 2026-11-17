@@ -128,10 +128,21 @@ async function performHarvest(analysis) {
  * 所以这里只如实记录待收数量，不发请求 —— 宁可货架堆着，
  * 也不能再把动物误收了。等抓到 CollectProduce 样本再补上。
  */
+/** 上次报告的货架待收签名：状态不变就不再重复记日志 */
+let lastShelfReportKey = '';
+
 async function performCollectShelves(analysis) {
     const count = (analysis.collectableShelves || []).length;
-    if (!count) return 0;
+    if (!count) {
+        lastShelfReportKey = '';
+        return 0;
+    }
     const lots = analysis.collectableShelves.reduce((sum, s) => sum + s.lots.length, 0);
+    // 牧场现在 7-10 秒一轮，同一条待收提示每轮刷一次会把日志淹掉。
+    // 只在数量变化时记一条，用户仍然知道货架在堆。
+    const key = `${count}:${lots}`;
+    if (key === lastShelfReportKey) return 0;
+    lastShelfReportKey = key;
     logPasture(`货架有 ${count} 个待收（${lots} 项）：需要 CollectProduce，暂无协议样本，跳过`, {
         event: '牧场货架待收',
         count,

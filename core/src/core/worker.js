@@ -383,7 +383,7 @@ function applyIntervalsToRuntime(intervals) {
     CONFIG.stealCheckIntervalMin = stealRange.min * 1000;
     CONFIG.stealCheckIntervalMax = stealRange.max * 1000;
 
-    const pastureRange = normalizeIntervalRangeSec(iv.pastureMin, iv.pastureMax, 20, 30);
+    const pastureRange = normalizeIntervalRangeSec(iv.pastureMin, iv.pastureMax, 7, 10);
     CONFIG.pastureCheckIntervalMin = pastureRange.min * 1000;
     CONFIG.pastureCheckIntervalMax = pastureRange.max * 1000;
 }
@@ -426,8 +426,8 @@ function resetUnifiedSchedule() {
         CONFIG.helpCheckIntervalMax || 35000
     );
     const pastureDelay = randomIntervalMs(
-        CONFIG.pastureCheckIntervalMin || 20000,
-        CONFIG.pastureCheckIntervalMax || 30000
+        CONFIG.pastureCheckIntervalMin || 7000,
+        CONFIG.pastureCheckIntervalMax || 10000
     );
     const stealDelay = randInt(800, 2000);
     const now = Date.now();
@@ -531,8 +531,8 @@ async function runPastureTick(autoConfig) {
         await checkFriendPastures();
     } catch { } finally {
         const patrol = randomIntervalMs(
-            CONFIG.pastureCheckIntervalMin || 20000,
-            CONFIG.pastureCheckIntervalMax || 30000
+            CONFIG.pastureCheckIntervalMin || 7000,
+            CONFIG.pastureCheckIntervalMax || 10000
         );
         const readyMs = getNextPastureReadyInMs();
         // readyMs 为 0 表示没有已知成熟时刻：按常规间隔复查，不进入长睡
