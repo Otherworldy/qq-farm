@@ -198,9 +198,16 @@ async function performHarvest(analysis, shelvesOnly = false) {
     const shelves = analysis.collectableShelves || [];
     const shelfLots = shelves.reduce((sum, x) => sum + x.lots.length, 0);
 
-    // 有产物可收 → 只收产物（动物留栏）；没有产物才把可收获动物收出栏。
-    // 节奏由下面的催产冷却控制，而不是靠压着不收 —— 页面显示「可收获」就该收。
-    const harvestType = (harvestable.length > 0 && shelfLots === 0) ? 1 : 2;
+    // 只收蛋，不把动物收出栏。
+    //
+    // `harvest_type = 1` 会把可收获的动物**收走**，栏位立刻变空，下一轮又得买 ——
+    // 而一键生产催过之后动物很快就变成可收获，于是 30 秒一圈：
+    // 补 3 只 → 催产 → 捡蛋 → 收走 3 只 → 补 3 只，表现就是「牧场一直没有动物」。
+    //
+    // 动物应当留在栏里持续「生产中」，这样才会持续产蛋。收出栏是玩家主动卖动物
+    // 的行为，不自动做；需要时用 `pasture_harvest_animals` 单独打开。
+    const harvestAnimals = isAutomationOn('pasture_harvest_animals');
+    const harvestType = (harvestAnimals && harvestable.length > 0 && shelfLots === 0) ? 1 : 2;
     const targets = harvestType === 1 ? harvestable : shelves;
     const ranchIds = [...new Set(targets.map(x => x.ranchInstId))];
     if (!ranchIds.length) return 0;

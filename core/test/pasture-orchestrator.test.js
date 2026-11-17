@@ -161,7 +161,9 @@ test('checkPasture：总开关关闭时直接退出', async () => {
 });
 
 test('runPastureOperation：全开时按 收货架→收获→投喂→清理→补草 执行', async () => {
-    const { orchestrator, calls } = setupMocks();
+    // 默认只收蛋、不把动物收出栏（那样栏位会空掉）。这里验证编排顺序，
+    // 所以显式打开收动物出栏。
+    const { orchestrator, calls } = setupMocks({ auto: { pasture_harvest_animals: true } });
     const result = await orchestrator.runPastureOperation('all');
 
     assert.equal(result.hadWork, true);
@@ -182,7 +184,7 @@ test('runPastureOperation：全开时按 收货架→收获→投喂→清理→
 
 test('runPastureOperation：细分开关能单独关掉某一项', async () => {
     const { orchestrator, calls } = setupMocks({
-        auto: { pasture_feed: false, pasture_grass: false },
+        auto: { pasture_feed: false, pasture_grass: false, pasture_harvest_animals: true },
     });
     const result = await orchestrator.runPastureOperation('all');
     assert.ok(result.actions.includes('harvest'), '收获仍应执行');
@@ -726,7 +728,7 @@ test('有货架产物时只收产物（type=2），动物不出栏', async () =>
     assert.ok(!result.actions.includes('harvest'), '有产物时不该把动物收出栏');
 });
 
-test('没有货架产物但有可收获动物时才出栏（type=1）', async () => {
+test('默认不把动物收出栏，只在打开开关时才收（type=1）', async () => {
     const reply = {
         ranches: [{
             ranch_inst_id: 10001, capacity: 4, animal_count: 1, grass: { count: 100 },
@@ -734,15 +736,20 @@ test('没有货架产物但有可收获动物时才出栏（type=1）', async ()
             shelves: [],
         }],
     };
-    const { orchestrator, calls } = setupMocks({
-        reply,
-        bagItems: [{ id: 1007, count: 50000 }],
-        auto: { pasture_harvest: true },
-    });
 
-    const result = await orchestrator.runPastureOperation('harvest');
-    assert.equal(calls.filter(c => String(c).startsWith('harvestRanch')).length, 1);
-    assert.ok(result.actions.includes('harvest'), '无可收产物时才出栏腾位');
+    // 默认：不收动物，栏位保持有人
+    const off = setupMocks({ reply, bagItems: [{ id: 1007, count: 50000 }] });
+    const r1 = await off.orchestrator.runPastureOperation('harvest');
+    assert.equal(off.calls.filter(c => String(c).startsWith('harvestRanch')).length, 0,
+        '默认不该收动物出栏，否则栏位会一直空');
+    assert.ok(!r1.actions.includes('harvest'));
+
+    // 打开开关：才收出栏
+    const on = setupMocks({ reply, bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_harvest_animals: true } });
+    const r2 = await on.orchestrator.runPastureOperation('harvest');
+    assert.equal(on.calls.filter(c => String(c).startsWith('harvestRanch')).length, 1);
+    assert.ok(r2.actions.includes('harvest'), '打开开关后才出栏');
 });
 
 test('货架没有产物、动物也不可收时一次都不发', async () => {
@@ -866,7 +873,7 @@ test('收获后把产物卖掉换牧场币', async () => {
         ...base,
         produces: [{ ranch_inst_id: 10001, items: [{ item_id: 1060001, count: 3 }] }],
     };
-    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces } });
+    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces }, auto: { pasture_harvest_animals: true } });
     await orchestrator.runPastureOperation('harvest');
     assert.ok(calls.includes('sellItems'), '应调用出售');
     assert.ok(calls.includes('sell:1060001x3'), `应卖出 1060001x3，实际 ${calls.filter(c => String(c).startsWith('sell:')).join('|')}`);
@@ -878,7 +885,7 @@ test('出售开关关闭时不动产物', async () => {
         ...base,
         produces: [{ ranch_inst_id: 10001, items: [{ item_id: 1060001, count: 2 }] }],
     };
-    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces }, auto: { pasture_sell_produce: false } });
+    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces }, auto: { pasture_sell_produce: false, pasture_harvest_animals: true } });
     await orchestrator.runPastureOperation('harvest');
     assert.ok(!calls.includes('sellItems'), '关掉开关就不该出售');
 });
@@ -892,7 +899,7 @@ test('非牧场产物不卖（只卖 106xxxx）', async () => {
             { item_id: 46032, count: 99 },   // 作物果实，不归牧场卖
         ] }],
     };
-    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces } });
+    const { orchestrator, calls } = setupMocks({ reply, harvestReply: { ranches: [], produces: reply.produces }, auto: { pasture_harvest_animals: true } });
     await orchestrator.runPastureOperation('harvest');
     const sold = calls.find(c => String(c).startsWith('sell:'));
     assert.ok(sold === 'sell:1060001x1', `只应卖牧场产物，实际 ${sold}`);

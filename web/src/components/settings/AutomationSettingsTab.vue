@@ -23,6 +23,7 @@ interface AutomationSettings {
     golden_bug_clear: boolean
     pasture: boolean
     pasture_harvest: boolean
+    pasture_harvest_animals: boolean
     pasture_produce: boolean
     pasture_feed: boolean
     pasture_clean: boolean
@@ -183,6 +184,7 @@ const mysteryShopSettingsVisible = ref(false)
         <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
           <BaseSwitch v-model="settings.automation.pasture" label="牧场巡查" />
           <BaseSwitch v-model="settings.automation.pasture_harvest" label="自动收获（含货架）" />
+          <BaseSwitch v-model="settings.automation.pasture_harvest_animals" label="自动把动物收出栏（关掉才留栏持续产蛋）" />
           <BaseSwitch v-model="settings.automation.pasture_feed" label="自动投喂（feed_type 未经验证，可能消耗道具）" />
           <BaseSwitch v-model="settings.automation.pasture_clean" label="自动清理灾害" />
           <BaseSwitch v-model="settings.automation.pasture_produce" label="自动一键生产（下蛋前提，不消耗罐头）" />

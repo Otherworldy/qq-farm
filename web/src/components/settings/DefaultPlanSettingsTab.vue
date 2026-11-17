@@ -85,6 +85,7 @@ function createAutomationSettings() {
       golden_bug_clear: true,
       pasture: true,
       pasture_harvest: true,
+      pasture_harvest_animals: false,
       pasture_produce: true,
       pasture_feed: false,
       pasture_clean: true,
