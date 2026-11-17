@@ -46,3 +46,16 @@ test('统一调度器：三个 tick 都在偷菜分支之后被调用', () => {
         assert.ok(at > stealAt, `${call} 必须在偷菜之后仍可执行`);
     }
 });
+
+/** 卡死自愈：await 挂住时 finally 不执行，pastureTaskRunning 会永久为 true */
+test('牧场 tick 有卡死自愈与超时保护', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'src/core/worker.js'), 'utf8');
+    assert.match(src, /PASTURE_TICK_STALL_MS/, '需要卡死阈值常量');
+    assert.match(src, /pasture_tick_stall/, '卡死时要记一条可诊断的日志');
+    // 上一轮超时要能强制复位，否则后续每轮都在第一行 return
+    const guard = src.slice(src.indexOf('async function runPastureTick'), src.indexOf('async function runPastureTick') + 900);
+    assert.match(guard, /pastureTaskRunning = false;[\s\S]*if \(pastureTaskRunning \|\| friendSyncPaused\) return;/,
+        '复位必须发生在 running 判断之前');
+    // checkPasture 要走超时包装，否则挂死就再也回不来
+    assert.match(src, /withTimeout\(checkPasture\(\)/, 'checkPasture 必须带超时');
+});

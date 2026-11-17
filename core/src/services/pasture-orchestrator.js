@@ -56,9 +56,13 @@ let feedMachineInstId = FEED_MACHINE_FACILITY_ID === 7001001 ? 10002 : 0;
 const FEED_MACHINE_COOLDOWN_MS = 5 * 60_000;
 /** 牧场货币（卖产物的结算单位，抓包实测 expected_*_sells 的 id） */
 const PASTURE_CURRENCY_ID = 1007;
-/** 自动买动物的冷却：失败或余额不足后 10 分钟内不再尝试 */
-const BUY_ANIMAL_COOLDOWN_MS = 10 * 60_000;
-let lastBuyAnimalAtMs = 0;
+/**
+ * 买动物冷却，只用于**失败**（含余额不足）场景，避免反复撞同一条错误。
+ *
+ * 成功买入不再套这个冷却：之前成功也设它，结果 3 个空栏位要 30 分钟才填满，
+ * 表现出来就是「牧场跑一轮就再也不动」。
+ */
+const BUY_ANIMAL_FAIL_COOLDOWN_MS = 10 * 60_000;
 let lastBuyAnimalFailAtMs = 0;
 /** 抚摸冷却：同一只动物 10 分钟内不重复摸（抚摸能推进产出，但服务端有配额） */
 const STROKE_COOLDOWN_MS = 10 * 60_000;
@@ -280,8 +284,7 @@ async function performRefillSlots(analysis) {
     const auto = getAutomation();
     if (!auto.pasture_buy_animal) return 0;
     const now = Date.now();
-    if (now - lastBuyAnimalAtMs < BUY_ANIMAL_COOLDOWN_MS) return 0;
-    if (now - lastBuyAnimalFailAtMs < BUY_ANIMAL_COOLDOWN_MS) return 0;
+    if (now - lastBuyAnimalFailAtMs < BUY_ANIMAL_FAIL_COOLDOWN_MS) return 0;
 
     let balance = 0;
     for (const it of bagItems) {
@@ -295,37 +298,63 @@ async function performRefillSlots(analysis) {
         // 没养过的动物查不到档案，会自动退回按价格挑 —— 不编造经验值。
         const preferred = Math.max(0, Number(getPasturePreferredAnimal()) || 0);
         const strategy = String(getPastureBuyStrategy() || 'cheapest');
-        const affordable = rankAnimalGoods(
+        const pickAffordable = () => rankAnimalGoods(
             shop.goods.filter(g => g.unlocked && g.price > 0 && g.price <= balance),
             strategy,
             preferred
         );
+        let affordable = pickAffordable();
         if (!affordable.length) {
             lastBuyAnimalFailAtMs = now;
             logPasture(`余额 ${balance} 买不到可用动物（商店 ${shop.goods.length} 种）`);
             return 0;
         }
-        const pick = affordable[0];
-        await buyGoods(pick.goodsId, 1, pick.price);
-        const placed = await placeAnimal(empty[0].ranchInstId, pick.animalId);
-        // 从回包里找出刚放进去的那只，记下放栏时刻
-        try {
-            const fresh = ((placed && placed.ranches) || [])
-                .flatMap(r => r.animals || [])
-                .filter(a => toNum(a.animal_id) === pick.animalId)
-                .pop();
-            if (fresh) recordPlacement(toNum(fresh.animal_inst_id), pick.animalId, Date.now());
-        } catch { /* 记不到就等下一次 observeAnimals 补 */ }
-        lastBuyAnimalAtMs = now;
-        logPasture(`买入并补栏 1 只动物（goods ${pick.goodsId}，花费 ${pick.price}）`, {
-            event: '牧场买动物',
-            goodsId: pick.goodsId,
-            animalId: pick.animalId,
-            price: pick.price,
-        });
-        noteEvent('info', `牧场买入并补栏 1 只动物（花费 ${pick.price}）`);
-        recordOperation('pastureRefill', 1);
-        return 1;
+
+        // 一次把空栏位填满：买一只、放一只，余额递减后重新挑。
+        // 之前只买一只且成功也套 10 分钟冷却，三个空位要半小时才填满。
+        let bought = 0;
+        for (let i = 0; i < empty.length; i++) {
+            affordable = pickAffordable();
+            if (!affordable.length) break;
+            const pick = affordable[0];
+            try {
+                await buyGoods(pick.goodsId, 1, pick.price);
+                const placed = await placeAnimal(empty[i].ranchInstId, pick.animalId);
+                // 从回包里找出刚放进去的那只，记下放栏时刻
+                try {
+                    const fresh = ((placed && placed.ranches) || [])
+                        .flatMap(r => r.animals || [])
+                        .filter(a => toNum(a.animal_id) === pick.animalId)
+                        .pop();
+                    if (fresh) recordPlacement(toNum(fresh.animal_inst_id), pick.animalId, Date.now());
+                } catch { /* 记不到就等下一次 observeAnimals 补 */ }
+                balance -= pick.price;
+                bought += 1;
+                if (bought === 1) {
+                    logPasture(`买入并补栏 1 只动物（goods ${pick.goodsId}，花费 ${pick.price}）`, {
+                        event: '牧场买动物',
+                        goodsId: pick.goodsId,
+                        animalId: pick.animalId,
+                        price: pick.price,
+                    });
+                    noteEvent('info', `牧场买入并补栏 1 只动物（花费 ${pick.price}）`);
+                }
+            } catch (err) {
+                lastBuyAnimalFailAtMs = Date.now();
+                if (!isTransientNetworkError(err)) {
+                    logWarn('牧场', `买动物失败: ${err.message}`);
+                }
+                break;
+            }
+        }
+        if (!bought) return 0;
+        if (bought > 1) {
+            logPasture(`本轮共补栏 ${bought} 只（余额剩 ${balance}）`, {
+                event: '牧场买动物', count: bought, balance,
+            });
+        }
+        recordOperation('pastureRefill', bought);
+        return bought;
     } catch (err) {
         lastBuyAnimalFailAtMs = now;
         if (!isTransientNetworkError(err)) {
@@ -546,7 +575,6 @@ function resetPastureStateForTests() {
     isFirstPastureCheck = true;
     lastNextReadyAtMs = 0;
     lastFeedMachineAtMs = 0;
-    lastBuyAnimalAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
     strokedAtMs.clear();
 }

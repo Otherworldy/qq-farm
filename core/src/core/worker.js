@@ -242,6 +242,19 @@ let nextFarmRunAt = 0;
 let pastureTaskRunning = false;
 /** 预算不足跳过牧场的日志节流（60s 一条） */
 let lastPastureBudgetSkipLogAt = 0;
+/**
+ * 牧场 tick 的开始时刻与卡死阈值。
+ *
+ * `pastureTaskRunning` 靠 finally 复位，但 finally 只有 try 块结束时才跑。
+ * WebSocket 掉线时 sendMsgAsync 的 promise 可能既不 resolve 也不 reject，
+ * await 就永远挂着，finally 永不执行 —— 之后每一轮 tick 都在第一行直接
+ * return，既不报错也不写日志。真机表现就是「牧场跑一轮之后再无声响」。
+ * 所以除了超时，还要能在下一轮发现上一轮已经卡死并强制复位。
+ */
+let pastureTaskStartedAt = 0;
+const PASTURE_TICK_STALL_MS = 60_000;
+/** 单轮牧场巡查的硬超时：超过就放弃本轮，交给下一轮 */
+const PASTURE_TICK_TIMEOUT_MS = 45_000;
 /** 牧场一轮大约要的请求数：详情 + 任务 + 设施/背包，留一点余量 */
 const PASTURE_TICK_BUDGET_HEADROOM = 5;
 let nextPastureRunAt = 0;
@@ -498,9 +511,30 @@ async function runFarmTick(autoConfig) {
  *
  * 与 runFarmTick 同构，但成熟墙钟来自牧场自己的 produce_ready_at_ms：
  * 拿不到时刻时不能长睡（否则会睡过短周期产物），按常规间隔复查。
- * 请求预算和农场共用，因此牧场间隔比农场稀疏（20-30s）。
+ * 间隔对齐官方客户端实测（GetRanchDetail 峰值 9 次/60s，约 7-10 秒一轮）。
  */
+/** 给可能挂死的等待加超时，超时按失败处理但不阻塞后续轮次 */
+function withTimeout(promise, ms, label) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} 超时 ${ms}ms`)), ms);
+        if (timer.unref) timer.unref();
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer) clearTimeout(timer);
+    });
+}
+
 async function runPastureTick(autoConfig) {
+    // 上一轮卡死（await 挂住、finally 没跑到）就强制复位，否则牧场永久停摆
+    if (pastureTaskRunning && pastureTaskStartedAt
+        && Date.now() - pastureTaskStartedAt > PASTURE_TICK_STALL_MS) {
+        const stuckSec = Math.round((Date.now() - pastureTaskStartedAt) / 1000);
+        logWarn('牧场', `上一轮巡查已卡住 ${stuckSec} 秒，强制复位继续本轮`, {
+            module: 'pasture', event: 'pasture_tick_stall', result: 'warn', stuckSec,
+        });
+        pastureTaskRunning = false;
+    }
     if (pastureTaskRunning || friendSyncPaused) return;
     if (!autoConfig.pasture) return;
     // 自家农场收获到点时先让路：农场抢收的时间窗更窄
@@ -521,15 +555,23 @@ async function runPastureTick(autoConfig) {
         return;
     }
     pastureTaskRunning = true;
+    pastureTaskStartedAt = Date.now();
 
     try {
-        await checkPasture();
+        await withTimeout(checkPasture(), PASTURE_TICK_TIMEOUT_MS, '牧场巡查');
         // 牧场任务与农场任务是两套进度，各自开关：这里跟着牧场一起跑，
         // 但只在牧场开关打开时才走，免得关掉牧场还在花请求领任务。
         if (autoConfig.pasture_task) await checkAndClaimPastureTasks();
         // 好友偷产物带 5 分钟冷却，内部自己节流；开关默认关
         await checkFriendPastures();
-    } catch { } finally {
+    } catch (err) {
+        // 超时和网络错误属于临时故障，下一轮会自然重试，不当作异常上抛
+        if (err && /超时/.test(String(err.message))) {
+            logWarn('牧场', String(err.message), {
+                module: 'pasture', event: 'pasture_tick_timeout', result: 'warn',
+            });
+        }
+    } finally {
         const patrol = randomIntervalMs(
             CONFIG.pastureCheckIntervalMin || 7000,
             CONFIG.pastureCheckIntervalMax || 10000

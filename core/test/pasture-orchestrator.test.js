@@ -725,3 +725,44 @@ test('货架没有产物、动物也不可收时一次都不发', async () => {
     await orchestrator.runPastureOperation('harvest');
     assert.equal(calls.filter(c => String(c).startsWith('harvestRanch')).length, 0);
 });
+
+// ── 买动物：一轮填满所有空位，成功不套长冷却 ──
+
+function emptyRanch(n) {
+    return {
+        ranches: [{
+            ranch_inst_id: 10001,
+            capacity: n,
+            animal_count: 0,
+            grass: { count: 100 },
+            animals: [],
+            shelves: [],
+        }],
+    };
+}
+
+test('买动物：一轮把多个空位全部填满（不再 10 分钟只买一只）', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: emptyRanch(3),
+        bagItems: [{ id: 1007, count: 50000 }],
+        auto: { pasture_buy_animal: true, pasture_refill: true },
+        animalGoods: [{ goodsId: 10002, animalId: 60001, price: 2, unlocked: true }],
+    });
+
+    const result = await orchestrator.runPastureOperation('refill');
+    const buys = calls.filter(c => String(c).startsWith('buy:'));
+    assert.equal(buys.length, 3, `3 个空位应买 3 只，实际 ${buys.length}`);
+    assert.equal(result.actions.includes('refill_slots'), true);
+});
+
+test('买动物：余额只够一只时买一只就停', async () => {
+    const { orchestrator, calls } = setupMocks({
+        reply: emptyRanch(3),
+        bagItems: [{ id: 1007, count: 3 }],
+        auto: { pasture_buy_animal: true, pasture_refill: true },
+        animalGoods: [{ goodsId: 10002, animalId: 60001, price: 2, unlocked: true }],
+    });
+
+    await orchestrator.runPastureOperation('refill');
+    assert.equal(calls.filter(c => String(c).startsWith('buy:')).length, 1);
+});
