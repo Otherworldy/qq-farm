@@ -1525,3 +1525,24 @@ item 1102    x420
 ```
 
 **一轮 5 分 6 秒**，改前是 41 秒。降幅 87%，动作全部落在该发生的时候。
+
+---
+
+# 第十二轮：催产要消耗罐头，默认关掉
+
+`TriggerProduce` 不是免费的「让动物开工」，它消耗催产道具（罐头）。自动催产等于
+持续替用户花道具，而且因为它是**催熟**，花得还特别快（每轮都催 → 动物快速到
+stage 5 → 出栏 → 补栏 → 再催）。
+
+改动：
+
+- `pasture_produce` 默认值 `true → false`（`core/src/models/store.js`、
+  `web/src/composables/settings/useAutomationSettings.ts`、
+  `web/src/components/settings/DefaultPlanSettingsTab.vue`）；
+- 设置页文案改成 **「自动开工生产（消耗催产罐头）」**，让人知道代价再决定；
+- 保留 `TriggerProduce` 能力（面板可手动触发），以及 `PRODUCE_COOLDOWN_MS` 冷却；
+- **已保存的账号配置不会自动跟随代码默认值**，需要显式关一次（本次已通过
+  `POST /api/automation` 推送 `pasture_produce: false`）。
+
+关掉之后动物仍会自然成长（`stage 2 → stage 3`），只是不会主动催熟。要产蛋就得
+自己按，或者打开这个开关。

@@ -1088,3 +1088,24 @@
   - **真机一个完整周期**：`03:44:44 补栏 → 03:49:23 催产(冷却到期) → 03:49:32 捡蛋
     → 03:49:41 收获 3 只出栏 → 03:49:50 补栏 3 只`，**一轮 5 分 6 秒**，
     改前 41 秒，降幅 87%。
+- 2026-11-17 **催产消耗罐头，默认关掉**。
+  - `TriggerProduce` 不是免费的「让动物开工」，它**消耗催产道具（罐头）**。自动催产
+    等于持续替用户花道具，而且因为它是催熟，花得还特别快（每轮催 → 动物快速到
+    stage 5 → 出栏 → 补栏 → 再催）。
+  - `pasture_produce` 默认 `true → false`（store.js / useAutomationSettings.ts /
+    DefaultPlanSettingsTab.vue），设置页文案改为 **「自动开工生产（消耗催产罐头）」**。
+  - 保留 `TriggerProduce` 能力（面板可手动触发）与 `PRODUCE_COOLDOWN_MS` 冷却。
+  - **已保存账号的配置不跟随代码默认值**，本次已通过 `POST /api/automation` 推送
+    `pasture_produce: false`；日志确认催产 0 次。
+  - 关掉后动物仍自然成长（stage 2 → stage 3），只是不主动催熟。
+- 2026-11-17 **环境事故：D 盘文件系统出现过 EIO 孤立目录**。
+  - `data/login-assets` 变成既删不掉也进不去的孤立目录（`EIO` / `Permission denied`），
+    导致容器启动即崩（`mkdir '/app/core/data/login-assets'`）。已把落盘目录换成
+    `login-assets-v2` 绕过，**URL 前缀仍是 `/login-assets/`，前端无感**。
+  - 同期 `core/Dockerfile`、`core/archive/**`（35 个文件）、`web/dist`、
+    `web/node_modules/.bin` 一起消失，均已恢复：`git checkout HEAD --` 恢复文件、
+    `pnpm install --force` + `pnpm build:web` 恢复依赖与产物。
+  - `capture/ca` 仍有 EIO（抓包 CA 目录），不影响牧场自动化；建议择机对 D 盘
+    跑 `chkdsk /f` 并重启后再删孤立目录。
+  - 账号一度是 `autoLogin: false`（「已设为不登录」），已用
+    `POST /api/accounts/1/relogin` 直接登录恢复，牧场 3/3 栏位正常。

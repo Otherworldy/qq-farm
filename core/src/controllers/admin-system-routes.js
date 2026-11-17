@@ -4,7 +4,9 @@ const path = require("node:path");
 const multer = require("multer");
 const { getDataFile } = require("../config/runtime-paths");
 
-const LOGIN_ASSETS_DIR = getDataFile("login-assets");
+// 旧目录曾因文件系统损坏变成 EIO 孤立项（删不掉也进不去），换目录名绕过；
+// URL 前缀仍是 /login-assets/，对前端无感。
+const LOGIN_ASSETS_DIR = getDataFile("login-assets-v2");
 const LOGIN_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const LOGIN_LOGO_EXTENSIONS = new Map([
   ["image/png", ".png"],

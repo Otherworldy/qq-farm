@@ -386,7 +386,7 @@ function startAdminServer(dataProvider) {
   configureCorsMiddleware(app);
   configureStaticAssets(app, webDist);
   app.use("/game-config", express.static(getResourcePath("gameConfig")));
-  const loginAssetsDir = getDataFile("login-assets");
+  const loginAssetsDir = getDataFile("login-assets-v2");
   fs.mkdirSync(loginAssetsDir, { recursive: true });
   app.use(
     "/login-assets",
