@@ -101,6 +101,11 @@ function setup(options = {}) {
             if (options.detailFails && options.detailFails.includes(hostGid)) {
                 throw new Error('boom');
             }
+            if (options.detailErrorByGid && options.detailErrorByGid[hostGid]) {
+                const err = new Error(options.detailErrorByGid[hostGid]);
+                err.code = options.detailErrorCode || 1045216;
+                throw err;
+            }
             const map = options.ranchByGid || {};
             return map[hostGid] || friendRanchClean();
         },
@@ -111,6 +116,11 @@ function setup(options = {}) {
         // 好友家园门票：默认可用；测试里只关心是否成对出现
         enterHomestead: async (hostGid) => {
             calls.push(`enter:${hostGid}`);
+            if (options.enterErrorByGid && options.enterErrorByGid[hostGid]) {
+                const err = new Error(options.enterErrorByGid[hostGid]);
+                err.code = options.enterErrorCode || 1002002;
+                throw err;
+            }
             return { basic: { gid: hostGid }, homestead_cells: {} };
         },
         leaveHomestead: async (hostGid) => {
@@ -241,4 +251,40 @@ test('checkFriendPastures：白名单不含该动物时不偷', async () => {
     const result = await visit.checkFriendPastures();
     assert.equal(result.stolen, 0, '不在名单里就不偷');
     assert.equal(calls.some(c => String(c).startsWith('steal:')), false, '一次偷取请求都不该发');
+});
+
+test('不是好友的 gid 只白试一次，之后不再为它发请求', async () => {
+    const { visit, calls } = setup({
+        friends: [{ gid: 10001, name: '列表里的幽灵' }, { gid: 20002, name: '真好友' }],
+        detailErrorByGid: { 10001: 'GetRanchDetail 错误: code=1045216 你们还不是好友，无法进行此操作' },
+    });
+
+    await visit.checkFriendPastures();
+    assert.ok(calls.some(c => String(c).includes('10001')), '第一轮会试一次');
+
+    calls.length = 0;
+    visit.resetFriendPastureStateForTests();   // 只清冷却，黑名单要保留
+    await visit.checkFriendPastures();
+    assert.equal(calls.filter(c => String(c).includes('10001')).length, 0,
+        '记住「不是好友」之后不该再为它发请求');
+    assert.ok(calls.some(c => String(c).includes('20002')), '真好友仍要正常巡查');
+});
+
+test('门票回「不是好友」时直接划掉，不再走直连兜底', async () => {
+    const { visit, calls } = setup({
+        friends: [{ gid: 10001, name: '列表里的幽灵' }, { gid: 20002, name: '真好友' }],
+        enterErrorByGid: { 10001: 'EnterHomestead 错误: code=1002002 不是好友无法拜访' },
+    });
+
+    await visit.checkFriendPastures();
+    assert.ok(calls.some(c => c.startsWith('enter:10001')), '第一轮会试一次门票');
+    assert.equal(calls.some(c => String(c) === 'detail:10001'), false,
+        '已知不是好友就不必再试 host_gid 直连');
+
+    calls.length = 0;
+    visit.resetFriendPastureStateForTests();
+    await visit.checkFriendPastures();
+    assert.equal(calls.filter(c => String(c).includes('10001')).length, 0,
+        '第二轮完全跳过这个 gid');
+    assert.ok(calls.some(c => String(c).includes('20002')), '真好友照常巡查');
 });

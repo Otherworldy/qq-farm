@@ -18,6 +18,7 @@
 const { getUserState, getWs, loginGameScene, invalidateGameScene } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { logWarn } = require('../utils/utils');
+const { CONFIG } = require('../config/config');
 const { runExclusiveAutomationTask } = require('./automation-lock');
 
 /**
@@ -34,6 +35,19 @@ let lastEnterAtMs = 0;
  * 半小时后再试一次，既不刷错误日志、也不会因为一次失败永久放弃。
  */
 const SCENE_RETRY_MS = 30 * 60_000;
+
+/**
+ * 只有 QQ 端才有「切全局场景」这条链路。
+ *
+ * 微信小游戏（platform=wx）的主包 JS 里根本没有 PlayerSceneLogin /
+ * GlobalSceneService 的调用，客户端也从不切场景；牧场相关 RPC 在
+ * scene 1 下直连就能读能写（真机验证：收获、投喂、清理、生产、捡蛋、
+ * 集市、分享、任务、好友全部正常）。所以微信端不做任何场景尝试，
+ * 既不发注定被拒的请求，也不会把「该场景还未解锁」写进日志误导人。
+ */
+function supportsGlobalScene() {
+    return CONFIG.platform === 'qq';
+}
 
 /** 服务端明确回「该场景还未解锁」时，把它当成「场景不可用」处理 */
 function isSceneLockedError(err) {
@@ -52,7 +66,7 @@ function markRanchSceneBlocked(reason) {
     const state = getUserState();
     if (Number(state.ranchSceneBlockedAt) > 0) return;
     state.ranchSceneBlockedAt = Date.now();
-    logWarn('牧场', `牧场场景未解锁（${reason}），改为直连执行，${Math.round(SCENE_RETRY_MS / 60_000)} 分钟后重新探测`, {
+    logWarn('牧场', `进牧场场景被拒（${reason}），改为直连执行，${Math.round(SCENE_RETRY_MS / 60_000)} 分钟后重新探测`, {
         module: 'pasture', event: 'pasture_scene_blocked', result: 'warn',
     });
 }
@@ -121,6 +135,7 @@ function inRanchScene(run, options = {}) {
             return result;
         };
 
+        if (!supportsGlobalScene()) return runWithoutScene('platform_unsupported');
         if (!isRanchUnlocked()) return runWithoutScene('not_unlocked');
         if (isRanchSceneBlocked()) return runWithoutScene('scene_locked');
 
@@ -189,6 +204,7 @@ function resetSceneStateForTests() {
 
 module.exports = {
     RANCH_SCENE_ID,
+    supportsGlobalScene,
     resetSceneStateForTests,
     isRanchUnlocked,
     isRanchSceneBlocked,

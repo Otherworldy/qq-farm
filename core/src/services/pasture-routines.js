@@ -65,6 +65,20 @@ const daily = {
     benefit: { done: false, nextAt: 0, result: '' },
 };
 
+/**
+ * 「今天已经领过了」这类业务码。
+ *
+ * 服务端会明确拒绝重复领取（分享：1009001，商城限购：1031003），
+ * 把它们当普通失败重试，等于每轮都白发一次注定失败的请求，
+ * 还会把「已经领过」写成红色失败日志。识别出来后按完成处理。
+ */
+const ALREADY_DONE_CODES = new Set([1009001, 1009002, 1031003]);
+
+function isAlreadyDoneError(err) {
+    const code = Number(err && (err.code || err.serverErrorCode));
+    return ALREADY_DONE_CODES.has(code);
+}
+
 function today() {
     const key = gameDateKey();
     if (daily.dateKey !== key) {
@@ -305,6 +319,11 @@ async function runDailyShare() {
         logPasture('每日首次分享礼包已领取', { event: '牧场每日分享' });
         return 1;
     } catch (err) {
+        if (isAlreadyDoneError(err)) {
+            state.share.done = true;
+            state.share.result = 'already_claimed';
+            return 0;
+        }
         if (isUnknownOutcome(err)) {
             state.share.done = true;
             state.share.result = 'error';
@@ -354,6 +373,11 @@ async function runDailyBenefit() {
         logPasture('每日商城福利已领取', { event: '牧场每日福利' });
         return 1;
     } catch (err) {
+        if (isAlreadyDoneError(err)) {
+            state.benefit.done = true;
+            state.benefit.result = 'already_claimed';
+            return 0;
+        }
         if (isUnknownOutcome(err)) {
             state.benefit.done = true;
             state.benefit.result = 'error';

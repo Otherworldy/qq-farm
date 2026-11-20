@@ -51,6 +51,18 @@ function pickFriends(reply) {
 }
 
 /**
+ * 服务端明确回「你们还不是好友」的 gid。
+ * 好友列表里偶尔会混进已解除好友/陌生人的条目（真机日志里出现过 10001），
+ * 不记住就会每轮为它白发两个请求。进程内记住即可，重启重来无妨。
+ */
+const NOT_FRIEND_CODES = new Set([1045216, 1002002]);
+const notFriendGids = new Set();
+
+function isNotFriendError(err) {
+    return NOT_FRIEND_CODES.has(Number(err && (err.code || err.serverErrorCode)));
+}
+
+/**
  * 跑一轮好友牧场偷产物。
  * @param {object} [options]
  * @param {number} [options.now]
@@ -82,6 +94,7 @@ async function checkFriendPastures(options = {}) {
         const reply = await getAllFriends();
         const friends = pickFriends(reply)
             .filter(f => f.gid !== toNum(userState.gid))
+            .filter(f => !notFriendGids.has(f.gid))
             .slice(0, Number(options.maxFriends) || MAX_FRIENDS_PER_ROUND);
 
         // 好友牧场是牧场场景里的子场景：整轮进一次牧场场景，逐个好友
@@ -97,6 +110,12 @@ async function checkFriendPastures(options = {}) {
                 await enterHomestead(friend.gid);
                 entered = true;
             } catch (err) {
+                if (isNotFriendError(err)) {
+                    // 门票被拒且原因是「不是好友」：这个 gid 直接从名单里划掉，
+                    // 连后面的 host_gid 直连也不必再试。
+                    notFriendGids.add(friend.gid);
+                    continue;
+                }
                 if (!isTransientNetworkError(err)) {
                     log('牧场', `进入好友 ${friend.gid} 牧场被拒，改用直连: ${err.message}`, {
                         module: 'pasture', event: '牧场好友门票',
@@ -108,7 +127,10 @@ async function checkFriendPastures(options = {}) {
                 try {
                     detail = await getRanchDetail([], friend.gid);
                 } catch (err) {
-                    if (!isTransientNetworkError(err)) {
+                    if (isNotFriendError(err)) {
+                        // 记下来，后续轮次不再为它发请求
+                        notFriendGids.add(friend.gid);
+                    } else if (!isTransientNetworkError(err)) {
                         logWarn('牧场', `读取好友 ${friend.gid} 牧场失败: ${err.message}`);
                     }
                     continue;
@@ -179,7 +201,13 @@ function resetFriendPastureStateForTests() {
     running = false;
 }
 
+/** 测试用：清掉「不是好友」黑名单 */
+function resetFriendCacheForTests() {
+    notFriendGids.clear();
+}
+
 module.exports = {
+    resetFriendCacheForTests,
     checkFriendPastures,
     resetFriendPastureStateForTests,
     MAX_FRIENDS_PER_ROUND,

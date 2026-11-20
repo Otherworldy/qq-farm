@@ -145,10 +145,19 @@ cleanFriend / release`，外加 `acknowledge`。
    因此解锁列表可能一直是空的。`isRanchUnlocked()` 把「空列表」当未知、
    一律放行；只有明确收到 `GlobalSceneUnlockNotify` 且不含 2 时才判定未解锁。
 
-   **但「放行去试」必须配「失败后记住」**（2026-11-20 补充）：
-   首个真实账号上 `PlayerSceneLogin(2)` 直接返回 `code=1045002 该场景还未解锁`，
-   而当时的实现在失败后既不记忆也不降级，于是每轮都白发两次注定失败的登录，
-   还把 `checkPasture` 和好友巡查整轮打成「检查失败」。现在的规则是：
+   **微信端根本不走这条路**（2026-11-20 修正）：解包微信小游戏（v84）后确认，
+   主包 `subpackages/main/game.js` 里 `PlayerSceneLogin` / `GlobalSceneService`
+   出现 **0 次**，客户端从不切全局场景；而该账号牧场 4/4 栏位、草 72、
+   收获/投喂/清理/生产/捡蛋/集市/分享/任务/好友全部在 scene 1 直连跑通。
+   所以 `PlayerSceneLogin(2)` 的 `code=1045002` 并不代表「牧场未解锁」
+   ——牧场好好的，是微信端没有这个场景。现在按平台分流：
+   `CONFIG.platform !== 'qq'` 时直接跳过场景（`sceneSkipped: 'platform_unsupported'`），
+   一个请求都不发。QQ 端仍然尝试，并按下述规则降级。
+
+   **QQ 端「放行去试」必须配「失败后记住」**：
+   首个真实账号上 `PlayerSceneLogin(2)` 返回 `code=1045002`，
+   而最初的实现在失败后既不记忆也不降级，于是每轮都白发两次注定失败的登录，
+   还把 `checkPasture` 和好友巡查整轮打成「检查失败」。QQ 端的规则是：
 
    - 收到 1045002 → 记到 `userState.ranchSceneBlockedAt`，**本轮回退直连把活干完**；
    - 30 分钟内不再尝试进场景，日志只打一条；
@@ -178,6 +187,20 @@ cleanFriend / release`，外加 `acknowledge`。
    `performFeed` 直接委托 `performRefillGrass`；主动喂罐头只走
    `pasture_feed_normal` / `pasture_feed_organic`，且提交前先查桶余量。
    测试里加了一条防回归断言：投喂路径**绝不能**出现 `feedAnimal`。
+
+## 七点六、真机日志里剩下的无效请求（同日修）
+
+清掉上面两个 bug 之后，日志还剩下三类「每轮必发、每轮必失败」的请求，
+都按「识别幂等语义 / 记住结论」处理掉了：
+
+| 现象 | 业务码 | 处理 |
+|---|---|---|
+| 每日分享每轮都失败 | `1009001` 分享奖励已经领取 | 视为已完成，当天不再请求 |
+| 每日商城福利每轮都失败 | `1031003` 限购次数已用完 | 视为已完成，当天不再请求 |
+| 好友列表里的非好友 gid | `1045216` 你们还不是好友 | 记住该 gid，后续轮次直接跳过 |
+
+顺带把业务码统一暴露成 `err.code`（原先只有 `serverErrorCode`），
+上层不必再各自正则解析 message。
 
 ## 八、遗留问题（明确未做/未验证）
 

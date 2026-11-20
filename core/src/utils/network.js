@@ -491,6 +491,9 @@ function handleMessage(data) {
                     const error = new Error(`${meta.service_name}.${meta.method_name} 错误: code=${errorCode} ${meta.error_message || ''}`);
                     error.isServerBusinessError = true;
                     error.serverErrorCode = errorCode;
+                    // 统一暴露成 err.code：上层按业务码区分「已经领过了」「限购用完」
+                    // 这类幂等语义，不必再各自正则解析 message。
+                    error.code = errorCode;
                     cb(error);
                 } else {
                     cb(null, msg.body, meta);

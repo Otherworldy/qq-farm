@@ -201,3 +201,22 @@ test('网络类错误仍然上抛，不被当成场景未解锁吞掉', async ()
     await assert.rejects(() => scene.inRanchScene(async () => 'x'), /WebSocket 已断开/);
     assert.equal(scene.isRanchSceneBlocked(), false, '不能把网络故障记成场景未解锁');
 });
+
+test('微信端完全不尝试进牧场场景', async () => {
+    reset();
+    const { CONFIG } = require(path.join(SRC, 'config', 'config'));
+    const previous = CONFIG.platform;
+    CONFIG.platform = 'wx';
+    try {
+        const result = await scene.inRanchScene(async (cells) => {
+            assert.equal(cells, null);
+            return { hadWork: true };
+        });
+        assert.equal(result.hadWork, true);
+        assert.equal(result.sceneSkipped, 'platform_unsupported');
+        assert.deepEqual(events, [], '微信端不该发任何 PlayerSceneLogin');
+        assert.equal(scene.isRanchSceneBlocked(), false, '平台不支持不算「场景被拒」');
+    } finally {
+        CONFIG.platform = previous;
+    }
+});
