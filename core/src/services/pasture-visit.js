@@ -18,7 +18,10 @@ const { recordOperation } = require('./stats');
 const { getRanchDetail, stealProduce, enterHomestead, leaveHomestead } = require('./pasture-api');
 const { inRanchScene } = require('./pasture-scene');
 const { analyzeRanches } = require('./pasture-analyzer');
-const { getAllFriends } = require('./friend-api');
+// 农场侧的好友列表读取入口：自带缓存 + 在途合并（friend-land-analyzer）。
+// 直接用 friend-api.getAllFriends 会绕过这层缓存，每次巡查都真发一次
+// FriendService.GetAll，把 30/60s 的额度吃满，牧场互动连带被拦。
+const { getFriendsList } = require('./friend-land-analyzer');
 
 /** 单轮最多检查多少个好友（预算护栏，避免一次拉满） */
 const MAX_FRIENDS_PER_ROUND = 5;
@@ -91,8 +94,8 @@ async function checkFriendPastures(options = {}) {
     let checked = 0;
 
     try {
-        const reply = await getAllFriends();
-        const friends = pickFriends(reply)
+        // getFriendsList 已经是 {gid,name,...} 数组，且过滤掉了自己
+        const friends = (await getFriendsList())
             .filter(f => f.gid !== toNum(userState.gid))
             .filter(f => !notFriendGids.has(f.gid))
             .slice(0, Number(options.maxFriends) || MAX_FRIENDS_PER_ROUND);

@@ -23,7 +23,7 @@ function resetModules() {
         'services/pasture-visit',
         'services/pasture-api',
         'services/pasture-analyzer',
-        'services/friend-api',
+        'services/friend-land-analyzer',
         'services/daily-events',
         'utils/network',
         'models/store',
@@ -86,13 +86,14 @@ function setup(options = {}) {
         getPastureStealWhitelist: () => options.stealWhitelist || [],
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
-    mockModule('services/friend-api', {
-        getAllFriends: async () => {
-            calls.push('getAllFriends');
-            return { friends: options.friends || [
+    // 好友列表走 friend-land-analyzer 的带缓存入口（数组形状）
+    mockModule('services/friend-land-analyzer', {
+        getFriendsList: async () => {
+            calls.push('getFriendsList');
+            return options.friends || [
                 { gid: 1288674344, name: '好友A' },
                 { gid: 1233369866, name: '好友B' },
-            ] };
+            ];
         },
     });
     mockModule('services/pasture-api', {
@@ -160,7 +161,7 @@ test('checkFriendPastures：只对可偷的好友下手', async () => {
     assert.equal(result.checked, 2, '两个好友都看过');
     assert.equal(result.stolen, 1, '只有好友A 被偷');
     assert.deepEqual(calls, [
-        'getAllFriends',
+        'getFriendsList',
         'enter:1288674344',
         'detail:1288674344',
         'steal:1288674344',

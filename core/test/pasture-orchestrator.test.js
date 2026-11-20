@@ -34,6 +34,7 @@ function resetModules() {
     delete require.cache[require.resolve(path.join(SERVICES, 'pasture-routines'))];
     delete require.cache[require.resolve(path.join(SERVICES, 'pasture-visit'))];
     delete require.cache[require.resolve(path.join(SERVICES, 'friend-api'))];
+    delete require.cache[require.resolve(path.join(SERVICES, 'friend-land-analyzer'))];
 }
 
 /** 造一个可收获 + 可投喂 + 有灾害 + 草低 的牧场回包 */
@@ -96,11 +97,11 @@ function setupMocks(options = {}) {
         getPastureGrassThreshold: () => (options.grassThreshold === undefined ? 30 : options.grassThreshold),
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
-    mockModule('services/friend-api', {
-        // 真实实现回的是 { friends: [...] }，这里保持同样形状
-        getAllFriends: async () => {
-            calls.push('getAllFriends');
-            return { friends: options.friends || [{ gid: 20002, name: '好友' }] };
+    // 好友列表走 friend-land-analyzer 的带缓存入口（数组形状）
+    mockModule('services/friend-land-analyzer', {
+        getFriendsList: async () => {
+            calls.push('getFriendsList');
+            return options.friends || [{ gid: 20002, name: '好友' }];
         },
     });
 
@@ -916,7 +917,7 @@ test('好友互动：getAllFriends 回对象时也要真正跑起来', async () 
     await orchestrator.runPastureOperation('all');
     // getAllFriends 回 { friends: [...] } 而不是数组：之前直接传对象，
     // runFriendInteraction 的 Array.isArray 判断落空，互动永远不执行。
-    assert.ok(calls.includes('getAllFriends'), '应该拉了好友列表');
+    assert.ok(calls.includes('getFriendsList'), '应该拉了好友列表');
     // 第一次是自家详情，之后才是逐个好友；能读到第二次说明真的进了互动流程
     assert.ok(calls.filter(c => c === 'getRanchDetail').length >= 2,
         '拿到好友列表后必须进入互动流程，逐个读好友牧场');

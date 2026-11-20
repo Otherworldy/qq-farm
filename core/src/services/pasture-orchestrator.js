@@ -677,14 +677,10 @@ async function runPastureOperation(opType = 'all', options = {}) {
             if (Date.now() - lastFriendInteractAtMs >= FRIEND_INTERACT_COOLDOWN_MS) {
                 lastFriendInteractAtMs = Date.now();
                 try {
-                    const { getAllFriends } = require('./friend-api');
-                    // getAllFriends 回的是 { friends: [...] }，不是数组；
-                    // 直接传对象会让 runFriendInteraction 的 Array.isArray 判断落空，
-                    // 好友互动（抚摸/放蚊/帮清理）永远不执行。
-                    const { pickFriends } = require('./pasture-visit');
-                    const reply = await getAllFriends();
-                    const friends = pickFriends(reply)
-                        .filter(f => f.gid !== toNum(getUserState().gid));
+                    // 走农场侧带缓存的好友列表入口，避免每轮都真发一次
+                    // FriendService.GetAll（额度被三条农场巡查调度占着）。
+                    const { getFriendsList } = require('./friend-land-analyzer');
+                    const friends = await getFriendsList();
                     const interacted = await routines.runFriendInteraction(friends, shared);
                     if (interacted) actions.push('friend_interact');
                 } catch (err) {
