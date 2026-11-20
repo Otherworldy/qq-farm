@@ -372,61 +372,36 @@ test('补栏：没有空栏时完全不动', async () => {
 
 // ─── 抚摸（用户确认：抚摸能推进产出）───
 
-test('抚摸：对 strokable 的动物每轮各摸一次', async () => {
+test('抚摸：不对自家动物发 StrokeAnimal', async () => {
     const reply = ranchReply();
-    // 给两只动物加 strokable
     reply.ranches[0].animals[0].mutation = { strokable: true };
     reply.ranches[0].animals[1].mutation = { strokable: true };
     const { orchestrator, calls } = setupMocks({ reply });
 
     const result = await orchestrator.runPastureOperation('stroke');
-    assert.deepEqual(result.actions, ['stroke']);
-    const strokeCalls = calls.filter(c => c === 'strokeAnimal');
-    assert.equal(strokeCalls.length, 2, '两只都可摸');
-});
-
-test('抚摸：10 分钟冷却内不重复摸同一只', async () => {
-    const reply = ranchReply();
-    reply.ranches[0].animals[0].mutation = { strokable: true };
-    const { orchestrator, calls } = setupMocks({ reply });
-
-    await orchestrator.runPastureOperation('stroke');
-    const first = calls.filter(c => c === 'strokeAnimal').length;
-    assert.equal(first, 1);
-
-    await orchestrator.runPastureOperation('stroke');
-    const second = calls.filter(c => c === 'strokeAnimal').length;
-    assert.equal(second, 1, '冷却内第二轮不再摸');
-});
-
-test('抚摸：没有 strokable 时不发请求', async () => {
-    const { orchestrator, calls } = setupMocks();   // fixture 的 mutation 没有 strokable
-    const result = await orchestrator.runPastureOperation('stroke');
-    assert.deepEqual(result.actions, []);
+    assert.deepEqual(result.actions, [], '抚摸是好友互动，本轮不会产生自家动作');
+    // 拿自家 gid 调 StrokeAnimal 会被判 code=1000020 参数错误，这条断言防回归
     assert.equal(calls.filter(c => c === 'strokeAnimal').length, 0);
 });
 
-test('抚摸：单轮最多摸 STROKE_MAX_PER_ROUND 只', async () => {
+test('抚摸：strokable 不再让「有活」一直为真', async () => {
     const reply = ranchReply();
-    reply.ranches[0].animals = Array.from({ length: 10 }, (_, i) => ({
-        ranch_inst_id: 10001,
-        slot_index: i + 1,
-        animal_inst_id: 100 + i,
-        animal_id: 60002,
-        stage: 1,
-        mutation: { strokable: true },
-    }));
-    reply.ranches[0].capacity = 10;
+    for (const animal of reply.ranches[0].animals) animal.mutation = { strokable: true };
+    // 把其余会触发工作的条件清掉，只剩 strokable
+    for (const animal of reply.ranches[0].animals) {
+        animal.can_harvest = false;
+        animal.can_feed = false;
+        animal.producing = true;
+    }
+    reply.ranches[0].shelves = [];
+    reply.ranches[0].hazards = [];
     const { orchestrator, calls } = setupMocks({ reply });
 
-    await orchestrator.runPastureOperation('stroke');
-    assert.equal(
-        calls.filter(c => c === 'strokeAnimal').length,
-        orchestrator.STROKE_MAX_PER_ROUND,
-    );
+    const result = await orchestrator.runPastureOperation('all');
+    // hadWork 由分析结果决定；空栏可能触发补栏，所以只看分析本身
+    assert.equal(result.analysis.hasWork, false, '自家可摸不算有活，否则每轮都空转');
+    assert.equal(calls.filter(c => c === 'strokeAnimal').length, 0);
 });
-
-// ─── 空闲防护不能吞掉牧场（真机踩到）───
 
 test('planIdleProtection：牧场临近时不能进入长时防护', () => {
     const { planIdleProtection } = require('../src/utils/idle-protection');

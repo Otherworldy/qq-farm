@@ -230,11 +230,12 @@ function analyzeRanches(ranches, options = {}) {
         expectedHarvestGoldTotal,
         totalAnimals,
         totalCapacity,
+        // strokable 不算「有活」：抚摸只能对好友的动物做，
+        // 自家有可摸的动物不代表这一轮有事要干，否则会一直空转。
         hasWork: harvestable.length > 0
             || collectableShelves.length > 0
             || needFeed.length > 0
-            || needClean.length > 0
-            || strokable.length > 0,
+            || needClean.length > 0,
         label: labels.length ? `[${labels.join(' ')}]` : '[]',
     };
 }

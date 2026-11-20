@@ -160,7 +160,7 @@ async function harvestRanch(opts = {}) {
     if (Array.isArray(opts.animals) && opts.animals.length) {
         payload.animals = opts.animals.map(a => ({
             ranch_inst_id: toLong(a.ranchInstId),
-            animal_inst_id: toLong(a.animalInstId),
+            animal_inst_id: toNum(a.animalInstId),
         }));
     }
     if (Array.isArray(opts.shelves) && opts.shelves.length) {
@@ -192,7 +192,7 @@ async function harvestRanch(opts = {}) {
 async function feedAnimal(targets, bucketType = 2, options = {}) {
     const list = (targets || []).map(t => ({
         ranch_inst_id: toLong(t.ranchInstId),
-        animal_inst_id: toLong(t.animalInstId),
+        animal_inst_id: toNum(t.animalInstId),
     }));
     return sendPastureRequest(
         ANIMAL_SERVICE, 'FeedAnimal',
@@ -211,7 +211,7 @@ async function triggerProduce(targets, hostGid, options = {}) {
     if (Array.isArray(targets) && targets.length) {
         payload.targets = targets.map(t => ({
             ranch_inst_id: toLong(t.ranchInstId),
-            animal_inst_id: toLong(t.animalInstId),
+            animal_inst_id: toNum(t.animalInstId),
         }));
     }
     return sendPastureRequest(
@@ -318,7 +318,7 @@ async function strokeAnimal(animalInstId, ranchInstId, hostGid, options = {}) {
             host_gid: toLong(gid),
             target: {
                 ranch_inst_id: toLong(ranchInstId),
-                animal_inst_id: toLong(animalInstId),
+                animal_inst_id: toNum(animalInstId),
             },
         },
         options
@@ -356,7 +356,7 @@ async function donateAnimal(targets, options = {}) {
         {
             targets: (targets || []).map(t => ({
                 ranch_inst_id: toLong(t.ranchInstId),
-                animal_inst_id: toLong(t.animalInstId),
+                animal_inst_id: toNum(t.animalInstId),
             })),
         },
         options

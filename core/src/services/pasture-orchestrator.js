@@ -23,7 +23,6 @@ const {
     cleanAllRanch,
     cleanRanch,
     placeAnimal,
-    strokeAnimal,
     triggerProduce,
     getFacilityDetail,
     addFeed,
@@ -85,10 +84,7 @@ let lastBuyAnimalFailAtMs = 0;
 const PRODUCE_COOLDOWN_MS = 30_000;
 let lastProduceAtMs = 0;
 /** 抚摸冷却：同一只动物 10 分钟内不重复摸（抚摸能推进产出，但服务端有配额） */
-const STROKE_COOLDOWN_MS = 10 * 60_000;
 /** 单轮最多摸几只，避免一次把配额打空 */
-const STROKE_MAX_PER_ROUND = 5;
-const strokedAtMs = new Map();   // animalInstId -> 上次抚摸时间
 /** 好友互动（放蚊/帮清理）冷却：每 5 分钟一轮，避免反复拉好友列表 */
 const FRIEND_INTERACT_COOLDOWN_MS = 5 * 60_000;
 let lastFriendInteractAtMs = 0;
@@ -527,38 +523,20 @@ async function performRefillGrass(_analysis) {
 }
 
 /**
- * 抚摸动物。
+ * 抚摸是**好友互动**，不能摸自己的动物。
  *
- * 抓包确认抚摸会推进产出（mutation.strokable=true 的动物）。服务端对抚摸有
- * 次数限制，所以这里按「每只 10 分钟一次、单轮最多 5 只」节流，宁可少摸
- * 也不要把配额撞上限。
+ * 上游 ranch 实现里抚摸走 `visit(hostGid)`，并且明确 `hostGid === selfGid`
+ * 就抛「请选择好友牧场」；对本机实测也一样——用自家 gid 调
+ * `RanchService.StrokeAnimal` 会被服务端判 `code=1000020 请求参数错误`。
+ * 自己的动物 `mutation.strokable` 只表示「别人可以来摸」，自己摸无效。
+ *
+ * 所以这里不再直接发 StrokeAnimal，改由好友互动流程（runFriendInteraction）
+ * 按配额 11009 去摸好友牧场的动物。保留函数只是为了不打断调用链。
  */
-async function performStroke(analysis) {
-    const list = analysis.strokable || [];
-    if (!list.length) return 0;
-    const now = Date.now();
-    let count = 0;
-    for (const animal of list) {
-        if (count >= STROKE_MAX_PER_ROUND) break;
-        const last = strokedAtMs.get(animal.animalInstId) || 0;
-        if (now - last < STROKE_COOLDOWN_MS) continue;
-        try {
-            await strokeAnimal(animal.animalInstId, animal.ranchInstId);
-            strokedAtMs.set(animal.animalInstId, now);
-            count += 1;
-        } catch (err) {
-            if (!isTransientNetworkError(err)) {
-                logWarn('牧场', `抚摸 ${animal.animalInstId} 失败: ${err.message}`);
-            }
-            break;
-        }
-    }
-    if (count > 0) {
-        logPasture(`抚摸 ${count} 只动物`, { event: '牧场抚摸', count });
-        recordOperation('pastureStroke', count);
-    }
-    return count;
+async function performStroke(_analysis) {
+    return 0;
 }
+
 
 // ─── 主流程 ───
 
@@ -675,7 +653,7 @@ async function runPastureOperation(opType = 'all', options = {}) {
 
         // 好友互动：放蚊子 / 帮清理（每轮最多 3 个好友，5 分钟冷却）
         const auto = getAutomation();
-        if (auto.pasture_friend_mosquito || auto.pasture_friend_clean) {
+        if (auto.pasture_stroke || auto.pasture_friend_mosquito || auto.pasture_friend_clean) {
             if (Date.now() - lastFriendInteractAtMs >= FRIEND_INTERACT_COOLDOWN_MS) {
                 lastFriendInteractAtMs = Date.now();
                 try {
@@ -761,7 +739,6 @@ function resetPastureStateForTests() {
     lastProduceAtMs = 0;
     lastFriendInteractAtMs = 0;
     resetSceneStateForTests();
-    strokedAtMs.clear();
 }
 
 module.exports = {
@@ -779,7 +756,6 @@ module.exports = {
     performTriggerProduce,
     performRefillSlots,
     performRefillGrass,
-    STROKE_MAX_PER_ROUND,
     msUntilNextProduce,
     PASTURE_CURRENCY_ID,
 };

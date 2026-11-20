@@ -396,16 +396,22 @@ async function runDailyBenefit() {
 const MAX_FRIENDS_PER_ROUND = 3;
 
 /**
- * 好友牧场互动：放蚊子 + 帮忙清理。
+ * 好友牧场互动：抚摸 + 放蚊子 + 帮忙清理。
  * 只做「对好友有好处 / 自己拿配额奖励」的动作，不在这里偷产物（偷在 pasture-visit）。
+ *
+ * 抚摸只能对好友的动物做：`mutation.strokable` 表示「别人可以来摸」，
+ * 拿自家 gid 调 StrokeAnimal 会被判参数错误（code=1000020），
+ * 上游实现里也是同一个约束。
  */
 async function runFriendInteraction(friends) {
     const auto = getAutomation();
+    const wantStroke = !!auto.pasture_stroke;
     const wantMosquito = !!auto.pasture_friend_mosquito;
     const wantClean = !!auto.pasture_friend_clean;
-    if (!wantMosquito && !wantClean) return 0;
+    if (!wantStroke && !wantMosquito && !wantClean) return 0;
     if (!Array.isArray(friends) || !friends.length) return 0;
 
+    const selfGid = String(api.selfGid());
     let done = 0;
     let visited = 0;
     for (const friend of friends) {
@@ -420,6 +426,29 @@ async function runFriendInteraction(friends) {
         }
         for (const ranch of detail.ranches || []) {
             const ranchId = toNum(ranch.ranch_inst_id);
+
+            // 抚摸放在最前面：下面的清理成功后是 break，会跳过同好友其余栏舍
+            if (wantStroke) {
+                const animal = (ranch.animals || []).find(a => a.mutation && a.mutation.strokable
+                    && !(a.mutation.stroked_gids || []).some(g => String(g) === selfGid));
+                if (animal) {
+                    const animalId = toNum(animal.animal_inst_id);
+                    try {
+                        const quote = await actions.planAction('stroke', {
+                            hostGid: friend.gid, ranchId, animalId,
+                        });
+                        if (!quote.skipped) {
+                            await actions.operate('stroke', {
+                                hostGid: friend.gid, ranchId, animalId, expected: quote.expected,
+                            });
+                            done += 1;
+                        }
+                    } catch (err) {
+                        if (!isExpectedError(err) && !isUnknownOutcome(err)) throw err;
+                    }
+                }
+            }
+
             if (wantClean) {
                 try {
                     const quote = await actions.planAction('cleanFriend', { hostGid: friend.gid });

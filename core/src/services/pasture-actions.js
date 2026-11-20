@@ -387,7 +387,7 @@ function pickAnimalRefs(plan, input, state, requireFlag) {
         if (requireFlag && !animal[requireFlag]) continue;
         picks.push({
             ranch_inst_id: qty(ranch.ranch_inst_id),
-            animal_inst_id: qty(animal.animal_inst_id),
+            animal_inst_id: idOf(animal.animal_inst_id),
         });
     }
     if (!picks.length && (ranchId || animalId)) {
@@ -435,7 +435,7 @@ function buildFeed(plan, input, state) {
         .filter(e => bucketType === 1 || !e.animal.limited_can_used)
         .map(e => ({
             ranch_inst_id: qty(e.ranch.ranch_inst_id),
-            animal_inst_id: qty(e.animal.animal_inst_id),
+            animal_inst_id: idOf(e.animal.animal_inst_id),
         }));
     if (!targets.length) { plan.count = 0; return; }
     const total = balanceOf(state.bag, bucketId).total;
