@@ -435,6 +435,10 @@ const PASTURE_TASK_CATEGORY = {
 let checkingPastureTasks = false;
 // 「扫过但没有可领」的低频记录，避免每轮都静默返回、看不出功能有没有在跑
 let lastPastureTaskScanLogAt = 0;
+// 任务进度是靠生产/收获推进的，秒级重扫没有任何意义：
+// 两次扫描之间隔一段时间，日志和请求预算都能省下来。
+const PASTURE_TASK_SCAN_COOLDOWN_MS = 10 * 60_000;
+let lastPastureTaskScanAt = 0;
 
 function pastureTaskCategory(taskType) {
   return PASTURE_TASK_CATEGORY[toNum(taskType)] || '';
@@ -455,10 +459,15 @@ function logPastureTaskScan(scanned, claimable, reason) {
   });
 }
 
-async function checkAndClaimPastureTasks() {
+async function checkAndClaimPastureTasks(options = {}) {
   if (checkingPastureTasks) return 0;
   if (!isAutomationOn('pasture_task')) return 0;
   if (!isConnected()) return 0;
+  // 定时调度走冷却；面板手动点「领取」时传 force 立刻扫
+  if (!options.force) {
+    if (Date.now() - lastPastureTaskScanAt < PASTURE_TASK_SCAN_COOLDOWN_MS) return 0;
+    lastPastureTaskScanAt = Date.now();
+  }
 
   checkingPastureTasks = true;
   let claimed = 0;
@@ -505,6 +514,12 @@ async function checkAndClaimPastureTasks() {
   }
 
   return claimed;
+}
+
+/** 测试用：清掉扫描冷却与日志节流 */
+function resetPastureTaskScanForTests() {
+  lastPastureTaskScanAt = 0;
+  lastPastureTaskScanLogAt = 0;
 }
 
 /** 只读：牧场任务概况，供面板展示 */
@@ -594,6 +609,7 @@ function cleanupTaskSystem() {
 module.exports = {
   checkAndClaimTasks,
   checkAndClaimPastureTasks,
+  resetPastureTaskScanForTests,
   getPastureTaskSummary,
   PASTURE_SCENE_ID,
   initTaskSystem,

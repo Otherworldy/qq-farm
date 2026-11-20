@@ -67,6 +67,7 @@ function makeTask(id, taskType, { canClaim = true } = {}) {
 }
 
 function resetState() {
+    task.resetPastureTaskScanForTests();
     sent.length = 0;
     replyTasks = [];
     replyGrowth = [];
@@ -193,4 +194,22 @@ test('store 默认：牧场任务默认开，牧场间隔可配', () => {
     // 官方 GetRanchDetail 实测峰值 9 次/60s（约 6.7 秒一次），默认间隔对齐它
     assert.match(src, /pastureMin:\s*7/, '牧场间隔默认 7 秒起');
     assert.match(src, /pastureMax:\s*10/, '牧场间隔默认 10 秒止');
+});
+test('定时调度有 10 分钟冷却，force 可立即重扫', async () => {
+    resetState();
+    replyTasks = [makeTask(1, 4)];
+
+    await task.checkAndClaimPastureTasks();
+    const first = sent.filter(s => s.method === 'TaskInfo').length;
+    assert.equal(first, 1);
+
+    // 冷却内再调：一个请求都不该发
+    sent.length = 0;
+    await task.checkAndClaimPastureTasks();
+    assert.equal(sent.filter(s => s.method === 'TaskInfo').length, 0,
+        '任务进度靠生产/收获推进，秒级重扫没有意义');
+
+    // 面板手动领取走 force
+    await task.checkAndClaimPastureTasks({ force: true });
+    assert.equal(sent.filter(s => s.method === 'TaskInfo').length, 1);
 });

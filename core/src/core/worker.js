@@ -1995,7 +1995,7 @@ async function handleApiCall(msg) {
                 result = await getPastureTaskSummary();
                 break;
             case 'claimPastureTasks':
-                result = { claimed: await checkAndClaimPastureTasks() };
+                result = { claimed: await checkAndClaimPastureTasks({ force: true }) };
                 break;
             case 'planPastureAction': {
                 // 两段式的第一段：只报价，不发写请求
