@@ -30,6 +30,7 @@ const {
     buyGoods,
     isAnimalItemId,
     FEED_MACHINE_FACILITY_ID,
+    getBag: getPastureBag,
 } = require('./pasture-api');
 const { getBag, sellItems } = require('./warehouse');
 const { cannelNew } = require('./pasture-api');
@@ -571,6 +572,24 @@ async function runPastureOperation(opType = 'all', options = {}) {
     observeAnimals(analysis.allAnimals || []);
 
     const actions = [];
+
+    // 本轮共享快照：详情直接复用刚读到的那份，背包按需读一次。
+    // 之前每个 planAction/operate 都自己 loadRaw()，一轮有 3 个动作就要
+    // 多打 6 次 GetRanchDetail + 6 次 GetBag，60 秒能把通信预算吃满。
+    let sharedRaw = null;
+    let sharedRawPromise = null;
+    const shared = async () => {
+        if (sharedRaw) return sharedRaw;
+        if (!sharedRawPromise) {
+            sharedRawPromise = (async () => {
+                // 牧场背包是 scene=2 的独立副本，不能用仓库那份（scene 1）
+                const bag = await getPastureBag();
+                return { detail: reply, ranches, bag, hostGid: 0 };
+            })();
+        }
+        sharedRaw = await sharedRawPromise;
+        return sharedRaw;
+    };
     const auto = getAutomation();
     // opType 指定单项时只做那项；'all' 时看各自的细分开关。
     // 总开关 pasture 已在 checkPasture 校验过。
@@ -602,7 +621,7 @@ async function runPastureOperation(opType = 'all', options = {}) {
         // 继续走旧的单一投喂路径，既有行为保持不变。
         const feedAuto = getAutomation();
         if (feedAuto.pasture_feed_normal || feedAuto.pasture_feed_organic) {
-            const n = await routines.runFeedBuckets();
+            const n = await routines.runFeedBuckets(shared);
             if (n) actions.push('feed');
         } else {
             const r = await performFeed(analysis);
@@ -615,18 +634,19 @@ async function runPastureOperation(opType = 'all', options = {}) {
     }
 
     // ─── 扩展阶段（2026-11-20 对齐上游 ranch 实现）───
+
     // 只在整体轮次里跑：面板单项操作不应衍生出额外动作。
     if (opType === 'all') {
         // 集市兑换（货币余额决定能换多少，内部会自己判余额）
-        const exchanged = await routines.runMarketExchange();
+        const exchanged = await routines.runMarketExchange(shared);
         if (exchanged) actions.push('market_exchange');
 
         // 设施：棚激活 / 升级 / 完成升级
-        const facilityDone = await routines.runFacilityUpgrade();
+        const facilityDone = await routines.runFacilityUpgrade(shared);
         if (facilityDone) actions.push('facility_upgrade');
 
         // 图鉴奖励（收获之后才有新解锁，所以放在收获后面）
-        const bookDone = await routines.runClaimIllustrated();
+        const bookDone = await routines.runClaimIllustrated(shared);
         if (bookDone) actions.push('claim_illustrated');
     }
     if (want('refill', 'pasture_refill') && analysis.emptySlots.length) {
@@ -642,13 +662,13 @@ async function runPastureOperation(opType = 'all', options = {}) {
 
     if (opType === 'all') {
         // 罐头入桶（不消耗，只搬位置）
-        const filled = await routines.runFillCans();
+        const filled = await routines.runFillCans(shared);
         if (filled) actions.push('fill_cans');
 
         // 每日分享礼包 / 罐头商城每日福利
-        const shareDone = await routines.runDailyShare();
+        const shareDone = await routines.runDailyShare(shared);
         if (shareDone) actions.push('daily_share');
-        const benefitDone = await routines.runDailyBenefit();
+        const benefitDone = await routines.runDailyBenefit(shared);
         if (benefitDone) actions.push('daily_benefit');
 
         // 好友互动：放蚊子 / 帮清理（每轮最多 3 个好友，5 分钟冷却）
@@ -665,7 +685,7 @@ async function runPastureOperation(opType = 'all', options = {}) {
                     const reply = await getAllFriends();
                     const friends = pickFriends(reply)
                         .filter(f => f.gid !== toNum(getUserState().gid));
-                    const interacted = await routines.runFriendInteraction(friends);
+                    const interacted = await routines.runFriendInteraction(friends, shared);
                     if (interacted) actions.push('friend_interact');
                 } catch (err) {
                     if (!isTransientNetworkError(err)) {

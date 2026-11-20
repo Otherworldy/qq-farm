@@ -16,6 +16,16 @@ const api = require('./pasture-api');
 const { recordEvent } = require('./daily-events');
 const { getUserState } = require('../utils/network');
 
+/**
+ * 解析本轮快照：调度器传 loader（真正需要时才读背包），
+ * 面板/单项调用不传，各自读一份；也允许直接传对象，方便测试。
+ */
+async function resolveRaw(sharedRaw) {
+    if (typeof sharedRaw === 'function') return await sharedRaw();
+    if (sharedRaw) return sharedRaw;
+    return await actions.loadRaw();
+}
+
 // ─── 集市兑换配置 ───
 
 /** 货币 → 目标奖励优先级 */
@@ -104,7 +114,7 @@ function hasPendingDailyWork() {
 /**
  * 集市兑换。按「货币余额有增量」判断是否到账，避免每轮都空跑一次市场接口。
  */
-async function runMarketExchange() {
+async function runMarketExchange(sharedRaw = null) {
     const auto = getAutomation();
     const enabled = MARKET_EXCHANGES.filter(e => auto[e.key]);
     if (!enabled.length) return 0;
@@ -117,7 +127,7 @@ async function runMarketExchange() {
     }
     if (!rotation.opened || !rotation.present) return 0;
 
-    const raw = await actions.loadRaw();
+    const raw = await resolveRaw(sharedRaw);
     let done = 0;
     for (const exchange of enabled) {
         const left = actions.availableOf(raw, exchange.currencyId);
@@ -140,7 +150,7 @@ async function runMarketExchange() {
                     goodsId: toNum(good.goods_id), count,
                 }, raw);
                 if (quote.skipped) break;
-                await actions.operate('exchange', { goodsId: toNum(good.goods_id), count, expected: quote.expected });
+                await actions.operate('exchange', { goodsId: toNum(good.goods_id), count, expected: quote.expected, raw });
                 done += count;
                 logPasture(`集市兑换 ${count} 份`, { event: '牧场集市', goodsId: toNum(good.goods_id), count });
             } catch (err) {
@@ -164,9 +174,9 @@ async function runMarketExchange() {
  *   2. 有升级目标且条件满足 → UpgradeBuilding（费用来自 GetFacilityDetail 实时报价）
  *   3. upgrade_state != 0 且已到期 → CompleteBuildingUpgrade
  */
-async function runFacilityUpgrade() {
+async function runFacilityUpgrade(sharedRaw = null) {
     if (!isAutomationOn('pasture_upgrade')) return 0;
-    const raw = await actions.loadRaw();
+    const raw = await resolveRaw(sharedRaw);
     const facilities = (raw.detail && raw.detail.facilities) || [];
     const nowMs = Date.now();
     let done = 0;
@@ -183,7 +193,7 @@ async function runFacilityUpgrade() {
             if (moduleType === MODULE_SHED && toNum(facility.state) === 3) {
                 const quote = await actions.planAction('activateShed', { facilityId: instanceId }, raw);
                 if (!quote.skipped) {
-                    await actions.operate('activateShed', { facilityId: instanceId, expected: quote.expected });
+                    await actions.operate('activateShed', { facilityId: instanceId, expected: quote.expected, raw });
                     done += 1;
                     logPasture(`激活牧场棚 ${instanceId}`, { event: '牧场设施', action: 'activateShed' });
                 }
@@ -194,7 +204,7 @@ async function runFacilityUpgrade() {
             if (upgradeState === 2 || (upgradeState !== 0 && endMs > 0 && endMs <= nowMs)) {
                 const quote = await actions.planAction('completeUpgrade', { facilityId: instanceId }, raw);
                 if (!quote.skipped) {
-                    await actions.operate('completeUpgrade', { facilityId: instanceId, expected: quote.expected });
+                    await actions.operate('completeUpgrade', { facilityId: instanceId, expected: quote.expected, raw });
                     done += 1;
                     logPasture(`完成设施升级 ${instanceId}`, { event: '牧场设施', action: 'completeUpgrade' });
                 }
@@ -206,7 +216,7 @@ async function runFacilityUpgrade() {
             if (toNum(facility.state) !== 1 || upgradeState !== 0) continue;
             const quote = await actions.planAction('upgrade', { facilityId: instanceId }, raw);
             if (quote.skipped) continue;
-            await actions.operate('upgrade', { facilityId: instanceId, expected: quote.expected });
+            await actions.operate('upgrade', { facilityId: instanceId, expected: quote.expected, raw });
             done += 1;
             logPasture(`升级设施 ${instanceId}`, { event: '牧场设施', action: 'upgrade' });
         } catch (err) {
@@ -225,9 +235,9 @@ async function runFacilityUpgrade() {
 /**
  * 把背包里的罐头搬进桶里。Use 不消耗物品，只是转移，所以默认也安全。
  */
-async function runFillCans() {
+async function runFillCans(sharedRaw = null) {
     if (!isAutomationOn('pasture_fill_cans')) return 0;
-    const raw = await actions.loadRaw();
+    const raw = await resolveRaw(sharedRaw);
     const cans = ((raw.bag && raw.bag.physical_items) || []).filter(item => {
         const id = toNum(item.id);
         return (id === api.BUCKET_NORMAL || id === api.BUCKET_ORGANIC) && !item.is_locked;
@@ -237,7 +247,7 @@ async function runFillCans() {
         try {
             const quote = await actions.planAction('useCan', { uid: toNum(item.uid), count: toNum(item.count) }, raw);
             if (quote.skipped) continue;
-            await actions.operate('useCan', { uid: toNum(item.uid), count: toNum(item.count), expected: quote.expected });
+            await actions.operate('useCan', { uid: toNum(item.uid), count: toNum(item.count), expected: quote.expected, raw });
             done += 1;
         } catch (err) {
             if (isExpectedError(err) || isUnknownOutcome(err)) continue;
@@ -251,7 +261,7 @@ async function runFillCans() {
 /**
  * 分桶喂养。普通桶优先（更便宜），有机桶只在显式开启时用。
  */
-async function runFeedBuckets() {
+async function runFeedBuckets(sharedRaw = null) {
     const auto = getAutomation();
     let done = 0;
     const buckets = [];
@@ -260,13 +270,13 @@ async function runFeedBuckets() {
     if (!buckets.length) return 0;
 
     for (const bucketType of buckets) {
-        const raw = await actions.loadRaw();
+        const raw = await resolveRaw(sharedRaw);
         const bucketId = bucketType === 1 ? api.BUCKET_ORGANIC : api.BUCKET_NORMAL;
         if (actions.balanceOf(raw.bag, bucketId).total <= 0n) continue;
         try {
             const quote = await actions.planAction('feed', { all: true, bucketType }, raw);
             if (quote.skipped) continue;
-            await actions.operate('feed', { all: true, bucketType, expected: quote.expected });
+            await actions.operate('feed', { all: true, bucketType, expected: quote.expected, raw });
             done += quote.count;
             logPasture(`罐头喂养 ${quote.count} 只（${bucketType === 1 ? '有机' : '普通'}桶）`, {
                 event: '牧场喂养', bucketType,
@@ -282,14 +292,16 @@ async function runFeedBuckets() {
 
 // ─── 图鉴 ───
 
-async function runClaimIllustrated() {
+async function runClaimIllustrated(sharedRaw = null) {
     if (!isAutomationOn('pasture_illustrated')) return 0;
+    // 两种图鉴共用同一份快照，避免领取前各读一次详情
+    const raw = await resolveRaw(sharedRaw);
     let done = 0;
     for (const kind of ['normal', 'giant']) {
         try {
-            const quote = await actions.planAction('claimIllustrated', { kind });
+            const quote = await actions.planAction('claimIllustrated', { kind }, raw);
             if (quote.skipped) continue;
-            await actions.operate('claimIllustrated', { kind, expected: quote.expected });
+            await actions.operate('claimIllustrated', { kind, expected: quote.expected, raw });
             done += 1;
             logPasture(`领取图鉴奖励（${kind === 'giant' ? '巨大' : '普通'}）`, { event: '牧场图鉴', kind });
         } catch (err) {
@@ -302,18 +314,19 @@ async function runClaimIllustrated() {
 
 // ─── 每日分享 / 每日福利 ───
 
-async function runDailyShare() {
+async function runDailyShare(sharedRaw = null) {
     if (!isAutomationOn('pasture_share')) return 0;
     const state = today();
     if (state.share.done || Date.now() < state.share.nextAt) return 0;
     try {
-        const quote = await actions.planAction('claimDailyShare', {});
+        const raw = await resolveRaw(sharedRaw);
+        const quote = await actions.planAction('claimDailyShare', {}, raw);
         if (quote.skipped) {
             state.share.done = true;
             state.share.result = 'already_claimed';
             return 0;
         }
-        await actions.operate('claimDailyShare', { expected: quote.expected });
+        await actions.operate('claimDailyShare', { expected: quote.expected, raw });
         state.share.done = true;
         state.share.result = 'ok';
         logPasture('每日首次分享礼包已领取', { event: '牧场每日分享' });
@@ -339,7 +352,7 @@ async function runDailyShare() {
 /**
  * 罐头商城的每日免费商品（goods_id 2001，限购 1 次/日）。
  */
-async function runDailyBenefit() {
+async function runDailyBenefit(sharedRaw = null) {
     if (!isAutomationOn('pasture_daily_benefit')) return 0;
     const state = today();
     if (state.benefit.done || Date.now() < state.benefit.nextAt) return 0;
@@ -365,9 +378,10 @@ async function runDailyBenefit() {
             state.benefit.result = 'unavailable';
             return 0;
         }
-        const quote = await actions.planAction('buyCan', { goodsId: GOODS_ID, count: 1, slotType: 6 });
+        const raw = await resolveRaw(sharedRaw);
+        const quote = await actions.planAction('buyCan', { goodsId: GOODS_ID, count: 1, slotType: 6 }, raw);
         if (quote.skipped) return 0;
-        await actions.operate('buyCan', { goodsId: GOODS_ID, count: 1, slotType: 6, expected: quote.expected });
+        await actions.operate('buyCan', { goodsId: GOODS_ID, count: 1, slotType: 6, expected: quote.expected, raw });
         state.benefit.done = true;
         state.benefit.result = 'ok';
         logPasture('每日商城福利已领取', { event: '牧场每日福利' });
@@ -403,7 +417,7 @@ const MAX_FRIENDS_PER_ROUND = 3;
  * 拿自家 gid 调 StrokeAnimal 会被判参数错误（code=1000020），
  * 上游实现里也是同一个约束。
  */
-async function runFriendInteraction(friends) {
+async function runFriendInteraction(friends, sharedRaw = null) {
     const auto = getAutomation();
     const wantStroke = !!auto.pasture_stroke;
     const wantMosquito = !!auto.pasture_friend_mosquito;
@@ -412,6 +426,8 @@ async function runFriendInteraction(friends) {
     if (!Array.isArray(friends) || !friends.length) return 0;
 
     const selfGid = String(api.selfGid());
+    // 成本按自家背包算，栏舍快照按好友算：两者分开带，别混用
+    const selfBag = sharedRaw && sharedRaw.bag;
     let done = 0;
     let visited = 0;
     for (const friend of friends) {
@@ -424,6 +440,10 @@ async function runFriendInteraction(friends) {
         } catch {
             continue;
         }
+        // 本好友的快照直接给 planAction 复用，省掉同一目标上的重复读取
+        const friendRaw = {
+            detail, ranches: detail.ranches || [], bag: selfBag, hostGid: toNum(friend.gid),
+        };
         for (const ranch of detail.ranches || []) {
             const ranchId = toNum(ranch.ranch_inst_id);
 
@@ -436,10 +456,10 @@ async function runFriendInteraction(friends) {
                     try {
                         const quote = await actions.planAction('stroke', {
                             hostGid: friend.gid, ranchId, animalId,
-                        });
+                        }, friendRaw);
                         if (!quote.skipped) {
                             await actions.operate('stroke', {
-                                hostGid: friend.gid, ranchId, animalId, expected: quote.expected,
+                                hostGid: friend.gid, ranchId, animalId, expected: quote.expected, raw: friendRaw,
                             });
                             done += 1;
                         }
@@ -451,9 +471,9 @@ async function runFriendInteraction(friends) {
 
             if (wantClean) {
                 try {
-                    const quote = await actions.planAction('cleanFriend', { hostGid: friend.gid });
+                    const quote = await actions.planAction('cleanFriend', { hostGid: friend.gid }, friendRaw);
                     if (!quote.skipped) {
-                        await actions.operate('cleanFriend', { hostGid: friend.gid, expected: quote.expected });
+                        await actions.operate('cleanFriend', { hostGid: friend.gid, expected: quote.expected, raw: friendRaw });
                         done += 1;
                         break;
                     }
@@ -463,10 +483,10 @@ async function runFriendInteraction(friends) {
             }
             if (wantMosquito) {
                 try {
-                    const quote = await actions.planAction('putMosquito', { hostGid: friend.gid, ranchId });
+                    const quote = await actions.planAction('putMosquito', { hostGid: friend.gid, ranchId }, friendRaw);
                     if (!quote.skipped) {
                         await actions.operate('putMosquito', {
-                            hostGid: friend.gid, ranchId, expected: quote.expected,
+                            hostGid: friend.gid, ranchId, expected: quote.expected, raw: friendRaw,
                         });
                         done += 1;
                     }

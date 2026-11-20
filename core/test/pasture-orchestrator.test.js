@@ -106,6 +106,13 @@ function setupMocks(options = {}) {
 
     const api = {
         selfGid: () => 10001,
+        getBag: async () => {
+            calls.push('getPastureBag');
+            return options.bag || { physical_items: [] };
+        },
+        // 图鉴/巨大图鉴：默认「没有可领」，让例程走到报价后自然跳过
+        getIllustratedList: async () => ({ has_claimable_reward: false, total_rewards: [] }),
+        getRanchWeightScore: async () => ({ levels: [] }),
         getRanchDetail: async () => { calls.push('getRanchDetail'); return options.reply || ranchReply(); },
         harvestRanch: async () => { calls.push('harvestRanch'); return options.harvestReply || { ranches: [] }; },
         feedAnimal: async (targets) => { calls.push('feedAnimal'); calls.push(`feed:${targets.length}`); return { ranches: [] }; },
@@ -913,4 +920,17 @@ test('好友互动：getAllFriends 回对象时也要真正跑起来', async () 
     // 第一次是自家详情，之后才是逐个好友；能读到第二次说明真的进了互动流程
     assert.ok(calls.filter(c => c === 'getRanchDetail').length >= 2,
         '拿到好友列表后必须进入互动流程，逐个读好友牧场');
+});
+
+test('一轮只读一次自家详情，动作共用同一份快照', async () => {
+    // 开一组必然要报价的动作，验证它们复用本轮快照而不是各读一次
+    const { orchestrator, calls } = setupMocks({
+        auto: { pasture_feed_normal: true, pasture_illustrated: true },
+    });
+    await orchestrator.runPastureOperation('all');
+    assert.equal(calls.filter(c => c === 'getRanchDetail').length, 1,
+        '自家详情一轮只该读一次，否则 60 秒就能把通信预算打满');
+    // 牧场背包（scene 2）一轮最多读一次；补栏用的农场背包是另一个接口，不计在内
+    assert.ok(calls.filter(c => c === 'getPastureBag').length <= 1,
+        '牧场背包一轮最多读一次');
 });

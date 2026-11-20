@@ -201,10 +201,21 @@ function parseMallPrice(raw) {
 // ─── 状态读取 ───
 
 /** 拉一份决策用的原始快照：栏舍 + 牧场背包 */
-async function loadRaw() {
-    const detail = await api.getRanchDetail();
+async function loadRaw(hostGid = 0) {
+    const detail = await api.getRanchDetail([], hostGid || undefined);
     const bag = await api.getBag();
-    return { detail, ranches: detail.ranches || [], bag };
+    return { detail, ranches: detail.ranches || [], bag, hostGid: idOf(hostGid) };
+}
+
+/**
+ * 拿到某个 host 的栏舍快照：调用方已经读过就复用，避免同一轮里重复拉详情。
+ * 自家（hostGid=0）与好友的快照不能混用，所以按 hostGid 校验。
+ */
+async function ranchStateOf(state, hostGid) {
+    const host = idOf(hostGid);
+    if (state && state.ranches && idOf(state.hostGid) === host) return state;
+    const detail = await api.getRanchDetail([], host || undefined);
+    return { detail, ranches: detail.ranches || [], bag: state && state.bag, hostGid: host };
 }
 
 function allAnimals(ranches) {
@@ -302,8 +313,8 @@ async function planAction(action, input = {}, raw = null) {
         case 'claimIllustrated': await buildClaimIllustrated(plan, input); break;
         case 'claimDailyShare': await buildClaimDailyShare(plan); break;
         case 'release': buildRelease(plan, input, state); break;
-        case 'steal': await buildSteal(plan, input); break;
-        case 'stroke': await buildStroke(plan, input); break;
+        case 'steal': await buildSteal(plan, input, state); break;
+        case 'stroke': await buildStroke(plan, input, state); break;
         case 'putMosquito': await buildPutMosquito(plan, input, state); break;
         case 'cleanFriend': await buildCleanFriend(plan, input, state); break;
         default: throw errOf('INVALID_ARGUMENT', '不支持的牧场操作');
@@ -679,10 +690,10 @@ function buildRelease(plan, input, state) {
     plan.resultKeys = wanted.map(a => `${a.ranch_inst_id}:1:${a.animal_inst_id}`);
 }
 
-async function buildSteal(plan, input) {
+async function buildSteal(plan, input, state) {
     const hostGid = idOf(input.hostGid);
     if (!hostGid) throw errOf('INVALID_ARGUMENT', '请选择好友牧场');
-    const detail = await api.getRanchDetail([], hostGid);
+    const detail = await ranchStateOf(state, hostGid);
     const self = qty(api.selfGid());
     const targets = [];
     for (const ranch of detail.ranches || []) {
@@ -705,12 +716,12 @@ async function buildSteal(plan, input) {
     plan.count = targets.length;
 }
 
-async function buildStroke(plan, input) {
+async function buildStroke(plan, input, state) {
     const hostGid = idOf(input.hostGid);
     const ranchId = idOf(input.ranchId);
     const animalId = idOf(input.animalId);
     if (!hostGid || !ranchId || !animalId) throw errOf('INVALID_ARGUMENT', '请选择好友牧场');
-    const detail = await api.getRanchDetail([ranchId], hostGid);
+    const detail = await ranchStateOf(state, hostGid);
     const ranch = (detail.ranches || []).find(r => idOf(r.ranch_inst_id) === ranchId);
     const animal = ranch && (ranch.animals || []).find(a => idOf(a.animal_inst_id) === animalId);
     const self = qty(api.selfGid());
@@ -730,11 +741,11 @@ async function buildStroke(plan, input) {
     plan.count = 1;
 }
 
-async function buildPutMosquito(plan, input) {
+async function buildPutMosquito(plan, input, state) {
     const hostGid = idOf(input.hostGid);
     const ranchId = idOf(input.ranchId);
     if (!hostGid || !ranchId) throw errOf('INVALID_ARGUMENT', '请选择好友牧场');
-    const detail = await api.getRanchDetail([ranchId], hostGid);
+    const detail = await ranchStateOf(state, hostGid);
     const ranch = (detail.ranches || []).find(r => idOf(r.ranch_inst_id) === ranchId);
     if (!ranch) throw errOf('RANCH_STATE_CHANGED', '好友栏舍已变化，请刷新');
     const limit = idOf(ranch.husbandry_type) === 1 ? 3 : 3;
@@ -753,10 +764,10 @@ async function buildPutMosquito(plan, input) {
     plan.count = 1;
 }
 
-async function buildCleanFriend(plan, input) {
+async function buildCleanFriend(plan, input, state) {
     const hostGid = idOf(input.hostGid);
     if (!hostGid) throw errOf('INVALID_ARGUMENT', '请选择好友牧场');
-    const detail = await api.getRanchDetail([], hostGid);
+    const detail = await ranchStateOf(state, hostGid);
     const self = qty(api.selfGid());
     const pits = (detail.ranches || []).filter(r => (r.hazards || []).some(h =>
         idOf(h.hazard_type) !== 1 || qty(h.owner) !== self));
@@ -828,6 +839,7 @@ module.exports = {
     planAction,
     operate,
     loadRaw,
+    ranchStateOf,
     allAnimals,
     allShelves,
     allHazards,
@@ -855,7 +867,9 @@ async function operate(action, input = {}, options = {}) {
         return { status: 'confirmed', refreshRequired: true, costs: [], rewards: [] };
     }
 
-    const raw = await loadRaw();
+    // tick 已在本轮读过快照时直接复用，省掉一次 GetRanchDetail + GetBag；
+    // 面板路径不传 raw，仍然重新读取，保持两段式报价的语义。
+    const raw = options.raw || await loadRaw(input.hostGid);
     const quote = await planAction(action, input, raw);
     if (quote.skipped) {
         return { status: 'skipped', snapshot: null, costs: [], rewards: [], message: quote.message };
