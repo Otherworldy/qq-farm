@@ -28,6 +28,35 @@ const { runExclusiveAutomationTask } = require('./automation-lock');
  */
 let lastEnterAtMs = 0;
 
+/**
+ * 场景锁定后多久再探测一次。
+ * 牧场 RPC 在场景外本来就能用，所以场景只是个增强项：探测失败就退回直连，
+ * 半小时后再试一次，既不刷错误日志、也不会因为一次失败永久放弃。
+ */
+const SCENE_RETRY_MS = 30 * 60_000;
+
+/** 服务端明确回「该场景还未解锁」时，把它当成「场景不可用」处理 */
+function isSceneLockedError(err) {
+    if (!err) return false;
+    if (Number(err.code) === 1045002) return true;
+    return /1045002|还未解锁/.test(String(err.message || ''));
+}
+
+/** 是否处于「已确认未解锁」的冷却期 */
+function isRanchSceneBlocked() {
+    const at = Number(getUserState().ranchSceneBlockedAt) || 0;
+    return at > 0 && Date.now() - at < SCENE_RETRY_MS;
+}
+
+function markRanchSceneBlocked(reason) {
+    const state = getUserState();
+    if (Number(state.ranchSceneBlockedAt) > 0) return;
+    state.ranchSceneBlockedAt = Date.now();
+    logWarn('牧场', `牧场场景未解锁（${reason}），改为直连执行，${Math.round(SCENE_RETRY_MS / 60_000)} 分钟后重新探测`, {
+        module: 'pasture', event: 'pasture_scene_blocked', result: 'warn',
+    });
+}
+
 /** 牧场场景 ID */
 const RANCH_SCENE_ID = 2;
 
@@ -71,16 +100,29 @@ function decodeRanchCells(scene) {
  * @param {(cells: any|null) => Promise<any>} run
  *   cells 是进场景时顺带拿到的初始快照；本来就在牧场场景时为 null，
  *   调用方需要自己发 AllCells / GetRanchDetail。
- * @param {{skipScene?: boolean, minIntervalMs?: number}} [options]
+ * @param {{skipScene?: boolean, minIntervalMs?: number, onLocked?: 'fallback'|'throw'}} [options]
  *   skipScene   完全不切场景（只读路径用）
  *   minIntervalMs 距上次进场景不足这个时长时，本轮直接就地执行、不切场景
+ *   onLocked    场景不可用时的策略，默认 'fallback' 就地执行。
+ *               牧场接口在场景外本来就可用（实测能读详情、能领任务），
+ *               因此只有真正依赖场景快照的调用方才该传 'throw'。
  */
 function inRanchScene(run, options = {}) {
     const minIntervalMs = Math.max(0, Number(options.minIntervalMs) || 0);
+    const onLocked = options.onLocked === 'throw' ? 'throw' : 'fallback';
     return runExclusiveAutomationTask('pasture.scene', async () => {
-        if (!isRanchUnlocked()) {
-            throw errOf('RANCH_LOCKED', '牧场尚未解锁，请先在游戏中完成开启条件');
-        }
+        // 走直连时把原因带回结果，调用方/面板能看出这次没进场景。
+        const runWithoutScene = async (why) => {
+            if (onLocked === 'throw') {
+                throw errOf('RANCH_LOCKED', `牧场场景不可用（${why}），请先在游戏中完成开启条件`);
+            }
+            const result = await run(null);
+            if (result && typeof result === 'object') result.sceneSkipped = why;
+            return result;
+        };
+
+        if (!isRanchUnlocked()) return runWithoutScene('not_unlocked');
+        if (isRanchSceneBlocked()) return runWithoutScene('scene_locked');
 
         const previous = Number(getUserState().globalSceneId) || 1;
         const socket = getWs();
@@ -90,16 +132,30 @@ function inRanchScene(run, options = {}) {
         const shouldEnter = options.skipScene !== true && previous !== RANCH_SCENE_ID && !throttled;
 
         let result;
+        let entered = false;
         try {
-            const scene = shouldEnter ? await loginGameScene(RANCH_SCENE_ID) : null;
-            if (shouldEnter) lastEnterAtMs = Date.now();
+            let scene = null;
+            if (shouldEnter) {
+                try {
+                    scene = await loginGameScene(RANCH_SCENE_ID);
+                    entered = true;
+                    lastEnterAtMs = Date.now();
+                } catch (err) {
+                    // 场景没解锁不是故障：记住它，本轮直连把活干完，别让整轮牧场失败。
+                    if (!isSceneLockedError(err)) throw err;
+                    markRanchSceneBlocked(err.message);
+                    return await runWithoutScene('scene_locked');
+                }
+            }
             const cells = scene ? decodeRanchCells(scene) : null;
             result = await run(cells);
             return result;
         }
         finally {
-            // 断线重连后不再补发场景恢复：重连后的登录流程会重新确立场景。
-            if (shouldEnter && getWs() === socket) {
+            // 只在真的进过场景后才谈恢复：进场景就失败时本来还留在原场景，
+            // 再发一次 loginGameScene(previous) 纯属浪费，失败还会误判成场景异常。
+            // 断线重连后也不补发，重连后的登录流程会重新确立场景。
+            if (entered && getWs() === socket) {
                 try {
                     await loginGameScene(previous);
                 } catch (err) {
@@ -128,12 +184,14 @@ function requireRanchScene() {
 /** 测试用：清掉场景切换节流时间戳 */
 function resetSceneStateForTests() {
     lastEnterAtMs = 0;
+    getUserState().ranchSceneBlockedAt = 0;
 }
 
 module.exports = {
     RANCH_SCENE_ID,
     resetSceneStateForTests,
     isRanchUnlocked,
+    isRanchSceneBlocked,
     isInRanchScene,
     decodeRanchCells,
     inRanchScene,

@@ -20,7 +20,6 @@ const { recordEvent } = require('./daily-events');
 const {
     getRanchDetail,
     harvestRanch,
-    feedAnimal,
     cleanAllRanch,
     cleanRanch,
     placeAnimal,
@@ -285,16 +284,14 @@ async function performTriggerProduce(analysis) {
 }
 
 async function performFeed(analysis) {
-    const targets = analysis.needFeed.map(a => ({
-        ranchInstId: a.ranchInstId,
-        animalInstId: a.animalInstId,
-    }));
-    if (!targets.length) return 0;
-    const reply = await feedAnimal(targets, 2);
-    logPasture(`投喂 ${targets.length} 只动物`, { event: '牧场投喂', count: targets.length });
-    noteEvent('info', `牧场投喂 ${targets.length} 只动物`);
-    recordOperation('pastureFeed', targets.length);
-    return { reply, count: targets.length };
+    // AnimalService.FeedAnimal 是「喂罐头」，不是投喂：它会真的从罐头桶里扣罐头
+    //（真机回 code=1045234「罐头桶已耗尽」就是这么撞出来的，还白烧了 4 个）。
+    // 免费投喂的路径是牧草机 AddFeed，所以这里交给补草逻辑统一处理，
+    // 绝不能替玩家烧罐头。
+    // 主动喂罐头请用 pasture_feed_normal / pasture_feed_organic：
+    // 那条路径会先查桶余量，桶是空的不提交。
+    if (!analysis.needFeed.length) return 0;
+    return performRefillGrass(analysis);
 }
 
 /**

@@ -286,8 +286,10 @@ const DEFAULT_AUTOMATION = {
     // 也就没有副产品可捡、可卖。它本身不消耗罐头；消耗道具的是 FeedAnimal
     // （`pasture_feed`），两者不要混为一谈。
     pasture_produce: true,
-    // FeedAnimal 的 feed_type 无抓包依据（官方 HAR 里 0 次调用），可能是消耗道具
-    // 而不是免费草料。在有证据前不自动投喂，避免替玩家花资源。
+    // AnimalService.FeedAnimal 是「喂罐头」而不是免费投喂：真机回
+    // code=1045234「罐头桶已耗尽」，确实按桶扣罐头。免费的投喂路径是牧草机
+    // AddFeed，所以这一项现在等价于「动物饿了就补草」，不会烧罐头。
+    // 要主动喂罐头请用 pasture_feed_normal / pasture_feed_organic（会先查桶余量）。
     pasture_feed: false,
     pasture_clean: true,
     pasture_stroke: true,

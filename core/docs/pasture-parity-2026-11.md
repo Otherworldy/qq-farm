@@ -141,12 +141,43 @@ cleanFriend / release`，外加 `acknowledge`。
 
 两个必须知道的现实约束：
 
-1. 本项目登录走**旧版** `LoginRequest`，回包里没有 `unlocked_scene_ids`。
-   因此 `isRanchUnlocked()` 把「空列表」当未知、一律放行，只有明确收到
-   `GlobalSceneUnlockNotify` 且不含 2 时才拒绝。不能反过来写，否则牧场功能会被静态锁死。
+1. 本项目登录走**旧版** `LoginRequest`，回包里没有 `unlocked_scene_ids`，
+   因此解锁列表可能一直是空的。`isRanchUnlocked()` 把「空列表」当未知、
+   一律放行；只有明确收到 `GlobalSceneUnlockNotify` 且不含 2 时才判定未解锁。
+
+   **但「放行去试」必须配「失败后记住」**（2026-11-20 补充）：
+   首个真实账号上 `PlayerSceneLogin(2)` 直接返回 `code=1045002 该场景还未解锁`，
+   而当时的实现在失败后既不记忆也不降级，于是每轮都白发两次注定失败的登录，
+   还把 `checkPasture` 和好友巡查整轮打成「检查失败」。现在的规则是：
+
+   - 收到 1045002 → 记到 `userState.ranchSceneBlockedAt`，**本轮回退直连把活干完**；
+   - 30 分钟内不再尝试进场景，日志只打一条；
+   - `GlobalSceneUnlockNotify` 含 2 时立即解除，重新尝试；
+   - 只有网络类错误照常上抛，不会被误记成「未解锁」。
+
+   这条能成立的前提是：**牧场 RPC 在场景外本来就可用**——该账号没有进过牧场场景，
+   但 `GetRanchDetail` 照样返回 4 个栏位、草 74，牧场任务也扫到 4 个。
+   场景只是「更符合服务端预期」，不是功能前提。所以 `inRanchScene` 默认
+   `onLocked: 'fallback'`（就地执行，结果标 `sceneSkipped`），
+   只有真正依赖场景快照的调用方才传 `onLocked: 'throw'`。
 2. `visitpb.VisitService` 的 proto 里只声明了 `Enter/Leave`，实际方法名是
    `EnterHomestead/LeaveHomestead`（消息来自 ranchpb）。方法名是硬编码字符串，
    protobufjs 不校验。
+
+## 七点五、真机联调发现的两个 bug（2026-11-20）
+
+首个真实账号跑起来后暴露了两个真问题，都已修：
+
+1. **场景未解锁把整轮牧场打死**（见上一节）。原实现在 1045002 后既不记忆也不降级，
+   每轮白发两次注定失败的登录，`checkPasture` 与好友巡查双双「检查失败」。
+   现在降级直连 + 30 分钟冷却重探。
+2. **`pasture_feed` 误用 `FeedAnimal` 烧罐头**。`AnimalService.FeedAnimal` 是
+   「喂罐头」而不是免费投喂——真机返回 `code=1045234 罐头桶已耗尽`，说明它会按桶
+   扣罐头，那一轮实际烧掉了 4 个普通罐头。免费投喂的路径是牧草机
+   `FeedMachineService.AddFeed`。现在 `pasture_feed` 等价于「饿了就补草」，
+   `performFeed` 直接委托 `performRefillGrass`；主动喂罐头只走
+   `pasture_feed_normal` / `pasture_feed_organic`，且提交前先查桶余量。
+   测试里加了一条防回归断言：投喂路径**绝不能**出现 `feedAnimal`。
 
 ## 八、遗留问题（明确未做/未验证）
 

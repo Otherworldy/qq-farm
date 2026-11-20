@@ -175,19 +175,22 @@ test('runPastureOperation：全开时按 收货架→收获→投喂→清理→
     const result = await orchestrator.runPastureOperation('all');
 
     assert.equal(result.hadWork, true);
-    // 依次发生：拉详情 → 收获 → 投喂 → 清理 → 补草
+    // 依次发生：拉详情 → 收获 → 投喂 → 清理（投喂走牧草机 AddFeed）
     assert.equal(calls[0], 'getRanchDetail');
     const harvestIdx = calls.indexOf('harvestRanch');
-    const feedIdx = calls.indexOf('feedAnimal');
+    const feedIdx = calls.indexOf('addFeed');
     // 清理默认走定点 CleanRanch（有 hazard_id 时）
     const cleanIdx = Math.max(calls.indexOf('cleanRanch'), calls.indexOf('cleanAllRanch'));
-    const feedMachineIdx = calls.indexOf('addFeed');
     assert.ok(harvestIdx > 0, '应执行收获');
-    assert.ok(feedIdx > harvestIdx, '投喂应在收获之后');
+    // AnimalService.FeedAnimal 是「喂罐头」，会自动烧掉玩家的罐头（真机 1045234 已证实），
+    // 免费投喂只能走牧草机。这条断言是防回归的关键。
+    assert.equal(calls.includes('feedAnimal'), false, '投喂绝不能调用 FeedAnimal');
+    assert.ok(feedIdx > harvestIdx, '投喂（补草）应在收获之后');
     assert.ok(cleanIdx > feedIdx, '清理应在投喂之后');
-    assert.ok(feedMachineIdx > cleanIdx, '补草应在最后');
-    // fixture 有 2 个空栏但背包没动物、买动物开关关着，所以补栏不入 actions
-    assert.deepEqual(result.actions, ['harvest', 'feed', 'clean', 'refill_grass']);
+    assert.equal(calls.filter(c => c === 'addFeed').length, 1, '补草只发生一次');
+    // fixture 有 2 个空栏但背包没动物、买动物开关关着，所以补栏不入 actions；
+    // 「补草」阶段因为投喂阶段已经补过而落在冷却里，只剩 refill_grass 的语义
+    assert.deepEqual(result.actions, ['harvest', 'feed', 'clean']);
 });
 
 test('runPastureOperation：细分开关能单独关掉某一项', async () => {

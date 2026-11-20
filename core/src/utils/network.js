@@ -173,6 +173,9 @@ const userState = {
     globalSceneId: 1,
     /** 已解锁场景；旧版登录协议拿不到，收到 GlobalSceneUnlockNotify 才补 */
     unlockedSceneIds: [],
+    // 服务端明确答复「该场景还未解锁」的时刻（0=未探测/已解除）。
+    // 牧场场景探测失败后靠它避免每轮重发注定失败的登录。
+    ranchSceneBlockedAt: 0,
 };
 
 function getUserState() {
@@ -315,9 +318,18 @@ async function loginGameScene(globalSceneId) {
     const body = types.PlayerSceneLoginRequest.encode(
         types.PlayerSceneLoginRequest.create({ global_scene_id: sceneId })
     ).finish();
-    const { body: replyBody } = await sendMsgAsync(
-        'gamepb.globalscenepb.GlobalSceneService', 'PlayerSceneLogin', body
-    );
+    let replyBody;
+    try {
+        ({ body: replyBody } = await sendMsgAsync(
+            'gamepb.globalscenepb.GlobalSceneService', 'PlayerSceneLogin', body
+        ));
+    } catch (err) {
+        // 网关把业务码塞在 message 里（"...错误: code=1045002 该场景还未解锁"），
+        // 上层要据此区分「场景没解锁」和「网络断了」，这里先解析出来挂到 err 上。
+        const matched = /code=(\d+)/.exec(String(err && err.message));
+        if (matched) err.code = Number(matched[1]);
+        throw err;
+    }
     const scene = types.PlayerSceneLoginReply.decode(replyBody);
     const data = sceneId === 2 ? scene.big_farm_scene_ext_data : scene.farm_scene_ext_data;
     if (toNum(scene.global_scene_id) !== sceneId || !data || !data.length) {
@@ -713,6 +725,8 @@ function handleNotify(msg) {
                 const notify = types.GlobalSceneUnlockNotify.decode(eventBody);
                 const merged = new Set([...(userState.unlockedSceneIds || []), ...(notify.unlocked_scenes || []).map(toNum)]);
                 userState.unlockedSceneIds = [...merged];
+                // 解锁推送到达即解除场景锁定，下一轮就会重新尝试进牧场场景。
+                if (userState.unlockedSceneIds.includes(2)) userState.ranchSceneBlockedAt = 0;
             } catch { }
             return;
         }
@@ -844,6 +858,7 @@ async function sendLogin(onLoginSuccess, deviceProtocol) {
                 // 调用方不得据此判定「未解锁」。
                 userState.globalSceneId = 1;
                 userState.unlockedSceneIds = [];
+                userState.ranchSceneBlockedAt = 0;
 
                 log('系统', `登录成功: ${userState.name} (Lv${userState.level})`);
 

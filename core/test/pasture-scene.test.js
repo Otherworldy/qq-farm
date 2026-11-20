@@ -16,6 +16,7 @@ const events = [];
 let state = null;
 let socket = null;
 let failRestore = false;
+let sceneError = null;
 
 const networkId = require.resolve(path.join(SRC, 'utils', 'network'));
 require.cache[networkId] = {
@@ -29,6 +30,8 @@ require.cache[networkId] = {
             events.push(`login:${sceneId}`);
             if (failRestore && sceneId === 1)
                 throw new Error('restore failed');
+            if (sceneError && sceneId === 2)
+                throw sceneError;
             state.globalSceneId = sceneId;
             return { global_scene_id: sceneId, big_farm_scene_ext_data: Buffer.alloc(0) };
         },
@@ -45,13 +48,28 @@ function reset(overrides = {}) {
     state = { gid: 1, globalSceneId: 1, unlockedSceneIds: [1, 2], ...overrides };
     socket = { id: 'sock-1' };
     failRestore = false;
+    sceneError = null;
     scene.resetSceneStateForTests();
 }
 
-test('未解锁（列表明确不含 2）时拒绝进场景，也不发任何登录', async () => {
+test('未解锁（列表明确不含 2）默认就地执行，不发任何登录', async () => {
     reset({ unlockedSceneIds: [1] });
-    await assert.rejects(() => scene.inRanchScene(async () => 'x'), (err) => err.code === 'RANCH_LOCKED');
-    assert.deepEqual(events, [], '未解锁不该有任何网络动作');
+    const result = await scene.inRanchScene(async (cells) => {
+        assert.equal(cells, null);
+        return { hadWork: true };
+    });
+    assert.equal(result.hadWork, true, '牧场接口在场景外可用，不能整轮失败');
+    assert.equal(result.sceneSkipped, 'not_unlocked');
+    assert.deepEqual(events, [], '已知未解锁就不该再发注定失败的登录');
+});
+
+test('明确要求场景时（onLocked=throw）才抛 RANCH_LOCKED', async () => {
+    reset({ unlockedSceneIds: [1] });
+    await assert.rejects(
+        () => scene.inRanchScene(async () => 'x', { onLocked: 'throw' }),
+        (err) => err.code === 'RANCH_LOCKED',
+    );
+    assert.deepEqual(events, []);
 });
 
 test('解锁列表未知（空数组）时放行，不把功能锁死', async () => {
@@ -137,4 +155,49 @@ test('串行：两个并发 inRanchScene 不会交错进场景', async () => {
     // 串行的两个任务各自完整进出一次：进 2 → 回 1 → 进 2 → 回 1
     assert.deepEqual(events, ['login:2', 'login:1', 'login:2', 'login:1'],
         '第二个任务必须等第一个恢复完场景后才进，且自己也要恢复');
+});
+test('服务端回「场景未解锁」时降级直连，并记住结果不再重发', async () => {
+    reset();
+    sceneError = Object.assign(
+        new Error('gamepb.globalscenepb.GlobalSceneService.PlayerSceneLogin 错误: code=1045002 该场景还未解锁'),
+        { code: 1045002 },
+    );
+
+    const first = await scene.inRanchScene(async (cells) => {
+        assert.equal(cells, null, '降级时没有场景快照');
+        return { hadWork: true };
+    });
+    assert.equal(first.hadWork, true, '一次场景失败不能把整轮牧场打掉');
+    assert.equal(first.sceneSkipped, 'scene_locked');
+    assert.deepEqual(events, ['login:2'], '只尝试一次，失败后不进也不恢复');
+
+    events.length = 0;
+    assert.equal(scene.isRanchSceneBlocked(), true);
+
+    const second = await scene.inRanchScene(async () => ({ hadWork: true }));
+    assert.equal(second.sceneSkipped, 'scene_locked');
+    assert.deepEqual(events, [], '冷却期内不该再发注定失败的登录');
+});
+
+test('解锁推送到达后解除锁定并重新尝试进场景', async () => {
+    reset();
+    sceneError = Object.assign(new Error('错误: code=1045002 该场景还未解锁'), { code: 1045002 });
+    await scene.inRanchScene(async () => 'x');
+    assert.equal(scene.isRanchSceneBlocked(), true);
+
+    // GlobalSceneUnlockNotify 处理逻辑会把标记清零，这里直接模拟其结果
+    state.ranchSceneBlockedAt = 0;
+    sceneError = null;
+    events.length = 0;
+
+    const result = await scene.inRanchScene(async () => 'y');
+    assert.equal(result, 'y');
+    assert.deepEqual(events, ['login:2', 'login:1'], '解除后应恢复进/出场景');
+});
+
+test('网络类错误仍然上抛，不被当成场景未解锁吞掉', async () => {
+    reset();
+    sceneError = new Error('WebSocket 已断开');
+    await assert.rejects(() => scene.inRanchScene(async () => 'x'), /WebSocket 已断开/);
+    assert.equal(scene.isRanchSceneBlocked(), false, '不能把网络故障记成场景未解锁');
 });
