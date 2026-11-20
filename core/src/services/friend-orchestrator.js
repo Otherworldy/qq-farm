@@ -142,8 +142,17 @@ const summaryDueActionCache = new Map();
 // 尚处摘要读取阶段的旧占位；已进入访问阶段的不释放（在途访问互斥保持）。
 let checkingPlaceholder = null;
 
+// 干净成功会复位读取门，于是快路径读成功就能立刻再读：60 秒里 GetGameFriends
+// 能打到 30 次，把单接口额度吃满。被拦 → 阶梯退避 → 退避结束读成功 → 又复位，
+// 稳态就是「持续打满 + 偶尔被拦」。给成功也加一个最小间隔，让读取节奏稳定在
+// 4 秒左右（15 次/60s），而不是靠被拦截来限速。
+const SUMMARY_READ_MIN_INTERVAL_MS = Number(process.env.FARM_SUMMARY_READ_MIN_MS) || 4_000;
+
 function isSummaryReadBlocked(now = Date.now()) {
-  return now < summaryReadGate.blockedUntil;
+  if (now < summaryReadGate.blockedUntil) return true;
+  // lastCleanSuccessAt 为 0 表示本代次还没成功读过，不拦首次
+  return summaryReadGate.lastCleanSuccessAt > 0
+    && now - summaryReadGate.lastCleanSuccessAt < SUMMARY_READ_MIN_INTERVAL_MS;
 }
 
 function advanceSummaryReadGate(now = Date.now()) {
