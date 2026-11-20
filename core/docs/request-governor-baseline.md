@@ -154,3 +154,48 @@ const METHOD_LIMITS = new Map([
 用量是 `AllLands 12 + TaskInfo 11 + GetRanchDetail 7 + Bag 8 ≈ 40`，宽裕。
 
 测试 `core/test/har-rate-baseline.test.js` 里锁住这三个值，改动必须同步改测试。
+
+# 2026-11-20 修正：按「同族接口合计」而不是「最窄一支」定限额
+
+真机日志（**账号只有 3 个好友**）仍然持续报拦截：
+
+```
+governor_budget_drop 预算拦截(budget_method)：60s 窗口 115/200
+占用 Top FriendService.GetAll×20, VisitService.Enter×16, VisitService.Leave×16,
+        PlantService.AllLands×15, ItemService.Bag×10, AnimalService.GetRanchDetail×7
+好友牧场巡查失败: 请求被治理器拦截(budget_method): GetAll
+好友互动失败: 请求被治理器拦截(budget_method): GetAll
+```
+
+注意两点：**总量只用了 115/200**，被卡的只有单方法；而且**好友只有 3 个**，
+`Enter×16` 意味着 60 秒里跑了 5 轮以上完整巡查。根因不是好友多，是
+农场侧有三条独立调度各自读一次好友列表：帮助巡查（`onlyHelp`）、
+偷菜巡查（`onlySteal`）、抢收到点巡查（`onlySteal`）。
+
+原限额的问题在于**比较口径不对**：
+
+| 职责 | 官方客户端 | 我们 | 原限额的依据 |
+|---|---|---|---|
+| 好友列表读取 | `GetGameFriends` 20 + `GetAll` 2 + `GetBriefInfo` 8 ≈ **30** | 全部塞进 `GetAll` 一个接口 | 只取了其中**最窄**的 20 |
+| 好友访问 | `Enter`/`Leave` 各 16（**手动点**） | 每轮遍历全部好友，3 好友 × 5 轮 = 15+ | 直接照抄手动的量 |
+
+按最窄的一支卡，等于用官方「一个接口的额度」去承担官方「三个接口的职责」，
+必然撞墙。调整：
+
+```js
+['gamepb.friendpb.FriendService.GetAll', 30],   // 官方三接口合计
+['gamepb.visitpb.VisitService.Enter', 24],      // 覆盖一轮完整巡查
+['gamepb.visitpb.VisitService.Leave', 24],
+```
+
+`EnterHomestead`/`LeaveHomestead`（牧场拜访）维持 16：牧场每轮最多 3 个好友、
+5 分钟冷却，用量远低于限额。总量 200 不变 —— 三条好友链路合计上限
+30+24+24=78，农场 + 牧场实测约 40，仍在官方 60s 峰值 278 的范围内。
+
+### 加缓存这条路再次验证不可行
+
+`getAllFriends` 加 TTL 缓存 + 在途合并已实现并回滚：`friend-summary-backoff*.test.js`
+有 3 项直接失败（`qq/wechat actual composite observer reports exactly once`、
+`observer exceptions preserve original direct success...`）。缓存命中时 observer
+不会被调用，而观察者契约要求**每次复合读取恰好报告一次**，这是治理拒绝
+归因精度的前提。与本文档前面「试过但放弃的两条路」的结论一致，不再尝试。

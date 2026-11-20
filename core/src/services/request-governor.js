@@ -45,9 +45,17 @@ const PER_METHOD_LIMIT = Number(process.env.FARM_REQUEST_METHOD_LIMIT_60S) || 55
  * 好友巡查压回官方量级，其余接口仍按 55 的通用上限。
  */
 const METHOD_LIMITS = new Map([
-    ['gamepb.friendpb.FriendService.GetAll', 20],
-    ['gamepb.visitpb.VisitService.Enter', 16],
-    ['gamepb.visitpb.VisitService.Leave', 16],
+    // 官方客户端的「好友列表读取」是三接口分工：
+    // GetGameFriends 20 + GetAll 2 + GetBriefInfo 8 ≈ 30/60s。
+    // 我们所有读取都走同一个 GetAll，按单接口 20 卡就是按最窄的那一支卡，
+    // 三条巡查调度（帮助/偷菜/抢收）各自读一次就必然撞墙。
+    // 额度按官方三者合计给，才是同等职责的等量比较。
+    ['gamepb.friendpb.FriendService.GetAll', 30],
+    // 官方 Enter/Leave 各 16 是「手动点好友」的量。自动化一轮要覆盖全部
+    // 好友，实测 3 个好友 × 5 轮就撞到 16，表现出来是巡查被拦、牧场好友
+    // 互动连带失败。给到 24 覆盖一轮完整巡查，仍远低于旧值 55。
+    ['gamepb.visitpb.VisitService.Enter', 24],
+    ['gamepb.visitpb.VisitService.Leave', 24],
     // 牧场好友访问（方法与农场不同名，配额要单独盯）：
     // 三个都是「遍历好友」的入口，不压住会把 GetRanchDetail 挤掉，
     // 表现出来就是牧场详情读不到、面板一片空白。

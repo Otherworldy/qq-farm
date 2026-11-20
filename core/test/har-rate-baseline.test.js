@@ -75,15 +75,16 @@ test('完整统计：区分启动与稳态，只数客户端发出的帧', () =>
 test('per-method limits follow the official capture, not one blanket number', () => {
     const governor = require('../src/services/request-governor');
 
-    // 好友巡查三件套按官方基准（GetGameFriends 20、Enter/Leave 各 16）。
+    // 好友巡查三件套：GetAll 按官方三接口合计（GetGameFriends 20 +
+    // GetAll 2 + GetBriefInfo 8 ≈ 30），Enter/Leave 覆盖一轮完整好友巡查。
     // 之前统一用 55，三件套能同时吃满 55+55+55=165，占掉总预算 200 的八成，
     // 农场 AllLands/TaskInfo 和牧场 GetRanchDetail 就全被拒掉了。
-    assert.equal(governor.methodLimitBase('gamepb.friendpb.FriendService.GetAll'), 20,
-        'GetAll 对齐官方 GetGameFriends 20/60s');
-    assert.equal(governor.methodLimitBase('gamepb.visitpb.VisitService.Enter'), 16,
-        'Enter 对齐官方 16/60s');
-    assert.equal(governor.methodLimitBase('gamepb.visitpb.VisitService.Leave'), 16,
-        'Leave 对齐官方 16/60s');
+    assert.equal(governor.methodLimitBase('gamepb.friendpb.FriendService.GetAll'), 30,
+        'GetAll 对齐官方三接口合计 30/60s');
+    assert.equal(governor.methodLimitBase('gamepb.visitpb.VisitService.Enter'), 24,
+        'Enter 覆盖一轮完整好友巡查');
+    assert.equal(governor.methodLimitBase('gamepb.visitpb.VisitService.Leave'), 24,
+        'Leave 覆盖一轮完整好友巡查');
 
     // 其余接口仍用通用上限（官方实测最高单接口 PutWeeds 55）
     assert.equal(governor.methodLimitBase('gamepb.plantpb.PlantService.PutWeeds'), governor.PER_METHOD_LIMIT,
