@@ -169,6 +169,10 @@ const userState = {
     goldBean: 0, // 金豆豆(ID:1005)
     openId: '',
     avatar: '',
+    /** 当前所在游戏场景：1 = 农场，2 = 牧场 */
+    globalSceneId: 1,
+    /** 已解锁场景；旧版登录协议拿不到，收到 GlobalSceneUnlockNotify 才补 */
+    unlockedSceneIds: [],
 };
 
 function getUserState() {
@@ -295,6 +299,47 @@ async function sendMsg(serviceName, methodName, bodyBytes, callback) {
     return true;
 }
 
+// ============ 游戏场景 ============
+
+/**
+ * 登录指定游戏场景（1 = 农场，2 = 牧场），返回解码后的 PlayerSceneLoginReply。
+ *
+ * 牧场是独立场景：进入场景才能拿到该场景的初始快照
+ * （big_farm_scene_ext_data → RanchSceneData.homestead_cells），
+ * 操作结束后必须切回原场景，否则后续农场请求会打到错误的场景上。
+ *
+ * 回包不完整时直接抛错，由调用方决定是否作废本次场景状态。
+ */
+async function loginGameScene(globalSceneId) {
+    const sceneId = Number(globalSceneId) || 1;
+    const body = types.PlayerSceneLoginRequest.encode(
+        types.PlayerSceneLoginRequest.create({ global_scene_id: sceneId })
+    ).finish();
+    const { body: replyBody } = await sendMsgAsync(
+        'gamepb.globalscenepb.GlobalSceneService', 'PlayerSceneLogin', body
+    );
+    const scene = types.PlayerSceneLoginReply.decode(replyBody);
+    const data = sceneId === 2 ? scene.big_farm_scene_ext_data : scene.farm_scene_ext_data;
+    if (toNum(scene.global_scene_id) !== sceneId || !data || !data.length) {
+        throw new Error('游戏场景登录回包不完整');
+    }
+    userState.globalSceneId = sceneId;
+    const serverTime = toNum(scene.server_time);
+    if (serverTime > 0) syncServerTime(serverTime);
+    return scene;
+}
+
+/**
+ * 场景状态不可信（进/出场景失败）时作废当前连接，由上层重连重新登录。
+ * 不能让后续请求继续跑在一条场景未知的连接上。
+ */
+function invalidateGameScene(reason = '游戏场景状态未知，需要重新登录') {
+    log('系统', `游戏场景状态未知：${reason}`, { module: 'system', event: 'game_scene_unknown' });
+    try {
+        if (ws) ws.close();
+    } catch { /* 关闭失败也有重连兜底 */ }
+}
+
 /** Promise 版发送 */
 function sendMsgAsync(serviceName, methodName, bodyBytes, timeout = 20000, options = {}) {
     return new Promise((resolve, reject) => {
@@ -361,7 +406,7 @@ function sendMsgAsync(serviceName, methodName, bodyBytes, timeout = 20000, optio
                 requestGovernor.recordSent(serviceName, methodName, true);
                 resolve({ body, meta });
             }
-        }).then((sent) => {
+        }, options).then((sent) => {
             if (sent || settled) return;
             networkScheduler.clear(timeoutKey);
             settled = true;
@@ -661,12 +706,23 @@ function handleNotify(msg) {
             return;
         }
 
+        // 场景解锁推送：牧场（2）解锁后才会出现。旧版登录协议拿不到
+        // unlocked_scene_ids，只能靠这条补。
+        if (type.includes('GlobalSceneUnlockNotify')) {
+            try {
+                const notify = types.GlobalSceneUnlockNotify.decode(eventBody);
+                const merged = new Set([...(userState.unlockedSceneIds || []), ...(notify.unlocked_scenes || []).map(toNum)]);
+                userState.unlockedSceneIds = [...merged];
+            } catch { }
+            return;
+        }
+
         // 牧场设施变化：牧草机草量、动物状态都会走这条。
         // 只用来「提前叫醒」牧场 tick，不在这里做业务判断 —— 真正的决策仍然
         // 拿着 GetRanchDetail 的最新快照做，避免推送里的字段不全导致误判。
         if (type.includes('FacilitiesNotify')) {
             try {
-                const notify = types.FacilitiesNotify.decode(eventBody);
+                const notify = types.RanchFacilitiesNotify.decode(eventBody);
                 networkEvents.emit('facilitiesChanged', {
                     count: (notify.facilities || []).length,
                     hostGid: toNum(notify.host_gid),
@@ -782,6 +838,12 @@ async function sendLogin(onLoginSuccess, deviceProtocol) {
                     openId: userState.openId,
                     avatar: userState.avatar,
                 });
+
+                // 旧版 LoginRequest 没有 unlocked_scene_ids 字段，登录完成时只确定
+                // 「当前在农场」；场景解锁列表靠 GlobalSceneUnlockNotify 补。留空表示未知，
+                // 调用方不得据此判定「未解锁」。
+                userState.globalSceneId = 1;
+                userState.unlockedSceneIds = [];
 
                 log('系统', `登录成功: ${userState.name} (Lv${userState.level})`);
 
@@ -1042,6 +1104,8 @@ module.exports = {
     connect, reconnect, cleanup, stopNetwork, getWs, isConnected,
     sendMsg, sendMsgAsync,
     getUserState,
+    loginGameScene,
+    invalidateGameScene,
     getWsErrorState,
     getAceStatus,
     getRequestProfile: requestGovernor.getRequestProfile,

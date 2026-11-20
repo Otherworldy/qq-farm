@@ -79,6 +79,12 @@ message BasicInfo {
     int64 last_online = 17;
 }
 
+// 分享状态（ranchpb 的分享回包按 share_id 映射到本结构）
+message ShareInfo {
+    int64 share_count = 1;
+    bool is_claimed = 2;
+}
+
 // QQ群信息
 message QQGroupInfo {
     string qq_group_id = 1;

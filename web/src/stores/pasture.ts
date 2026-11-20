@@ -99,6 +99,38 @@ export interface PastureTaskSummary {
   items: PastureTask[]
 }
 
+/** 报价（两段式第一段）。skipped=true 表示当前无事可做，不要发执行请求。 */
+export interface PastureQuote {
+  action: string
+  label: string
+  costs: { resourceKey: string, amount: string }[]
+  costItems: { id: number, count: string, name: string, image?: string }[]
+  rewards: { id: number, count: string, name: string, image?: string }[]
+  count: number
+  message?: string
+  skipped: boolean
+  expected: { signature: string }
+}
+
+/** 执行回执 */
+export interface PastureActionResult {
+  status: 'confirmed' | 'skipped'
+  costs: { id: number, count: string, name: string }[]
+  rewards: { id: number, count: string, name: string }[]
+  completed: number
+  refreshRequired?: boolean
+}
+
+/** 结果未知的写操作，必须人工核对后解除 */
+export interface PastureLedgerEntry {
+  id: string
+  target: string
+  label: string
+  message: string
+  createdAt: number
+  costs: { resourceKey: string, amount: string }[]
+}
+
 export const usePastureStore = defineStore('pasture', () => {
   const summary = ref<PastureSummary>(emptySummary())
   const animals = ref<PastureAnimal[]>([])
@@ -114,6 +146,8 @@ export const usePastureStore = defineStore('pasture', () => {
   const tasks = ref<PastureTask[]>([])
   const taskSummary = ref<{ total: number, claimable: number }>({ total: 0, claimable: 0 })
   const taskLoading = ref(false)
+  /** 待核对操作（结果未知的写操作） */
+  const ledger = ref<PastureLedgerEntry[]>([])
 
   function clearPastureData() {
     summary.value = emptySummary()
@@ -126,6 +160,7 @@ export const usePastureStore = defineStore('pasture', () => {
     lastActions.value = []
     tasks.value = []
     taskSummary.value = { total: 0, claimable: 0 }
+    ledger.value = []
   }
 
   function isCurrentAccount(accountId: string) {
@@ -243,6 +278,118 @@ export const usePastureStore = defineStore('pasture', () => {
     }
   }
 
+  /** 两段式第一段：报价（不发写请求） */
+  async function quoteAction(accountId: string, action: string, input: Record<string, unknown> = {}) {
+    if (!accountId)
+      return null
+    const requestedId = String(accountId)
+    try {
+      const { data } = await api.post(`/api/pasture/${action}/quote`, input, {
+        headers: { 'x-account-id': accountId },
+      })
+      if (!isCurrentAccount(requestedId))
+        return null
+      if (data && data.ok && data.data)
+        return data.data as PastureQuote
+      error.value = (data && data.error) || '报价失败'
+      return null
+    }
+    catch (e: any) {
+      if (isCurrentAccount(requestedId))
+        error.value = e?.response?.data?.error || e?.message || '报价失败'
+      return null
+    }
+  }
+
+  /** 两段式第二段：带签名执行。签名不符时后端会拒（RANCH_OFFER_CHANGED） */
+  async function operateAction(
+    accountId: string,
+    action: string,
+    input: Record<string, unknown>,
+    signature: string,
+  ) {
+    if (!accountId)
+      return null
+    const requestedId = String(accountId)
+    operating.value = true
+    error.value = ''
+    try {
+      const { data } = await api.post(`/api/pasture/${action}`, {
+        ...input,
+        expected: { signature },
+      }, {
+        headers: { 'x-account-id': accountId },
+      })
+      if (!isCurrentAccount(requestedId))
+        return null
+      if (data && data.ok) {
+        const result = (data.data || null) as PastureActionResult | null
+        if (result && result.rewards?.length)
+          lastActions.value = [`${action} 完成`]
+        await refreshAfterWrite(requestedId)
+        return result
+      }
+      error.value = (data && data.error) || '操作失败'
+      return null
+    }
+    catch (e: any) {
+      if (isCurrentAccount(requestedId))
+        error.value = e?.response?.data?.error || e?.message || '操作失败'
+      return null
+    }
+    finally {
+      if (isCurrentAccount(requestedId))
+        operating.value = false
+    }
+  }
+
+  /** 写操作之后：面板与待核对列表都要刷新（可能新增了待核对记录） */
+  async function refreshAfterWrite(accountId: string) {
+    await Promise.all([fetchPasture(accountId), fetchLedger(accountId)])
+  }
+
+  /** 待核对操作列表 */
+  async function fetchLedger(accountId: string) {
+    if (!accountId)
+      return
+    const requestedId = String(accountId)
+    try {
+      const { data } = await api.get('/api/pasture/ledger', {
+        headers: { 'x-account-id': accountId },
+      })
+      if (!isCurrentAccount(requestedId))
+        return
+      if (data && data.ok && Array.isArray(data.data))
+        ledger.value = data.data as PastureLedgerEntry[]
+    }
+    catch { /* 待核对列表只是附加信息，失败不打断主流程 */ }
+  }
+
+  /** 人工核对后解除保护 */
+  async function acknowledge(accountId: string, id: string) {
+    if (!accountId || !id)
+      return false
+    const requestedId = String(accountId)
+    try {
+      const { data } = await api.post('/api/pasture/acknowledge', { id }, {
+        headers: { 'x-account-id': accountId },
+      })
+      if (!isCurrentAccount(requestedId))
+        return false
+      if (data && data.ok) {
+        await fetchLedger(accountId)
+        return true
+      }
+      error.value = (data && data.error) || '解除失败'
+      return false
+    }
+    catch (e: any) {
+      if (isCurrentAccount(requestedId))
+        error.value = e?.response?.data?.error || e?.message || '解除失败'
+      return false
+    }
+  }
+
   return {
     summary,
     animals,
@@ -257,10 +404,15 @@ export const usePastureStore = defineStore('pasture', () => {
     tasks,
     taskSummary,
     taskLoading,
+    ledger,
     clearPastureData,
     fetchPasture,
     operate,
     fetchTasks,
     claimTasks,
+    quoteAction,
+    operateAction,
+    fetchLedger,
+    acknowledge,
   }
 })

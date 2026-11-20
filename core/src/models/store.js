@@ -303,7 +303,35 @@ const DEFAULT_AUTOMATION = {
     pasture_steal: false,
     // 牧场任务领取（同一套 TaskService，scene_id=2 / task_type 4·5·6）。
     // 与农场的 task 完全独立：关掉农场任务不应连带停掉牧场。
-    pasture_task: true
+    pasture_task: true,
+
+    // ─── 扩展能力（2026-11-20 对齐上游 ranch 实现）───
+    // 集市兑换：两种货币分开关，默认关（花的是牧场币/道具）。
+    // 7002 便便 → 80012/80011 有机化肥；1008 松果 → 80013/80012/80011。
+    pasture_market_poop: false,
+    pasture_market_pinecone: false,
+    // 设施升级 / 棚激活 / 完成升级，都花金券，默认关。
+    pasture_upgrade: false,
+    // 背包里的罐头自动入桶（不消耗，只是搬到桶里）。
+    pasture_fill_cans: false,
+    // 分桶喂养：真正消耗罐头。默认关，开了才花道具。
+    pasture_feed_normal: false,
+    pasture_feed_organic: false,
+    // 收获后补领图鉴奖励（普通图鉴 + 巨大图鉴重量档）。
+    pasture_illustrated: false,
+    // 每日首次分享礼包（share_id 102 / doc 2101）。
+    pasture_share: false,
+    // 罐头商城每日免费商品（goods_id 2001）。
+    pasture_daily_benefit: false,
+    // 好友互动扩展：放蚊子（11003）、帮忙清理（不消耗配额）。
+    pasture_friend_mosquito: false,
+    pasture_friend_clean: false,
+    // 放生动物（11008 配额）。默认关：会真的减少栏存。
+    pasture_release: false,
+    // 场景模式：把动作执行放进「牧场场景」（game_scene_id=2）里跑，
+    // 结束后切回原场景。默认关 —— 不进场景也能读能写（已实测），
+    // 开着只是多两次 PlayerSceneLogin/轮，换来确定拿到场景初始快照。
+    pasture_use_scene: false
 };
 
 /** 默认间隔配置（秒） */

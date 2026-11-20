@@ -37,6 +37,12 @@ message Cond {
     int64 param = 2;   // 参数值 (如等级要求的等级数)
 }
 
+// 展示级解锁条件（牧场集市/商店用，字符串形式）
+message ShowCond {
+    string type = 1;
+    string params = 2;
+}
+
 // ============ 请求/回复 ============
 
 // --- 获取商店列表 ---
@@ -60,6 +66,7 @@ message BuyGoodsRequest {
     int64 goods_id = 1;   // 商品ID (GoodsInfo.id)
     int64 num = 2;        // 购买数量
     int64 price = 3;      // 单价
+    bool auto_add = 4;    // 购买后自动使用/放养（牧场买幼崽用）
 }
 
 message BuyGoodsReply {

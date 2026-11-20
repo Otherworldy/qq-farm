@@ -48,6 +48,12 @@ const METHOD_LIMITS = new Map([
     ['gamepb.friendpb.FriendService.GetAll', 20],
     ['gamepb.visitpb.VisitService.Enter', 16],
     ['gamepb.visitpb.VisitService.Leave', 16],
+    // 牧场好友访问（方法与农场不同名，配额要单独盯）：
+    // 三个都是「遍历好友」的入口，不压住会把 GetRanchDetail 挤掉，
+    // 表现出来就是牧场详情读不到、面板一片空白。
+    ['gamepb.visitpb.VisitService.EnterHomestead', 16],
+    ['gamepb.visitpb.VisitService.LeaveHomestead', 16],
+    ['gamepb.friendpb.FriendService.GetFriendList', 20],
 ]);
 
 /** 该接口的基础限额：优先按方法表，否则用通用单接口上限。 */

@@ -1997,6 +1997,24 @@ async function handleApiCall(msg) {
             case 'claimPastureTasks':
                 result = { claimed: await checkAndClaimPastureTasks() };
                 break;
+            case 'planPastureAction': {
+                // 两段式的第一段：只报价，不发写请求
+                const actions = require('../services/pasture-actions');
+                const quote = await actions.planAction(args[0], args[1] || {});
+                delete quote._plan;
+                result = quote;
+                break;
+            }
+            case 'operatePastureAction': {
+                const actions = require('../services/pasture-actions');
+                result = await actions.operate(args[0], args[1] || {}, {
+                    accountId: process.env.FARM_ACCOUNT_ID || '',
+                });
+                break;
+            }
+            case 'getPastureLedger':
+                result = require('../services/pasture-operations').pending(process.env.FARM_ACCOUNT_ID || '');
+                break;
             case 'getFriends':
                 result = await getFriendsList(args[0] === true);
                 break;

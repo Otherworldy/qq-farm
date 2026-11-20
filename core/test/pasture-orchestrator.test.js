@@ -72,8 +72,16 @@ function setupMocks(options = {}) {
     };
 
     mockModule('utils/network', {
-        getUserState: () => ({ gid: 10001, accountId: 1 }),
+        getUserState: () => ({
+            gid: 10001,
+            accountId: 1,
+            globalSceneId: 2,
+            unlockedSceneIds: [1, 2],
+        }),
         isConnected: () => options.connected !== false,
+        getWs: () => ({ readyState: 1 }),
+        loginGameScene: async sceneId => ({ global_scene_id: sceneId, big_farm_scene_ext_data: Buffer.alloc(0) }),
+        invalidateGameScene: () => {},
         networkEvents: { on() {}, emit() {} },
     });
     mockModule('models/store', {
@@ -94,10 +102,10 @@ function setupMocks(options = {}) {
             calls.push('getFacilityDetail');
             // 抓包修正后的形状：容量在 FacilityDetail.capacity，草量在 FeedMachineState.current
             const current = options.grassCurrent === undefined ? 20 : options.grassCurrent;
-            return { detail: { capacity: 100, feed_machine: { current } } };
+            return { info: { capacity: 100, feed_machine: { feed_count: current } } };
         },
         addFeed: async () => { calls.push('addFeed'); return { state: { current: 6 } }; },
-        getBuildingList: async () => { calls.push('getBuildingList'); return { buildings: [] }; },
+        getBuildingList: async () => { calls.push('getBuildingList'); return { items: [] }; },
         triggerProduce: async () => { calls.push('triggerProduce'); return { ranches: [] }; },
         stealProduce: async () => { calls.push('stealProduce'); return { ranches: [] }; },
         getRanchOpTimes: async () => { calls.push('getRanchOpTimes'); return { quotas: [] }; },

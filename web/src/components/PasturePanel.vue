@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import type { PastureQuote } from '@/stores/pasture'
 import { useIntervalFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAccountStore } from '@/stores/account'
 import { usePastureStore } from '@/stores/pasture'
 import { useStatusStore } from '@/stores/status'
@@ -35,6 +36,7 @@ const {
   tasks,
   taskSummary,
   taskLoading,
+  ledger,
 } = storeToRefs(pastureStore)
 
 /** 牧场变化慢，20 秒轮询足够，也不会和 bot 抢请求预算 */
@@ -94,6 +96,26 @@ const ops = [
   { op: 'refill', icon: 'i-carbon-add-alt', label: '补栏', hint: '把背包里的动物放进空栏', color: 'bg-sky-500 hover:bg-sky-600' },
   { op: 'grass', icon: 'i-carbon-plant', label: '补草', hint: '给牧草机加料', color: 'bg-emerald-500 hover:bg-emerald-600' },
 ]
+
+/**
+ * 直接动作：全部走「报价 → 确认 → 执行」两段式。
+ * 后端会重新报价并比对签名，所以这里看到的费用就是实际要付的费用；
+ * 状态变了会报「牧场状态、商品或费用已变化」，不会闷头扣钱。
+ */
+const directOps = [
+  { action: 'harvest', input: { all: true }, icon: 'i-carbon-crop-growth', label: '一键收获' },
+  { action: 'produce', input: { all: true }, icon: 'i-carbon-play-outline', label: '一键生产' },
+  { action: 'clean', input: {}, icon: 'i-carbon-clean', label: '一键清理' },
+  { action: 'sell', input: { all: true }, icon: 'i-carbon-currency-yen', label: '出售产物' },
+  { action: 'claimTasks', input: { all: true }, icon: 'i-carbon-task-complete', label: '领任务' },
+  { action: 'claimIllustrated', input: { kind: 'normal' }, icon: 'i-carbon-book', label: '图鉴奖励' },
+  { action: 'claimDailyShare', input: {}, icon: 'i-carbon-share', label: '每日分享' },
+]
+
+/** 待确认的报价（非空时显示确认弹层） */
+const pendingQuote = ref<PastureQuote | null>(null)
+const pendingInput = ref<Record<string, unknown>>({})
+const quoting = ref(false)
 
 /** 角标优先级：可收获 > 待投喂 > 缺草 > 生产中 */
 function animalTone(animal: any) {
@@ -170,11 +192,74 @@ async function claimTasks() {
   toast.add(claimed > 0 ? `已领取 ${claimed} 个牧场任务` : '没有可领取的牧场任务', claimed > 0 ? 'success' : 'info')
 }
 
+/** 第一段：报价。skipped 直接提示，不弹确认。 */
+async function requestAction(action: string, input: Record<string, unknown> = {}) {
+  if (!currentAccountId.value || operating.value || quoting.value)
+    return
+  quoting.value = true
+  try {
+    const quote = await pastureStore.quoteAction(currentAccountId.value, action, input)
+    if (!quote) {
+      if (error.value)
+        toast.add(error.value, 'error')
+      return
+    }
+    if (quote.skipped) {
+      toast.add(quote.message || '当前没有可执行的操作', 'info')
+      return
+    }
+    pendingInput.value = input
+    pendingQuote.value = quote
+  }
+  finally {
+    quoting.value = false
+  }
+}
+
+/** 第二段：带签名执行 */
+async function confirmAction() {
+  const quote = pendingQuote.value
+  if (!quote || !currentAccountId.value)
+    return
+  const result = await pastureStore.operateAction(
+    currentAccountId.value,
+    quote.action,
+    pendingInput.value,
+    quote.expected.signature,
+  )
+  pendingQuote.value = null
+  if (!result) {
+    if (error.value)
+      toast.add(error.value, 'error')
+    return
+  }
+  if (result.status === 'skipped') {
+    toast.add(quote.message || '当前没有可执行的操作', 'info')
+    return
+  }
+  const gained = (result.rewards || []).map(r => `${r.name}×${r.count}`).join('、')
+  toast.add(gained ? `${quote.label}完成：${gained}` : `${quote.label}完成`, 'success')
+  void refreshTasks()
+}
+
+function cancelQuote() {
+  pendingQuote.value = null
+}
+
+/** 待核对操作：人工核对后解除保护，否则同一目标不允许再次提交 */
+async function ackOne(id: string) {
+  if (!currentAccountId.value)
+    return
+  const ok = await pastureStore.acknowledge(currentAccountId.value, id)
+  toast.add(ok ? '已解除该操作的保护' : (error.value || '解除失败'), ok ? 'success' : 'error')
+}
+
 const { pause, resume } = useIntervalFn(() => refresh(false), POLL_MS, { immediate: false })
 
 onMounted(() => {
   void refresh()
   void refreshTasks()
+  void pastureStore.fetchLedger(currentAccountId.value)
   resume()
 })
 
@@ -182,6 +267,7 @@ watch(currentAccountId, () => {
   pastureStore.clearPastureData()
   void refresh()
   void refreshTasks()
+  void pastureStore.fetchLedger(currentAccountId.value)
 })
 
 watch(connected, (value) => {
@@ -211,7 +297,7 @@ watch(connected, (value) => {
       </div>
       <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         <button
-          class="flex items-center justify-center gap-1.5 rounded bg-emerald-600 px-3 py-2 text-sm text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center justify-center gap-1.5 rounded bg-emerald-600 px-3 py-2 text-sm text-white transition disabled:cursor-not-allowed hover:bg-emerald-700 disabled:opacity-50"
           :disabled="!connected || operating"
           @click="runOp('all')"
         >
@@ -219,7 +305,7 @@ watch(connected, (value) => {
           一键执行
         </button>
         <button
-          class="flex items-center justify-center gap-1.5 rounded bg-gray-500 px-3 py-2 text-sm text-white transition hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center justify-center gap-1.5 rounded bg-gray-500 px-3 py-2 text-sm text-white transition disabled:cursor-not-allowed hover:bg-gray-600 disabled:opacity-50"
           :disabled="loading"
           @click="refresh()"
         >
@@ -254,14 +340,54 @@ watch(connected, (value) => {
       <!-- 空态 -->
       <div
         v-if="!hasData && !loading"
-        class="rounded-lg border border-gray-300 border-dashed px-6 py-10 text-center text-sm text-gray-500 dark:border-gray-600 dark:text-gray-400"
+        class="border border-gray-300 rounded-lg border-dashed px-6 py-10 text-center text-sm text-gray-500 dark:border-gray-600 dark:text-gray-400"
       >
         还没有牧场数据。进一次游戏里的牧场，或点上面的「刷新」。
       </div>
 
       <template v-else>
+        <!-- 待核对操作：结果未知的写操作，必须先人工核对 -->
+        <div
+          v-if="ledger.length"
+          class="mb-4 border border-amber-300 rounded-lg bg-amber-50 p-3 text-xs dark:border-amber-700 dark:bg-amber-900/20"
+        >
+          <div class="mb-2 flex items-center gap-1.5 text-amber-800 font-semibold dark:text-amber-200">
+            <div class="i-carbon-warning-alt" />
+            有 {{ ledger.length }} 个操作结果未确认
+          </div>
+          <div
+            v-for="entry in ledger"
+            :key="entry.id"
+            class="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded bg-white/60 px-2 py-1.5 dark:bg-gray-800/60"
+          >
+            <span class="text-amber-900 dark:text-amber-100">
+              {{ entry.label }} · {{ entry.message }}
+            </span>
+            <button
+              class="rounded bg-amber-600 px-2 py-1 text-white transition hover:bg-amber-700"
+              @click="ackOne(entry.id)"
+            >
+              核对完成
+            </button>
+          </div>
+        </div>
+
+        <!-- 直接动作（报价 → 确认 → 执行） -->
+        <div class="grid grid-cols-3 mb-4 gap-2 sm:flex sm:flex-wrap">
+          <button
+            v-for="item in directOps"
+            :key="item.action"
+            class="flex items-center justify-center gap-1.5 border border-gray-300 rounded px-3 py-2 text-sm text-gray-700 transition disabled:cursor-not-allowed dark:border-gray-600 hover:bg-gray-100 dark:text-gray-200 disabled:opacity-50 dark:hover:bg-gray-700"
+            :disabled="!connected || operating || quoting"
+            @click="requestAction(item.action, item.input)"
+          >
+            <div :class="item.icon" />
+            <span>{{ item.label }}</span>
+          </button>
+        </div>
+
         <!-- 单项操作 -->
-        <div class="mb-4 grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
+        <div class="grid grid-cols-3 mb-4 gap-2 sm:flex sm:flex-wrap">
           <button
             v-for="item in ops"
             :key="item.op"
@@ -329,7 +455,7 @@ watch(connected, (value) => {
         </section>
 
         <!-- 货架 / 灾害 / 空栏 -->
-        <div class="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div class="grid grid-cols-1 mb-4 gap-4 lg:grid-cols-3">
           <section class="rounded-lg bg-gray-50 p-4 dark:bg-gray-900/50">
             <h4 class="mb-2 text-sm text-gray-700 font-medium dark:text-gray-300">
               货架 <span class="text-gray-400">({{ shelves.length }})</span>
@@ -385,7 +511,7 @@ watch(connected, (value) => {
               <span class="text-gray-400">({{ taskSummary.claimable }}/{{ taskSummary.total }} 可领)</span>
             </h4>
             <button
-              class="flex items-center gap-1 rounded bg-violet-600 px-2.5 py-1 text-xs text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+              class="flex items-center gap-1 rounded bg-violet-600 px-2.5 py-1 text-xs text-white transition disabled:cursor-not-allowed hover:bg-violet-700 disabled:opacity-50"
               :disabled="!connected || taskLoading || taskSummary.claimable === 0"
               @click="claimTasks"
             >
@@ -408,7 +534,7 @@ watch(connected, (value) => {
                 </span>
                 <span class="truncate" :title="task.desc">{{ task.desc }}</span>
               </div>
-              <div class="shrink-0 flex items-center gap-1.5">
+              <div class="flex shrink-0 items-center gap-1.5">
                 <span class="text-gray-400 tabular-nums">
                   {{ task.progress }}/{{ task.totalProgress }}
                 </span>
@@ -423,6 +549,56 @@ watch(connected, (value) => {
           </ul>
         </section>
       </template>
+    </div>
+
+    <!-- 报价确认弹层 -->
+    <div
+      v-if="pendingQuote"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      @click.self="cancelQuote"
+    >
+      <div class="max-w-sm w-full rounded-lg bg-white p-4 shadow-xl dark:bg-gray-800">
+        <h4 class="mb-2 text-base font-bold">
+          {{ pendingQuote.label }}
+        </h4>
+        <p v-if="pendingQuote.message" class="mb-2 text-xs text-amber-600 dark:text-amber-400">
+          {{ pendingQuote.message }}
+        </p>
+        <div v-if="pendingQuote.count > 1" class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+          数量：{{ pendingQuote.count }}
+        </div>
+        <div v-if="pendingQuote.costItems.length" class="mb-2 text-xs">
+          <div class="mb-1 text-gray-600 font-medium dark:text-gray-300">
+            消耗
+          </div>
+          <div v-for="item in pendingQuote.costItems" :key="item.id" class="text-rose-600 dark:text-rose-400">
+            {{ item.name }} ×{{ item.count }}
+          </div>
+        </div>
+        <div v-if="pendingQuote.rewards.length" class="mb-2 text-xs">
+          <div class="mb-1 text-gray-600 font-medium dark:text-gray-300">
+            预计获得
+          </div>
+          <div v-for="item in pendingQuote.rewards" :key="item.id" class="text-emerald-600 dark:text-emerald-400">
+            {{ item.name }} ×{{ item.count }}
+          </div>
+        </div>
+        <div class="mt-3 flex justify-end gap-2">
+          <button
+            class="rounded bg-gray-200 px-3 py-1.5 text-sm text-gray-700 transition dark:bg-gray-700 hover:bg-gray-300 dark:text-gray-200"
+            @click="cancelQuote"
+          >
+            取消
+          </button>
+          <button
+            class="rounded bg-emerald-600 px-3 py-1.5 text-sm text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            :disabled="operating"
+            @click="confirmAction"
+          >
+            确认执行
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

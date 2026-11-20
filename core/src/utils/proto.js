@@ -54,7 +54,9 @@ async function performLoad() {
         getResourcePath('proto', 'mysteryshoppb.proto'),
         getResourcePath('proto', 'acepb.proto'),
         getResourcePath('proto', 'careerpb.proto'),
-        getResourcePath('proto', 'pasturepb.proto'),
+        getResourcePath('proto', 'globalscenepb.proto'),
+        getResourcePath('proto', 'animalpb.proto'),
+        getResourcePath('proto', 'ranchpb.proto'),
         getResourcePath('proto', 'homesteadpb.proto'),
     ], { keepCase: true });
 
@@ -246,6 +248,8 @@ async function performLoad() {
     resolved.BatchClaimTaskRewardReply = newRoot.lookupType('gamepb.taskpb.BatchClaimTaskRewardReply');
     resolved.ClaimDailyRewardRequest = newRoot.lookupType('gamepb.taskpb.ClaimDailyRewardRequest');
     resolved.ClaimDailyRewardReply = newRoot.lookupType('gamepb.taskpb.ClaimDailyRewardReply');
+    resolved.ClientReportProgressRequest = newRoot.lookupType('gamepb.taskpb.ClientReportProgressRequest');
+    resolved.ClientReportProgressReply = newRoot.lookupType('gamepb.taskpb.ClientReportProgressReply');
 
     // 邮箱
     resolved.GetEmailListRequest = newRoot.lookupType('gamepb.emailpb.GetEmailListRequest');
@@ -267,49 +271,28 @@ async function performLoad() {
     resolved.GoodsUnlockNotify = newRoot.lookupType('gamepb.shoppb.GoodsUnlockNotify');
     resolved.TaskInfoNotify = newRoot.lookupType('gamepb.taskpb.TaskInfoNotify');
 
-    // ─── 牧场（gamepb.animalpb）───
-    resolved.RanchInfo = newRoot.lookupType('gamepb.animalpb.RanchInfo');
-    resolved.AnimalInst = newRoot.lookupType('gamepb.animalpb.AnimalInst');
-    resolved.OpQuota = newRoot.lookupType('gamepb.animalpb.OpQuota');
-    resolved.GetRanchDetailRequest = newRoot.lookupType('gamepb.animalpb.GetRanchDetailRequest');
-    resolved.GetRanchDetailReply = newRoot.lookupType('gamepb.animalpb.GetRanchDetailReply');
-    resolved.HarvestRanchRequest = newRoot.lookupType('gamepb.animalpb.HarvestRanchRequest');
-    resolved.HarvestRanchReply = newRoot.lookupType('gamepb.animalpb.HarvestRanchReply');
-    resolved.FeedAnimalRequest = newRoot.lookupType('gamepb.animalpb.FeedAnimalRequest');
-    resolved.FeedAnimalReply = newRoot.lookupType('gamepb.animalpb.FeedAnimalReply');
-    resolved.TriggerProduceRequest = newRoot.lookupType('gamepb.animalpb.TriggerProduceRequest');
-    resolved.TriggerProduceReply = newRoot.lookupType('gamepb.animalpb.TriggerProduceReply');
-    resolved.CollectProduceRequest = newRoot.lookupType('gamepb.animalpb.CollectProduceRequest');
-    resolved.CollectProduceReply = newRoot.lookupType('gamepb.animalpb.CollectProduceReply');
-    resolved.StealProduceRequest = newRoot.lookupType('gamepb.animalpb.StealProduceRequest');
-    resolved.StealProduceReply = newRoot.lookupType('gamepb.animalpb.StealProduceReply');
-    resolved.CleanAllRanchRequest = newRoot.lookupType('gamepb.animalpb.CleanAllRanchRequest');
-    resolved.CleanAllRanchReply = newRoot.lookupType('gamepb.animalpb.CleanAllRanchReply');
-    resolved.PlaceAnimalRequest = newRoot.lookupType('gamepb.animalpb.PlaceAnimalRequest');
-    resolved.PlaceAnimalReply = newRoot.lookupType('gamepb.animalpb.PlaceAnimalReply');
-    resolved.PlaceTarget = newRoot.lookupType('gamepb.animalpb.PlaceTarget');
-    resolved.AnimalRef = newRoot.lookupType('gamepb.animalpb.AnimalRef');
-    resolved.CleanRanchRequest = newRoot.lookupType('gamepb.animalpb.CleanRanchRequest');
-    resolved.CleanRanchReply = newRoot.lookupType('gamepb.animalpb.CleanRanchReply');
-    resolved.StrokeAnimalRequest = newRoot.lookupType('gamepb.animalpb.StrokeAnimalRequest');
-    resolved.StrokeAnimalReply = newRoot.lookupType('gamepb.animalpb.StrokeAnimalReply');
-    resolved.GetRanchOpTimesRequest = newRoot.lookupType('gamepb.animalpb.GetRanchOpTimesRequest');
-    resolved.GetRanchOpTimesReply = newRoot.lookupType('gamepb.animalpb.GetRanchOpTimesReply');
+    // ─── 游戏场景（牧场是独立场景，进出都要走这个服务）───
+    resolved.PlayerSceneLoginRequest = newRoot.lookupType('gamepb.globalscenepb.PlayerSceneLoginRequest');
+    resolved.PlayerSceneLoginReply = newRoot.lookupType('gamepb.globalscenepb.PlayerSceneLoginReply');
+    resolved.GlobalSceneUnlockNotify = newRoot.lookupType('gamepb.globalscenepb.GlobalSceneUnlockNotify');
 
-    // ─── 牧场设施（gamepb.homesteadpb）───
-    resolved.FacilityDetail = newRoot.lookupType('gamepb.homesteadpb.FacilityDetail');
-    resolved.FeedMachineState = newRoot.lookupType('gamepb.homesteadpb.FeedMachineState');
-    resolved.GetBuildingListRequest = newRoot.lookupType('gamepb.homesteadpb.GetBuildingListRequest');
-    resolved.GetBuildingListReply = newRoot.lookupType('gamepb.homesteadpb.GetBuildingListReply');
-    resolved.GetFacilityDetailRequest = newRoot.lookupType('gamepb.homesteadpb.GetFacilityDetailRequest');
-    resolved.GetFacilityDetailReply = newRoot.lookupType('gamepb.homesteadpb.GetFacilityDetailReply');
-    resolved.AddFeedRequest = newRoot.lookupType('gamepb.homesteadpb.AddFeedRequest');
-    resolved.AddFeedReply = newRoot.lookupType('gamepb.homesteadpb.AddFeedReply');
-    resolved.FacilitiesNotify = newRoot.lookupType('gamepb.homesteadpb.FacilitiesNotify');
-    resolved.UpgradeBuildingRequest = newRoot.lookupType('gamepb.homesteadpb.UpgradeBuildingRequest');
-    resolved.UpgradeBuildingReply = newRoot.lookupType('gamepb.homesteadpb.UpgradeBuildingReply');
-    resolved.CompleteBuildingUpgradeRequest = newRoot.lookupType('gamepb.homesteadpb.CompleteBuildingUpgradeRequest');
-    resolved.CompleteBuildingUpgradeReply = newRoot.lookupType('gamepb.homesteadpb.CompleteBuildingUpgradeReply');
+    // ─── 牧场（gamepb.animalpb / homesteadpb / ranchpb）───
+    //
+    // 三个 namespace 用统一的 `Ranch<Name>` 前缀注册，避免与农场侧同名消息
+    // 互相覆盖（ranchpb 里有全套“场景 2”背包/商店/图鉴/分享副本，名字与
+    // itempb/shoppb/… 完全一样但字段不同，例如 ranchpb.Item 带 show/item_detail）。
+    //
+    // 单测里的假 Root 只有 lookupType（没有 lookup），跳过批量注册即可：
+    // 那里不校验牧场类型，静默跳过不影响断言。
+    if (typeof newRoot.lookup === 'function') {
+        for (const ns of ['animalpb', 'homesteadpb', 'ranchpb']) {
+            const pkg = newRoot.lookup(`gamepb.${ns}`);
+            for (const def of pkg.nestedArray) {
+                if (!def.name || !(def instanceof protobuf.Type)) continue;
+                resolved[`Ranch${def.name}`] = def;
+            }
+        }
+    }
 
     // 完整加载与类型解析成功，才发布就绪：root 发布、types 原地填充（引用稳定）
     for (const key of Object.keys(resolved)) {

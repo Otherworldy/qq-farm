@@ -15,6 +15,8 @@ service MallService {
 // 获取商场列表请求
 message GetMallListBySlotTypeRequest {
   int32 slot_type = 1;  // 商场类型
+  bool is_manual_open = 2;  // 手动打开（牧场罐头商城传 true 才会返回可领商品）
+  int32 global_scene_id = 3;  // 场景 ID（牧场 = 2）
 }
 
 // 获取商场列表响应
@@ -37,6 +39,13 @@ message MallGoods {
   bool is_activity = 10;     // 是否为活动商品
   int64 end_time = 11;       // 活动结束时间（Unix 秒）
   bool enabled = 12;         // 商品是否启用
+}
+
+// 限购信息（MallGoods.limit 是它的序列化字节）
+message PurchaseLimit {
+  int32 limit_type = 1;   // 1 日 / 2 周 / 3 月 / 4 永久
+  int64 bought_count = 2;
+  int64 limit_count = 3;
 }
 
 // 购买请求

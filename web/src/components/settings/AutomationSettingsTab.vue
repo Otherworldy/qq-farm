@@ -34,6 +34,19 @@ interface AutomationSettings {
     pasture_buy_animal: boolean
     pasture_steal: boolean
     pasture_task: boolean
+    pasture_market_poop?: boolean
+    pasture_market_pinecone?: boolean
+    pasture_upgrade?: boolean
+    pasture_fill_cans?: boolean
+    pasture_feed_normal?: boolean
+    pasture_feed_organic?: boolean
+    pasture_illustrated?: boolean
+    pasture_share?: boolean
+    pasture_daily_benefit?: boolean
+    pasture_friend_mosquito?: boolean
+    pasture_friend_clean?: boolean
+    pasture_release?: boolean
+    pasture_use_scene?: boolean
     fertilizer_gift: boolean
     fertilizer_buy_organic: boolean
     fertilizer_buy_normal: boolean
@@ -157,10 +170,10 @@ const mysteryShopSettingsVisible = ref(false)
         <BaseSwitch v-model="settings.automation.fertilizer_gift" label="自动填充化肥" />
         <BaseSwitch v-model="settings.automation.fertilizer_buy_organic" label="自动购买有机化肥" />
         <BaseSwitch v-model="settings.automation.fertilizer_buy_normal" label="自动购买无机化肥" />
-        <div class="w-fit max-w-full inline-flex items-center gap-1.5">
+        <div class="max-w-full w-fit inline-flex items-center gap-1.5">
           <BaseSwitch v-model="settings.automation.mystery_shop_auto_buy" label="自动购买神秘商人商品" />
           <button
-            class="h-7 w-7 inline-grid shrink-0 place-items-center rounded-md text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+            class="inline-grid h-7 w-7 shrink-0 place-items-center rounded-md text-gray-400 transition hover:bg-gray-100 dark:text-gray-500 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
             type="button"
             title="设置允许使用的货币"
             aria-label="设置神秘商人自动购买"
@@ -176,7 +189,7 @@ const mysteryShopSettingsVisible = ref(false)
       <div class="border-t border-gray-100 pt-4 dark:border-gray-700">
         <div class="mb-2 flex items-center gap-2">
           <span class="i-carbon-home text-base text-sky-600 dark:text-sky-400" />
-          <h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <h4 class="text-sm text-gray-900 font-semibold dark:text-gray-100">
             牧场自动化
           </h4>
           <span class="text-xs text-gray-400">与农场共用同一条连接</span>
@@ -195,55 +208,94 @@ const mysteryShopSettingsVisible = ref(false)
           <BaseSwitch v-model="settings.automation.pasture_buy_animal" label="自动买动物（花牧场币）" />
           <BaseSwitch v-model="settings.automation.pasture_steal" label="偷好友牧场产物" />
           <BaseSwitch v-model="settings.automation.pasture_task" label="自动领牧场任务" />
+          <BaseSwitch v-model="settings.automation.pasture_market_poop" label="集市：便便换有机化肥" />
+          <BaseSwitch v-model="settings.automation.pasture_market_pinecone" label="集市：松果换有机化肥" />
+          <BaseSwitch v-model="settings.automation.pasture_upgrade" label="自动升级牧场设施（花金券）" />
+          <BaseSwitch v-model="settings.automation.pasture_fill_cans" label="自动把背包罐头搬进桶" />
+          <BaseSwitch v-model="settings.automation.pasture_feed_normal" label="普通罐头喂养（消耗道具）" />
+          <BaseSwitch v-model="settings.automation.pasture_feed_organic" label="有机罐头喂养（消耗道具）" />
+          <BaseSwitch v-model="settings.automation.pasture_illustrated" label="自动领图鉴奖励" />
+          <BaseSwitch v-model="settings.automation.pasture_share" label="每日首次分享礼包" />
+          <BaseSwitch v-model="settings.automation.pasture_daily_benefit" label="罐头商城每日福利" />
+          <BaseSwitch v-model="settings.automation.pasture_friend_mosquito" label="给好友牧场放蚊子" />
+          <BaseSwitch v-model="settings.automation.pasture_friend_clean" label="帮好友清理牧场" />
+          <BaseSwitch v-model="settings.automation.pasture_release" label="自动放生动物（会减少栏存）" />
+          <BaseSwitch v-model="settings.automation.pasture_use_scene" label="进牧场场景执行（每轮多两次场景登录）" />
         </div>
         <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
           「自动买动物」默认关闭，开启后才会花牧场货币补充空栏；补栏始终优先用背包里已有的动物。
           牧场任务与农场任务是两套进度（同一 TaskService，scene_id=2），可以独立开关。
+          集市兑换、设施升级、罐头喂养、放生都会花钱或消耗道具，默认全部关闭。
+          喂罐头与「一键生产」是两件事：真正消耗罐头的是喂养，一键生产本身不花道具。
         </p>
       </div>
 
       <Transition name="fade">
         <div v-if="mysteryShopSettingsVisible" class="fixed inset-0 z-50 grid place-items-center bg-gray-950/45 p-4 backdrop-blur-[2px]" @click.self="mysteryShopSettingsVisible = false">
-          <div class="w-full max-w-lg overflow-hidden border border-gray-200 rounded-2xl bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
+          <div class="max-w-lg w-full overflow-hidden border border-gray-200 rounded-2xl bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-start justify-between border-b border-gray-100 px-6 py-5 dark:border-gray-700">
               <div>
                 <div class="flex items-center gap-2">
-                  <span class="h-8 w-8 inline-grid place-items-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
+                  <span class="inline-grid h-8 w-8 place-items-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
                     <span class="i-carbon-store text-lg" />
                   </span>
-                  <h3 class="text-lg text-gray-900 font-semibold dark:text-gray-100">神秘商人自动购买</h3>
+                  <h3 class="text-lg text-gray-900 font-semibold dark:text-gray-100">
+                    神秘商人自动购买
+                  </h3>
                 </div>
-                <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">选择自动购买时可以使用的货币。</p>
+                <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                  选择自动购买时可以使用的货币。
+                </p>
               </div>
-              <button class="h-8 w-8 inline-grid shrink-0 place-items-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200" type="button" aria-label="关闭" @click="mysteryShopSettingsVisible = false">
+              <button class="inline-grid h-8 w-8 shrink-0 place-items-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200" type="button" aria-label="关闭" @click="mysteryShopSettingsVisible = false">
                 <span class="i-carbon-close text-xl" />
               </button>
             </div>
-            <div class="space-y-2 px-6 py-5">
+            <div class="px-6 py-5 space-y-2">
               <div class="flex items-center justify-between gap-4 border border-gray-200 rounded-xl px-4 py-3 dark:border-gray-700">
-                <div class="flex min-w-0 items-center gap-3">
-                  <span class="h-9 w-9 inline-grid shrink-0 place-items-center rounded-full bg-yellow-50 text-yellow-600 dark:bg-yellow-900/25 dark:text-yellow-300"><span class="i-carbon-currency-dollar text-lg" /></span>
-                  <div><div class="text-sm text-gray-800 font-medium dark:text-gray-100">金币</div><div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">允许使用金币自动购买</div></div>
+                <div class="min-w-0 flex items-center gap-3">
+                  <span class="inline-grid h-9 w-9 shrink-0 place-items-center rounded-full bg-yellow-50 text-yellow-600 dark:bg-yellow-900/25 dark:text-yellow-300"><span class="i-carbon-currency-dollar text-lg" /></span>
+                  <div>
+                    <div class="text-sm text-gray-800 font-medium dark:text-gray-100">
+                      金币
+                    </div><div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      允许使用金币自动购买
+                    </div>
+                  </div>
                 </div>
                 <BaseSwitch v-model="settings.automation.mystery_shop_allow_gold" />
               </div>
               <div class="flex items-center justify-between gap-4 border border-gray-200 rounded-xl px-4 py-3 dark:border-gray-700">
-                <div class="flex min-w-0 items-center gap-3">
-                  <span class="h-9 w-9 inline-grid shrink-0 place-items-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/25 dark:text-blue-300"><span class="i-carbon-ticket text-lg" /></span>
-                  <div><div class="text-sm text-gray-800 font-medium dark:text-gray-100">点券</div><div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">允许使用点券自动购买</div></div>
+                <div class="min-w-0 flex items-center gap-3">
+                  <span class="inline-grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/25 dark:text-blue-300"><span class="i-carbon-ticket text-lg" /></span>
+                  <div>
+                    <div class="text-sm text-gray-800 font-medium dark:text-gray-100">
+                      点券
+                    </div><div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      允许使用点券自动购买
+                    </div>
+                  </div>
                 </div>
                 <BaseSwitch v-model="settings.automation.mystery_shop_allow_coupon" />
               </div>
               <div class="flex items-center justify-between gap-4 border border-gray-200 rounded-xl px-4 py-3 dark:border-gray-700">
-                <div class="flex min-w-0 items-center gap-3">
-                  <span class="h-9 w-9 inline-grid shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/25 dark:text-emerald-300"><span class="i-carbon-crop-health text-lg" /></span>
-                  <div><div class="text-sm text-gray-800 font-medium dark:text-gray-100">金豆豆</div><div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">允许使用金豆豆自动购买</div></div>
+                <div class="min-w-0 flex items-center gap-3">
+                  <span class="inline-grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/25 dark:text-emerald-300"><span class="i-carbon-crop-health text-lg" /></span>
+                  <div>
+                    <div class="text-sm text-gray-800 font-medium dark:text-gray-100">
+                      金豆豆
+                    </div><div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      允许使用金豆豆自动购买
+                    </div>
+                  </div>
                 </div>
                 <BaseSwitch v-model="settings.automation.mystery_shop_allow_gold_bean" />
               </div>
             </div>
             <div class="flex justify-end border-t border-gray-100 bg-gray-50/70 px-6 py-4 dark:border-gray-700 dark:bg-gray-900/20">
-              <BaseButton class="min-w-24" size="sm" @click="mysteryShopSettingsVisible = false">完成</BaseButton>
+              <BaseButton class="min-w-24" size="sm" @click="mysteryShopSettingsVisible = false">
+                完成
+              </BaseButton>
             </div>
           </div>
         </div>
@@ -320,21 +372,21 @@ const mysteryShopSettingsVisible = ref(false)
             </div>
             <button
               type="button"
-              class="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-600 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              class="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-600 transition dark:bg-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-600"
               @click="addKickoutValidMinutes(360)"
             >
               +6小时
             </button>
             <button
               type="button"
-              class="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-600 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              class="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-600 transition dark:bg-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-600"
               @click="addKickoutValidMinutes(1440)"
             >
               +24小时
             </button>
             <button
               type="button"
-              class="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-600 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              class="rounded bg-gray-100 px-3 py-1.5 text-xs text-gray-600 transition dark:bg-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-600"
               @click="settings.kickoutRelogin.validUntil = ''"
             >
               不限期

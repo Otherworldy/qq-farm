@@ -68,8 +68,16 @@ function setup(options = {}) {
     };
 
     mockModule('utils/network', {
-        getUserState: () => ({ gid: 1284046759, accountId: 1 }),
+        getUserState: () => ({
+            gid: 1284046759,
+            accountId: 1,
+            globalSceneId: 2,
+            unlockedSceneIds: [1, 2],
+        }),
         isConnected: () => options.connected !== false,
+        getWs: () => ({ readyState: 1 }),
+        loginGameScene: async sceneId => ({ global_scene_id: sceneId, big_farm_scene_ext_data: Buffer.alloc(0) }),
+        invalidateGameScene: () => {},
         networkEvents: { on() {}, emit() {} },
     });
     mockModule('models/store', {
@@ -99,6 +107,15 @@ function setup(options = {}) {
         stealProduce: async (hostGid) => {
             calls.push(`steal:${hostGid}`);
             return { ranches: [] };
+        },
+        // 好友家园门票：默认可用；测试里只关心是否成对出现
+        enterHomestead: async (hostGid) => {
+            calls.push(`enter:${hostGid}`);
+            return { basic: { gid: hostGid }, homestead_cells: {} };
+        },
+        leaveHomestead: async (hostGid) => {
+            calls.push(`leave:${hostGid}`);
+            return {};
         },
     });
 
@@ -134,10 +151,14 @@ test('checkFriendPastures：只对可偷的好友下手', async () => {
     assert.equal(result.stolen, 1, '只有好友A 被偷');
     assert.deepEqual(calls, [
         'getAllFriends',
+        'enter:1288674344',
         'detail:1288674344',
         'steal:1288674344',
+        'leave:1288674344',
+        'enter:1233369866',
         'detail:1233369866',
-    ], '好友B 只读详情，不发偷取');
+        'leave:1233369866',
+    ], '好友B 只读详情、不发偷取，但一样要进出家园且离场');
 });
 
 test('checkFriendPastures：跳过自己', async () => {

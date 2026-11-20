@@ -15,7 +15,8 @@ const { toNum, log, logWarn } = require('../utils/utils');
 const { isAutomationOn, getPastureStealWhitelist } = require('../models/store');
 const { recordEvent } = require('./daily-events');
 const { recordOperation } = require('./stats');
-const { getRanchDetail, stealProduce } = require('./pasture-api');
+const { getRanchDetail, stealProduce, enterHomestead, leaveHomestead } = require('./pasture-api');
+const { inRanchScene } = require('./pasture-scene');
 const { analyzeRanches } = require('./pasture-analyzer');
 const { getAllFriends } = require('./friend-api');
 
@@ -83,45 +84,67 @@ async function checkFriendPastures(options = {}) {
             .filter(f => f.gid !== toNum(userState.gid))
             .slice(0, Number(options.maxFriends) || MAX_FRIENDS_PER_ROUND);
 
+        // 好友牧场是牧场场景里的子场景：整轮进一次牧场场景，逐个好友
+        // EnterHomestead → 读详情/偷取 → LeaveHomestead。
+        // Enter 被网关拒绝时降级为 host_gid 直连（StealProduce 本身不需要门票，
+        // 这条路径已在真机验证过），不让门票问题把功能整体卡死。
+        await inRanchScene(async () => {
         for (const friend of friends) {
             checked += 1;
             let detail;
+            let entered = false;
             try {
-                detail = await getRanchDetail([], friend.gid);
+                await enterHomestead(friend.gid);
+                entered = true;
             } catch (err) {
                 if (!isTransientNetworkError(err)) {
-                    logWarn('牧场', `读取好友 ${friend.gid} 牧场失败: ${err.message}`);
+                    log('牧场', `进入好友 ${friend.gid} 牧场被拒，改用直连: ${err.message}`, {
+                        module: 'pasture', event: '牧场好友门票',
+                    });
                 }
-                continue;
             }
-            const analysis = analyzeRanches((detail && detail.ranches) || [], { now });
-            if (!analysis.stealableShelves.length) continue;
-
-            // 偷产物白名单：按货架 lot 里的 animal_id 判断，空数组 = 不限制。
-            // 与农场偷菜白名单语义保持一致（空=全偷，非空=只偷名单内）。
-            const whitelist = getPastureStealWhitelist();
-            if (whitelist.length > 0) {
-                const wanted = new Set(whitelist);
-                const hits = analysis.stealableShelves.some(shelf =>
-                    (shelf.lots || []).some(lot => wanted.has(toNum(lot.animalId))));
-                if (!hits) continue;
-            }
-
+            // finally 里离场：中途任何 continue / 抛错都不能把场景留在好友家园
             try {
-                await stealProduce(friend.gid);
-                stolen += 1;
-                recordOperation('pastureSteal', 1);
-                log('牧场', `偷取好友 ${friend.name || friend.gid} 的产物`, {
-                    module: 'pasture',
-                    event: '牧场偷取',
-                    gid: friend.gid,
-                });
-            } catch (err) {
-                if (!isTransientNetworkError(err)) {
-                    logWarn('牧场', `偷取好友 ${friend.gid} 失败: ${err.message}`);
+                try {
+                    detail = await getRanchDetail([], friend.gid);
+                } catch (err) {
+                    if (!isTransientNetworkError(err)) {
+                        logWarn('牧场', `读取好友 ${friend.gid} 牧场失败: ${err.message}`);
+                    }
+                    continue;
                 }
+                const analysis = analyzeRanches((detail && detail.ranches) || [], { now });
+                if (!analysis.stealableShelves.length) continue;
+
+                // 偷产物白名单：按货架 lot 里的 animal_id 判断，空数组 = 不限制。
+                // 与农场偷菜白名单语义保持一致（空=全偷，非空=只偷名单内）。
+                const whitelist = getPastureStealWhitelist();
+                if (whitelist.length > 0) {
+                    const wanted = new Set(whitelist);
+                    const hits = analysis.stealableShelves.some(shelf =>
+                        (shelf.lots || []).some(lot => wanted.has(toNum(lot.animalId))));
+                    if (!hits) continue;
+                }
+
+                try {
+                    await stealProduce(friend.gid);
+                    stolen += 1;
+                    recordOperation('pastureSteal', 1);
+                    log('牧场', `偷取好友 ${friend.name || friend.gid} 的产物`, {
+                        module: 'pasture',
+                        event: '牧场偷取',
+                        gid: friend.gid,
+                    });
+                } catch (err) {
+                    if (!isTransientNetworkError(err)) {
+                        logWarn('牧场', `偷取好友 ${friend.gid} 失败: ${err.message}`);
+                    }
+                }
+            } finally {
+                if (entered) await leaveFriendQuietly(friend.gid);
             }
         }
+        });
 
         if (stolen > 0) {
             recordEvent(userState.accountId, 'info', 'pasture', `牧场偷取 ${stolen} 位好友的产物`);
@@ -135,6 +158,20 @@ async function checkFriendPastures(options = {}) {
     }
 
     return { stolen, checked, skipped: false };
+}
+
+/**
+ * 离开好友牧场。离场失败意味着场景状态不可信，必须作废连接：
+ * 继续挂着别人的家园场景发农场请求，数据会被解错。
+ */
+async function leaveFriendQuietly(gid) {
+    try {
+        await leaveHomestead(gid);
+    } catch (err) {
+        logWarn('牧场', `离开好友 ${gid} 牧场失败: ${err.message}`, {
+            module: 'pasture', event: '牧场好友离场',
+        });
+    }
 }
 
 function resetFriendPastureStateForTests() {

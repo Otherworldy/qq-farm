@@ -43,6 +43,8 @@ const {
     rankAnimalGoods,
 } = require('./pasture-animal-stats');
 const { analyzeRanches, msUntilNextProduce, GRASS_LOW_THRESHOLD } = require('./pasture-analyzer');
+const routines = require('./pasture-routines');
+const { inRanchScene, resetSceneStateForTests } = require('./pasture-scene');
 
 // ─── 模块状态 ───
 
@@ -88,6 +90,15 @@ const STROKE_COOLDOWN_MS = 10 * 60_000;
 /** 单轮最多摸几只，避免一次把配额打空 */
 const STROKE_MAX_PER_ROUND = 5;
 const strokedAtMs = new Map();   // animalInstId -> 上次抚摸时间
+/** 好友互动（放蚊/帮清理）冷却：每 5 分钟一轮，避免反复拉好友列表 */
+const FRIEND_INTERACT_COOLDOWN_MS = 5 * 60_000;
+let lastFriendInteractAtMs = 0;
+/**
+ * 场景模式下的最小进场景间隔：切换场景是两次 PlayerSceneLogin，
+ * 高频 tick 里每次都切会把预算打满。30 秒内只真正进一次，
+ * 其余轮次走 host_gid 直连（已验证可用）。
+ */
+const SCENE_ENTER_MIN_INTERVAL_MS = 30_000;
 
 // ─── 辅助 ───
 
@@ -193,7 +204,7 @@ async function sellHarvestProduce(reply) {
     return total;
 }
 
-async function performHarvest(analysis, shelvesOnly = false) {
+async function performHarvest(analysis, _shelvesOnly = false) {
     const harvestable = analysis.harvestable || [];
     const shelves = analysis.collectableShelves || [];
     const shelfLots = shelves.reduce((sum, x) => sum + x.lots.length, 0);
@@ -214,7 +225,7 @@ async function performHarvest(analysis, shelvesOnly = false) {
 
     let reply;
     try {
-        reply = await harvestRanch(ranchIds, harvestType);
+        reply = await harvestRanch({ ranchIds, op: harvestType });
     } catch (err) {
         if (/1045229/.test(String(err && err.message))) return 0;
         throw err;
@@ -279,7 +290,7 @@ async function performFeed(analysis) {
         animalInstId: a.animalInstId,
     }));
     if (!targets.length) return 0;
-    const reply = await feedAnimal(targets, 1);
+    const reply = await feedAnimal(targets, 2);
     logPasture(`投喂 ${targets.length} 只动物`, { event: '牧场投喂', count: targets.length });
     noteEvent('info', `牧场投喂 ${targets.length} 只动物`);
     recordOperation('pastureFeed', targets.length);
@@ -464,7 +475,7 @@ async function performRefillSlots(analysis) {
  * 牧草机是 homestead 设施，加料走 FeedMachineService.AddFeed。
  * 分两步：先确认设施实例（拿当前草量），再按缺口补。
  */
-async function performRefillGrass(analysis) {
+async function performRefillGrass(_analysis) {
     const now = Date.now();
     if (now - lastGrassCheckAtMs < GRASS_CHECK_INTERVAL_MS) return 0;
     if (now - lastFeedMachineAtMs < FEED_MACHINE_COOLDOWN_MS) return 0;
@@ -475,9 +486,9 @@ async function performRefillGrass(analysis) {
         try {
             const { getBuildingList } = require('./pasture-api');
             const reply = await getBuildingList();
-            const list = reply.buildings || [];
+            const list = reply.items || [];
             const machine = list.find(b => toNum(b.facility_id) === FEED_MACHINE_FACILITY_ID);
-            if (machine) feedMachineInstId = toNum(machine.facility_inst_id);
+            if (machine) feedMachineInstId = toNum(machine.inst_id);
         } catch {
             // 拿不到就跳过本轮，不阻塞其它操作
         }
@@ -486,11 +497,11 @@ async function performRefillGrass(analysis) {
 
     try {
         const detail = await getFacilityDetail(feedMachineInstId);
-        const facility = detail && detail.detail;
+        const facility = detail && detail.info;
         const state = facility && facility.feed_machine;
-        // 抓包（牧草机补草.har）确认：FeedMachineState.f1 是当前草量
-        //（AddFeed count=1 让它 99 → 100），真实容量在 FacilityDetail.f14。
-        const current = toNum(state && state.current);
+        // 抓包（牧草机补草.har）确认：FeedMachineDetail.feed_count 是当前草量
+        //（AddFeed add_count=1 让它 99 → 100），真实容量在 FacilityDetailInfo.capacity（f14）。
+        const current = toNum(state && state.feed_count);
         const capacity = toNum(facility && facility.capacity) || 100;
         const gap = Math.max(0, capacity - current);
         if (gap <= 0) return 0;
@@ -558,15 +569,28 @@ async function performStroke(analysis) {
  * 执行一轮牧场操作。
  * @param {string} opType - 'all' | 'harvest' | 'feed' | 'clean' | 'grass'
  */
-async function runPastureOperation(opType = 'all') {
-    const reply = await getRanchDetail();
+async function runPastureOperation(opType = 'all', options = {}) {
+    const reply = options.preloaded ? options.preloaded.reply : await getRanchDetail();
     const ranches = (reply && reply.ranches) || [];
     if (!ranches.length) {
         logPasture('没有牧场数据');
         return { hadWork: false, actions: [], analysis: null };
     }
 
-    const analysis = analyzeRanches(ranches);
+    const analysis = options.preloaded ? options.preloaded.analysis : analyzeRanches(ranches);
+
+    // 场景模式（pasture_use_scene）：把「动作执行」整段放进牧场场景里。
+    // 读详情仍在场景外做（GetRanchDetail 不需要场景），这样无事可做的轮次
+    // 不会额外花两次 PlayerSceneLogin。
+    if (!options.inScene && getAutomation().pasture_use_scene) {
+        const needsScene = opType !== 'all' || analysis.hasWork;
+        if (needsScene) {
+            return inRanchScene(
+                () => runPastureOperation(opType, { ...options, inScene: true, preloaded: { reply, analysis } }),
+                { minIntervalMs: SCENE_ENTER_MIN_INTERVAL_MS },
+            );
+        }
+    }
     lastNextReadyAtMs = analysis.nextProduceReadyAtMs;
     // 每轮把 expected_* 采进动物档案，供购买策略排序
     observeAnimals(analysis.allAnimals || []);
@@ -599,12 +623,36 @@ async function runPastureOperation(opType = 'all') {
         if (n) actions.push('stroke');
     }
     if (want('feed', 'pasture_feed') && analysis.needFeed.length) {
-        const r = await performFeed(analysis);
-        if (r) actions.push('feed');
+        // 分桶喂养（普通/有机）是新增细项，各自独立开关；两个都没开时
+        // 继续走旧的单一投喂路径，既有行为保持不变。
+        const feedAuto = getAutomation();
+        if (feedAuto.pasture_feed_normal || feedAuto.pasture_feed_organic) {
+            const n = await routines.runFeedBuckets();
+            if (n) actions.push('feed');
+        } else {
+            const r = await performFeed(analysis);
+            if (r) actions.push('feed');
+        }
     }
     if (want('clean', 'pasture_clean') && analysis.needClean.length) {
         const r = await performClean(analysis);
         if (r) actions.push('clean');
+    }
+
+    // ─── 扩展阶段（2026-11-20 对齐上游 ranch 实现）───
+    // 只在整体轮次里跑：面板单项操作不应衍生出额外动作。
+    if (opType === 'all') {
+        // 集市兑换（货币余额决定能换多少，内部会自己判余额）
+        const exchanged = await routines.runMarketExchange();
+        if (exchanged) actions.push('market_exchange');
+
+        // 设施：棚激活 / 升级 / 完成升级
+        const facilityDone = await routines.runFacilityUpgrade();
+        if (facilityDone) actions.push('facility_upgrade');
+
+        // 图鉴奖励（收获之后才有新解锁，所以放在收获后面）
+        const bookDone = await routines.runClaimIllustrated();
+        if (bookDone) actions.push('claim_illustrated');
     }
     if (want('refill', 'pasture_refill') && analysis.emptySlots.length) {
         const r = await performRefillSlots(analysis);
@@ -615,6 +663,36 @@ async function runPastureOperation(opType = 'all') {
     if (want('grass', 'pasture_grass')) {
         const r = await performRefillGrass(analysis);
         if (r) actions.push('refill_grass');
+    }
+
+    if (opType === 'all') {
+        // 罐头入桶（不消耗，只搬位置）
+        const filled = await routines.runFillCans();
+        if (filled) actions.push('fill_cans');
+
+        // 每日分享礼包 / 罐头商城每日福利
+        const shareDone = await routines.runDailyShare();
+        if (shareDone) actions.push('daily_share');
+        const benefitDone = await routines.runDailyBenefit();
+        if (benefitDone) actions.push('daily_benefit');
+
+        // 好友互动：放蚊子 / 帮清理（每轮最多 3 个好友，5 分钟冷却）
+        const auto = getAutomation();
+        if (auto.pasture_friend_mosquito || auto.pasture_friend_clean) {
+            if (Date.now() - lastFriendInteractAtMs >= FRIEND_INTERACT_COOLDOWN_MS) {
+                lastFriendInteractAtMs = Date.now();
+                try {
+                    const { getAllFriends } = require('./friend-api');
+                    const friends = await getAllFriends();
+                    const interacted = await routines.runFriendInteraction(friends || []);
+                    if (interacted) actions.push('friend_interact');
+                } catch (err) {
+                    if (!isTransientNetworkError(err)) {
+                        logWarn('牧场', `好友互动失败: ${err.message}`);
+                    }
+                }
+            }
+        }
     }
 
     if (isFirstPastureCheck) {
@@ -684,6 +762,8 @@ function resetPastureStateForTests() {
     lastGrassCheckAtMs = 0;
     lastBuyAnimalFailAtMs = 0;
     lastProduceAtMs = 0;
+    lastFriendInteractAtMs = 0;
+    resetSceneStateForTests();
     strokedAtMs.clear();
 }
 

@@ -165,6 +165,9 @@ function createDataProvider(deps) {
         getPastureAnimalStats: (ref) => callWorkerApi(resolveAccountId(ref), 'getPastureAnimalStats'),
         claimPastureTasks: (ref) => callWorkerApi(resolveAccountId(ref), 'claimPastureTasks'),
         doPastureOp: (ref, opType) => callWorkerApi(resolveAccountId(ref), 'doPastureOp', opType),
+        planPastureAction: (ref, action, input) => callWorkerApi(resolveAccountId(ref), 'planPastureAction', action, input || {}),
+        operatePastureAction: (ref, action, input) => callWorkerApi(resolveAccountId(ref), 'operatePastureAction', action, input || {}),
+        getPastureLedger: (ref) => callWorkerApi(resolveAccountId(ref), 'getPastureLedger'),
 
         // ========== Friend API ==========
         getFriends: (ref, force = false) => callWorkerApi(resolveAccountId(ref), 'getFriends', force,

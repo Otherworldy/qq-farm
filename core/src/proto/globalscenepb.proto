@@ -1,0 +1,30 @@
+// 游戏场景（农场 = 1，牧场 = 2）
+//
+// 来源：官方客户端定义（与上游 ranch 实现同源）。牧场是独立场景，
+// 进入场景会带回该场景的初始快照，离开时要切回原场景。
+//
+// 注意：本项目登录走的是旧版 LoginRequest，回包里没有 unlocked_scene_ids，
+// 因此「牧场是否解锁」只能靠 GlobalSceneUnlockNotify 或接口报错推断；
+// 未拿到解锁列表时按「未知」处理，不阻断调用。
+
+syntax = "proto3";
+
+package gamepb.globalscenepb;
+
+message GlobalSceneUnlockNotify {
+    repeated int32 unlocked_scenes = 1;
+    string source = 2;
+}
+
+message PlayerSceneLoginRequest {
+    int32 global_scene_id = 1;
+    repeated string experiment_keys = 2;
+}
+
+message PlayerSceneLoginReply {
+    int32 global_scene_id = 1;
+    int64 server_time = 2;
+    // These initial snapshots are refreshed through existing farm services.
+    bytes farm_scene_ext_data = 10;
+    bytes big_farm_scene_ext_data = 11;
+}
