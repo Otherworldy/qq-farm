@@ -30,6 +30,10 @@ function resetModules() {
     delete require.cache[require.resolve(path.join(__dirname, '..', 'src', 'utils', 'network'))];
     delete require.cache[require.resolve(path.join(__dirname, '..', 'src', 'models', 'store'))];
     delete require.cache[require.resolve(path.join(SERVICES, 'warehouse'))];
+    // 例程会缓存依赖（models/store 等），不一起清掉就会沿用上一轮测试的 mock
+    delete require.cache[require.resolve(path.join(SERVICES, 'pasture-routines'))];
+    delete require.cache[require.resolve(path.join(SERVICES, 'pasture-visit'))];
+    delete require.cache[require.resolve(path.join(SERVICES, 'friend-api'))];
 }
 
 /** 造一个可收获 + 可投喂 + 有灾害 + 草低 的牧场回包 */
@@ -92,8 +96,16 @@ function setupMocks(options = {}) {
         getPastureGrassThreshold: () => (options.grassThreshold === undefined ? 30 : options.grassThreshold),
     });
     mockModule('services/daily-events', { recordEvent: () => {} });
+    mockModule('services/friend-api', {
+        // 真实实现回的是 { friends: [...] }，这里保持同样形状
+        getAllFriends: async () => {
+            calls.push('getAllFriends');
+            return { friends: options.friends || [{ gid: 20002, name: '好友' }] };
+        },
+    });
 
     const api = {
+        selfGid: () => 10001,
         getRanchDetail: async () => { calls.push('getRanchDetail'); return options.reply || ranchReply(); },
         harvestRanch: async () => { calls.push('harvestRanch'); return options.harvestReply || { ranches: [] }; },
         feedAnimal: async (targets) => { calls.push('feedAnimal'); calls.push(`feed:${targets.length}`); return { ranches: [] }; },
@@ -151,7 +163,8 @@ function setupMocks(options = {}) {
     });
 
     const orchestrator = require(path.join(SERVICES, 'pasture-orchestrator'));
-    return { orchestrator, calls, auto };
+    const routines = require(path.join(SERVICES, 'pasture-routines'));
+    return { orchestrator, routines, calls, auto };
 }
 
 test('checkPasture：未连接时不发任何请求', async () => {
@@ -889,4 +902,15 @@ test('非牧场产物不卖（只卖 106xxxx）', async () => {
     await orchestrator.runPastureOperation('harvest');
     const sold = calls.find(c => String(c).startsWith('sell:'));
     assert.ok(sold === 'sell:1060001x1', `只应卖牧场产物，实际 ${sold}`);
+});
+
+test('好友互动：getAllFriends 回对象时也要真正跑起来', async () => {
+    const { orchestrator, calls } = setupMocks({ auto: { pasture_stroke: true } });
+    await orchestrator.runPastureOperation('all');
+    // getAllFriends 回 { friends: [...] } 而不是数组：之前直接传对象，
+    // runFriendInteraction 的 Array.isArray 判断落空，互动永远不执行。
+    assert.ok(calls.includes('getAllFriends'), '应该拉了好友列表');
+    // 第一次是自家详情，之后才是逐个好友；能读到第二次说明真的进了互动流程
+    assert.ok(calls.filter(c => c === 'getRanchDetail').length >= 2,
+        '拿到好友列表后必须进入互动流程，逐个读好友牧场');
 });

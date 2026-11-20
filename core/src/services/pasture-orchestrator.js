@@ -658,8 +658,14 @@ async function runPastureOperation(opType = 'all', options = {}) {
                 lastFriendInteractAtMs = Date.now();
                 try {
                     const { getAllFriends } = require('./friend-api');
-                    const friends = await getAllFriends();
-                    const interacted = await routines.runFriendInteraction(friends || []);
+                    // getAllFriends 回的是 { friends: [...] }，不是数组；
+                    // 直接传对象会让 runFriendInteraction 的 Array.isArray 判断落空，
+                    // 好友互动（抚摸/放蚊/帮清理）永远不执行。
+                    const { pickFriends } = require('./pasture-visit');
+                    const reply = await getAllFriends();
+                    const friends = pickFriends(reply)
+                        .filter(f => f.gid !== toNum(getUserState().gid));
+                    const interacted = await routines.runFriendInteraction(friends);
                     if (interacted) actions.push('friend_interact');
                 } catch (err) {
                     if (!isTransientNetworkError(err)) {
